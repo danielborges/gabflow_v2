@@ -1,0 +1,858 @@
+openapi: 3.1.0
+info:
+  title: GabFlow API
+  version: 0.4.0
+  description: API principal para gestão de gabinetes municipais.
+servers:
+  - url: https://api.gabflow.example/api/v1
+security:
+  - cookieAuth: []
+paths:
+  /solicitacoes:
+    get:
+      summary: Lista solicitações
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: categoriaId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: bairroId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - in: query
+          name: size
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Página de solicitações
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SolicitacaoPage"
+    post:
+      summary: Cria uma solicitação
+      operationId: criarSolicitacao
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CriarSolicitacaoRequest"
+      responses:
+        "201":
+          description: Solicitação criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Solicitacao"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /solicitacoes/{id}:
+    get:
+      summary: Obtém uma solicitação
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Solicitação
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Solicitacao"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      summary: Atualiza campos permitidos
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Solicitação atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Solicitacao"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /solicitacoes/{id}/interacoes:
+    post:
+      summary: Registra uma interação
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CriarInteracaoRequest"
+      responses:
+        "201":
+          description: Interação criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Solicitacao"
+  /solicitacoes/{id}/tarefas:
+    post:
+      summary: Cria uma tarefa vinculada à solicitação
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [titulo]
+              properties:
+                titulo: { type: string, minLength: 3, maxLength: 180 }
+                descricao: { type: string }
+                responsavelId: { type: string, format: uuid }
+                prioridade: { type: string, enum: [BAIXA, MEDIA, ALTA, CRITICA] }
+                prazo: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Tarefa criada
+  /tarefas/{id}:
+    patch:
+      summary: Atualiza estado, prioridade ou prazo da tarefa
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Tarefa atualizada
+  /solicitacoes/agrupar-duplicadas:
+    post:
+      summary: Agrupa solicitações duplicadas sem excluí-las
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [solicitacaoIds, motivo]
+              properties:
+                solicitacaoIds:
+                  type: array
+                  minItems: 2
+                  items: { type: string, format: uuid }
+                motivo: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: Grupo de duplicidades criado ou ampliado
+  /solicitacoes/{id}/anexos:
+    post:
+      summary: Envia e verifica um anexo da solicitação
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo]
+              properties:
+                arquivo: { type: string, format: binary }
+      responses:
+        "201":
+          description: Anexo validado e armazenado
+  /solicitacoes/{id}/encaminhamentos:
+    post:
+      summary: Encaminha uma solicitação para órgão externo
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "201": { description: Encaminhamento criado }
+  /encaminhamentos/{id}:
+    patch:
+      summary: Registra protocolo ou resposta do órgão externo
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Encaminhamento atualizado }
+  /solicitacoes/{id}/reabrir:
+    post:
+      summary: Reabre uma solicitação encerrada mediante motivo
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Solicitação reaberta }
+  /solicitacoes/{id}/chave-publica:
+    post:
+      summary: Gera e rotaciona a chave de acompanhamento público
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Chave gerada }
+  /publico/solicitacoes/{protocolo}:
+    get:
+      summary: Consulta pública mínima da solicitação
+      security: []
+      parameters:
+        - in: path
+          name: protocolo
+          required: true
+          schema: { type: string }
+        - in: query
+          name: chave
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Estado público da solicitação }
+        "403": { description: Chave inválida }
+  /painel/operacional:
+    get:
+      summary: Retorna indicadores e fila prioritária do tenant
+      responses:
+        "200": { description: Painel operacional }
+  /anexos/{id}/download:
+    get:
+      summary: Baixa um anexo por token temporário assinado
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Conteúdo do anexo
+  /cidadaos:
+    get:
+      summary: Lista cidadãos do tenant
+      responses:
+        "200": { description: Lista de cidadãos }
+    post:
+      summary: Cadastra cidadão, contatos, base legal e consentimentos
+      responses:
+        "201": { description: Cidadão criado }
+  /cidadaos/{id}:
+    get:
+      summary: Obtém cidadão e histórico de solicitações
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Cidadão }
+    patch:
+      summary: Atualiza o cadastro do cidadão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Cidadão atualizado }
+  /organizacoes:
+    get:
+      summary: Lista organizações do tenant
+      responses:
+        "200": { description: Lista de organizações }
+    post:
+      summary: Cadastra uma organização
+      responses:
+        "201": { description: Organização criada }
+  /admin/categorias:
+    get:
+      summary: Lista categorias e SLA
+      responses:
+        "200": { description: Lista de categorias }
+    post:
+      summary: Cria categoria e SLA
+      responses:
+        "201": { description: Categoria criada }
+  /admin/territorios:
+    get:
+      summary: Lista territórios
+      responses:
+        "200": { description: Lista de territórios }
+    post:
+      summary: Cria território
+      responses:
+        "201": { description: Território criado }
+  /admin/orgaos:
+    get:
+      summary: Lista órgãos externos
+      responses:
+        "200": { description: Lista de órgãos }
+    post:
+      summary: Cria órgão externo
+      responses:
+        "201": { description: Órgão criado }
+  /notificacoes:
+    get:
+      summary: Lista notificações do usuário autenticado
+      responses:
+        "200": { description: Notificações e total não lido }
+  /notificacoes/preferencias:
+    get:
+      summary: Lista preferências de notificação do usuário
+      responses:
+        "200": { description: Preferências efetivas }
+    put:
+      summary: Atualiza preferências de notificação do usuário
+      responses:
+        "200": { description: Preferências atualizadas }
+  /notificacoes/marcar-todas-lidas:
+    post:
+      summary: Marca todas as notificações do usuário como lidas
+      responses:
+        "200": { description: Quantidade atualizada }
+  /solicitacoes/{id}/tentativas-contato:
+    post:
+      summary: Registra tentativa de contato com o cidadão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resultado]
+              properties:
+                canal:
+                  type: string
+                  enum: [WHATSAPP, TELEFONE, EMAIL, PRESENCIAL]
+                destino: { type: string, maxLength: 254 }
+                resultado:
+                  type: string
+                  enum: [REALIZADO, SEM_RESPOSTA, FALHOU, AGENDADO]
+                observacoes: { type: string }
+                justificativaCanal: { type: string }
+                tentadaEm: { type: string, format: date-time }
+                proximaTentativaEm: { type: string, format: date-time }
+      responses:
+        "201": { description: Tentativa registrada }
+        "422": { description: Canal, destino ou resultado inválido }
+  /solicitacoes/{id}/classificacao-ia:
+    post:
+      summary: Solicita classificação assistida por IA
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "202":
+          description: Processamento aceito
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+  /solicitacoes/{id}/gerar-minuta:
+    post:
+      summary: Gera rascunho legislativo
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo]
+              properties:
+                tipo:
+                  type: string
+                  enum: [INDICACAO, REQUERIMENTO, OFICIO, PEDIDO_INFORMACAO]
+                instrucoes:
+                  type: string
+      responses:
+        "202":
+          description: Geração aceita
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+  /assistente/consultas:
+    post:
+      summary: Realiza consulta ao assistente RAG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagQueryRequest"
+      responses:
+        "200":
+          description: Resposta fundamentada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagAnswer"
+  /insights:
+    get:
+      summary: Lista insights disponíveis
+      parameters:
+        - in: query
+          name: inicio
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: fim
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: tipo
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Insights
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Insight"
+  /admin/templates-resposta:
+    get:
+      summary: Lista templates de resposta do tenant
+      responses:
+        "200":
+          description: Templates disponíveis
+    post:
+      summary: Cadastra template por canal e categoria
+      responses:
+        "201":
+          description: Template criado
+        "422":
+          description: Variável ou conteúdo inválido
+  /admin/templates-resposta/{templateId}:
+    patch:
+      summary: Atualiza e versiona um template de resposta
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Template atualizado
+  /solicitacoes/{solicitacaoId}/respostas/preview:
+    post:
+      summary: Renderiza template com variáveis seguras
+      parameters:
+        - in: path
+          name: solicitacaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Prévia editável da resposta
+  /solicitacoes/{solicitacaoId}/respostas:
+    post:
+      summary: Registra resposta e envia e-mail pelo Resend quando aplicável
+      parameters:
+        - in: path
+          name: solicitacaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "201":
+          description: Resposta registrada
+        "502":
+          description: Falha registrada na tentativa de entrega por e-mail
+  /solicitacoes/{solicitacaoId}/retornos:
+    post:
+      summary: Agenda retorno com responsável e lembrete
+      parameters:
+        - in: path
+          name: solicitacaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "201":
+          description: Retorno agendado
+  /retornos/{retornoId}:
+    patch:
+      summary: Conclui, cancela ou reagenda um retorno
+      parameters:
+        - in: path
+          name: retornoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Retorno atualizado com histórico e auditoria
+  /privacidade/resumo:
+    get:
+      summary: Resume solicitações LGPD e políticas do tenant
+      responses:
+        "200":
+          description: Indicadores de privacidade
+  /privacidade/solicitacoes:
+    get:
+      summary: Lista solicitações de direitos do titular
+      responses:
+        "200":
+          description: Solicitações do tenant
+    post:
+      summary: Registra solicitação de acesso, correção, anonimização ou revogação
+      responses:
+        "201":
+          description: Solicitação registrada
+  /privacidade/solicitacoes/{solicitacaoId}:
+    patch:
+      summary: Atualiza validação, responsável, estado e resolução
+      parameters:
+        - in: path
+          name: solicitacaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Solicitação atualizada e auditada
+  /privacidade/solicitacoes/{solicitacaoId}/exportar:
+    post:
+      summary: Exporta pacote JSON após validação de identidade
+      parameters:
+        - in: path
+          name: solicitacaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Pacote de dados do titular
+        "422":
+          description: Identidade não validada ou tipo incompatível
+  /cidadaos/{cidadaoId}/consentimentos:
+    get:
+      summary: Lista histórico imutável de consentimentos
+      responses:
+        "200":
+          description: Histórico por finalidade
+    post:
+      summary: Registra concessão ou revogação de consentimento
+      responses:
+        "201":
+          description: Consentimento registrado
+  /privacidade/retencao:
+    get:
+      summary: Lista políticas de retenção
+      responses:
+        "200":
+          description: Políticas do tenant
+    put:
+      summary: Cria ou atualiza política de retenção
+      responses:
+        "200":
+          description: Política salva e auditada
+  /auditoria:
+    get:
+      summary: Consulta trilha de auditoria do tenant
+      responses:
+        "200":
+          description: Eventos paginados
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token_cookie
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    NotFound:
+      description: Recurso não encontrado
+    ValidationError:
+      description: Erro de validação
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    CriarSolicitacaoRequest:
+      type: object
+      required: [origem, descricao]
+      properties:
+        cidadaoId:
+          type: string
+          format: uuid
+        origem:
+          type: string
+          enum: [PRESENCIAL, TELEFONE, WHATSAPP, EMAIL, FORMULARIO, REDE_SOCIAL, VISITA]
+        titulo:
+          type: string
+          maxLength: 180
+        descricao:
+          type: string
+          minLength: 3
+        endereco:
+          type: string
+          maxLength: 500
+        categoria:
+          type: string
+          maxLength: 100
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        anexos:
+          type: array
+          items:
+            type: string
+            format: uuid
+    Solicitacao:
+      type: object
+      required: [id, protocolo, origem, descricao, status, criadaEm]
+      properties:
+        id:
+          type: string
+          format: uuid
+        protocolo:
+          type: string
+        origem:
+          type: string
+        titulo:
+          type: string
+        descricao:
+          type: string
+        status:
+          type: string
+          enum: [NOVA, TRIAGEM, EM_ATENDIMENTO, AGUARDANDO_ORGAO, AGUARDANDO_CIDADAO, RESOLVIDA, ENCERRADA, CANCELADA]
+        prioridade:
+          type: string
+          enum: [BAIXA, MEDIA, ALTA, CRITICA]
+        categoriaId:
+          type: string
+          format: uuid
+        categoria:
+          type: string
+        subcategoriaId:
+          type: string
+          format: uuid
+        responsavelId:
+          type: string
+          format: uuid
+        endereco:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        motivoEncerramento:
+          type: string
+        evidenciaEncerramento:
+          type: string
+        encerradaEm:
+          type: string
+          format: date-time
+        interacoes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interacao"
+        historico:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoricoSolicitacao"
+        criadaEm:
+          type: string
+          format: date-time
+        atualizadaEm:
+          type: string
+          format: date-time
+    SolicitacaoPage:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/Solicitacao"
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+        totalPages:
+          type: integer
+    CriarInteracaoRequest:
+      type: object
+      required: [tipo, canal, direcao, conteudo]
+      properties:
+        tipo:
+          type: string
+        canal:
+          type: string
+        direcao:
+          type: string
+          enum: [ENTRADA, SAIDA, INTERNA]
+        conteudo:
+          type: string
+        visibilidade:
+          type: string
+          enum: [INTERNA, CIDADAO]
+    Interacao:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tipo:
+          type: string
+        canal:
+          type: string
+        direcao:
+          type: string
+          enum: [ENTRADA, SAIDA, INTERNA]
+        conteudo:
+          type: string
+        visibilidade:
+          type: string
+          enum: [INTERNA, CIDADAO]
+        criadaEm:
+          type: string
+          format: date-time
+    HistoricoSolicitacao:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        acao:
+          type: string
+        alteracoes:
+          type: object
+          additionalProperties: true
+        usuarioId:
+          type: string
+          format: uuid
+        criadaEm:
+          type: string
+          format: date-time
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDENTE, PROCESSANDO, CONCLUIDO, FALHOU]
+    RagQueryRequest:
+      type: object
+      required: [pergunta]
+      properties:
+        pergunta:
+          type: string
+        colecoes:
+          type: array
+          items:
+            type: string
+        filtros:
+          type: object
+          additionalProperties: true
+    RagAnswer:
+      type: object
+      required: [resposta, fontes, grounded]
+      properties:
+        resposta:
+          type: string
+        grounded:
+          type: boolean
+        confianca:
+          type: number
+          minimum: 0
+          maximum: 1
+        fontes:
+          type: array
+          items:
+            type: object
+            required: [documentoId, titulo, trecho]
+            properties:
+              documentoId:
+                type: string
+                format: uuid
+              titulo:
+                type: string
+              trecho:
+                type: string
+              pagina:
+                type: integer
+              versao:
+                type: string
+    Insight:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tipo:
+          type: string
+        titulo:
+          type: string
+        descricao:
+          type: string
+        periodoInicio:
+          type: string
+          format: date
+        periodoFim:
+          type: string
+          format: date
+        confianca:
+          type: number
+        evidencias:
+          type: array
+          items:
+            type: string
+    Problem:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string

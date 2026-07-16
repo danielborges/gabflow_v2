@@ -1,0 +1,22 @@
+# Requisitos Não Funcionais
+
+- **RNF-001 Disponibilidade:** 99,5% mensal na fase inicial.
+- **RNF-002 Desempenho:** 95% das consultas transacionais em até 2 segundos.
+- **RNF-003 IA:** classificação simples em até 8 segundos no percentil 95.
+- **RNF-004 RAG:** resposta em até 15 segundos no percentil 95.
+- **RNF-005 Escalabilidade:** suportar crescimento horizontal de serviços de processamento assíncrono.
+- **RNF-006 Segurança:** TLS em trânsito e criptografia em repouso.
+- **RNF-007 Isolamento:** nenhuma consulta poderá retornar dados de outro tenant.
+- **RNF-008 Auditoria:** ações críticas devem possuir usuário, data, IP, tenant e diff.
+- **RNF-009 Acessibilidade:** aderência mínima ao WCAG 2.2 nível AA.
+- **RNF-010 Responsividade:** uso em desktop, tablet e smartphone.
+- **RNF-011 Observabilidade:** logs estruturados, métricas, tracing e correlação.
+- **RNF-012 Portabilidade:** execução em contêineres OCI.
+- **RNF-013 Backup:** RPO de 24 horas e RTO de 8 horas na fase inicial.
+- **RNF-014 Retenção:** configurável por tipo de dado.
+- **RNF-015 Interoperabilidade:** APIs REST/JSON e eventos assíncronos.
+- **RNF-016 Testabilidade:** contratos e regras críticas cobertos por testes automatizados.
+- **RNF-017 Explicabilidade:** toda inferência de IA deve registrar modelo, prompt versionado, fontes e confiança.
+- **RNF-018 Privacidade:** minimização de dados por padrão.
+- **RNF-019 Resiliência:** falha de IA não pode impedir o cadastro manual.
+- **RNF-020 Reversibilidade:** resultados de IA devem ser editáveis e descartáveis.

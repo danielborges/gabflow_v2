@@ -1,0 +1,22 @@
+# Regras de Negócio
+
+- **RN-001** Todo protocolo deve ser único dentro do tenant.
+- **RN-002** Solicitações anônimas podem existir, mas possuem limitações de acompanhamento.
+- **RN-003** Solicitações contendo risco à vida devem ser destacadas e encaminhadas para serviço competente; o sistema não substitui emergência.
+- **RN-004** Prioridade sugerida por IA não pode ser aplicada sem regra configurada ou validação humana.
+- **RN-005** O encerramento deve possuir motivo.
+- **RN-006** Encerramento como resolvido deve possuir evidência ou justificativa.
+- **RN-007** Toda alteração de responsável deve permanecer no histórico.
+- **RN-008** Uma solicitação pode originar várias tarefas, encaminhamentos ou proposições.
+- **RN-009** Demandas duplicadas não devem ser apagadas; devem ser agrupadas.
+- **RN-010** Dados de saúde, deficiência, religião, opinião política e outros dados sensíveis exigem controles adicionais.
+- **RN-011** O sistema não deve produzir pontuação eleitoral individual de cidadãos.
+- **RN-012** Indicadores territoriais devem usar agregação mínima configurável.
+- **RN-013** Respostas automáticas não podem prometer resultado que dependa de órgão externo.
+- **RN-014** Toda minuta gerada por IA deve iniciar como rascunho.
+- **RN-015** Toda resposta RAG deve citar as fontes recuperadas.
+- **RN-016** Na ausência de evidência suficiente, o assistente deve declarar que não encontrou base confiável.
+- **RN-017** Documentos revogados ou expirados devem permanecer pesquisáveis, mas identificados.
+- **RN-018** Consentimento para comunicação não equivale a consentimento para divulgação pública.
+- **RN-019** Fotos com cidadãos não podem ser usadas em comunicação sem base legal ou consentimento aplicável.
+- **RN-020** Exclusões lógicas não removem registros de auditoria.

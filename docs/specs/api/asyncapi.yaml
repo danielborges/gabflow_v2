@@ -1,0 +1,102 @@
+asyncapi: 3.0.0
+info:
+  title: GabFlow Events
+  version: 0.1.0
+  description: Contrato de eventos de domínio e integração.
+channels:
+  solicitacaoCriada:
+    address: gabflow.solicitacao.criada.v1
+    messages:
+      SolicitacaoCriada:
+        $ref: "#/components/messages/SolicitacaoCriada"
+  solicitacaoAtualizada:
+    address: gabflow.solicitacao.atualizada.v1
+    messages:
+      SolicitacaoAtualizada:
+        $ref: "#/components/messages/SolicitacaoAtualizada"
+  classificacaoConcluida:
+    address: gabflow.ia.classificacao-concluida.v1
+    messages:
+      ClassificacaoConcluida:
+        $ref: "#/components/messages/ClassificacaoConcluida"
+  documentoIndexado:
+    address: gabflow.rag.documento-indexado.v1
+    messages:
+      DocumentoIndexado:
+        $ref: "#/components/messages/DocumentoIndexado"
+  insightGerado:
+    address: gabflow.analytics.insight-gerado.v1
+    messages:
+      InsightGerado:
+        $ref: "#/components/messages/InsightGerado"
+operations:
+  publishSolicitacaoCriada:
+    action: send
+    channel:
+      $ref: "#/channels/solicitacaoCriada"
+  receiveClassificacaoConcluida:
+    action: receive
+    channel:
+      $ref: "#/channels/classificacaoConcluida"
+components:
+  messages:
+    SolicitacaoCriada:
+      payload:
+        $ref: "#/components/schemas/DomainEvent"
+    SolicitacaoAtualizada:
+      payload:
+        $ref: "#/components/schemas/DomainEvent"
+    ClassificacaoConcluida:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/DomainEvent"
+          - type: object
+            properties:
+              data:
+                type: object
+                properties:
+                  solicitacaoId:
+                    type: string
+                    format: uuid
+                  categoria:
+                    type: string
+                  subcategoria:
+                    type: string
+                  prioridadeSugerida:
+                    type: string
+                  confianca:
+                    type: number
+    DocumentoIndexado:
+      payload:
+        $ref: "#/components/schemas/DomainEvent"
+    InsightGerado:
+      payload:
+        $ref: "#/components/schemas/DomainEvent"
+  schemas:
+    DomainEvent:
+      type: object
+      required: [eventId, eventType, tenantId, occurredAt, data]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+        tenantId:
+          type: string
+          format: uuid
+        actorId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          default: 1
+        data:
+          type: object
+          additionalProperties: true

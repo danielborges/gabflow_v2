@@ -1,0 +1,49 @@
+import pytest
+
+from app import create_app
+from app.auth.security import hash_password
+from app.config import TestConfig
+from app.extensions import db
+from app.models import Role, Tenant, User
+
+
+@pytest.fixture()
+def app(tmp_path):
+    application = create_app(TestConfig)
+    application.config["ATTACHMENT_STORAGE_PATH"] = str(tmp_path / "attachments")
+    with application.app_context():
+        db.create_all()
+        tenant_a = Tenant(name="Gabinete A", slug="gabinete-a")
+        tenant_b = Tenant(name="Gabinete B", slug="gabinete-b")
+        db.session.add_all([tenant_a, tenant_b])
+        db.session.flush()
+        db.session.add_all(
+            [
+                User(
+                    tenant_id=tenant_a.id,
+                    name="Admin A",
+                    email="admin@teste.local",
+                    password_hash=hash_password("SenhaForte123!"),
+                    role=Role.ADMIN,
+                ),
+                User(
+                    tenant_id=tenant_b.id,
+                    name="Admin B",
+                    email="admin@teste.local",
+                    password_hash=hash_password("OutraSenha123!"),
+                    role=Role.ADMIN,
+                ),
+            ]
+        )
+        db.session.commit()
+
+    yield application
+
+    with application.app_context():
+        db.session.remove()
+        db.drop_all()
+
+
+@pytest.fixture()
+def client(app):
+    return app.test_client()

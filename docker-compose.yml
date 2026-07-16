@@ -1,0 +1,68 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gabflow}
+      POSTGRES_USER: ${POSTGRES_USER:-gabflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gabflow} -d ${POSTGRES_DB:-gabflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_RELEASE: ${APP_RELEASE:-local}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-gabflow}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gabflow}
+      SECRET_KEY: ${SECRET_KEY:?Defina SECRET_KEY no arquivo .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Defina JWT_SECRET_KEY no arquivo .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      RESEND_TIMEOUT_SECONDS: ${RESEND_TIMEOUT_SECONDS:-10}
+      ATTACHMENT_STORAGE_PATH: /app/data/attachments
+      MAX_ATTACHMENT_BYTES: ${MAX_ATTACHMENT_BYTES:-15728640}
+      ATTACHMENT_TOKEN_MAX_AGE: ${ATTACHMENT_TOKEN_MAX_AGE:-300}
+      SEED_ADMIN_ON_START: ${SEED_ADMIN_ON_START:-true}
+      SEED_TENANT: ${SEED_TENANT:-gabinete-demo}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@gabflow.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Defina SEED_ADMIN_PASSWORD no arquivo .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - attachment_data:/app/data/attachments
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+        VITE_APP_RELEASE: ${APP_RELEASE:-local}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  attachment_data:

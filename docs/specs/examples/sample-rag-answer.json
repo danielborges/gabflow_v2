@@ -1,0 +1,14 @@
+{
+  "resposta": "Foi localizada norma municipal relacionada ao tema, mas a aplicabilidade ao caso concreto deve ser validada pelo assessor responsável.",
+  "grounded": true,
+  "confianca": 0.84,
+  "fontes": [
+    {
+      "documentoId": "3de19e0c-5643-4a69-bcbf-62d9b542be90",
+      "titulo": "Código de Posturas Municipal",
+      "pagina": 42,
+      "versao": "2026-03",
+      "trecho": "Trecho relevante recuperado da fonte."
+    }
+  ]
+}

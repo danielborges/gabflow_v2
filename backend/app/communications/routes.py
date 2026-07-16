@@ -1,0 +1,529 @@
+import uuid
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from flask import Blueprint, jsonify, request
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.audit import add_audit
+from app.auth.permissions import roles_required
+from app.communications.email import EmailDeliveryError, new_idempotency_key, send_email
+from app.communications.service import (
+    ALLOWED_CHANNELS,
+    CommunicationValidationError,
+    render_template,
+    scheduled_return_data,
+    template_data,
+    validate_template_body,
+)
+from app.extensions import db
+from app.models import (
+    Citizen,
+    ContactAttempt,
+    ContactAttemptOutcome,
+    InteractionDirection,
+    InteractionVisibility,
+    RequestCategory,
+    RequestHistory,
+    RequestInteraction,
+    ResponseTemplate,
+    ScheduledReturn,
+    ScheduledReturnStatus,
+    ServiceRequest,
+    Tenant,
+    User,
+    UserStatus,
+)
+
+communications_bp = Blueprint("communications", __name__)
+
+
+def _context() -> tuple[uuid.UUID, uuid.UUID]:
+    return uuid.UUID(get_jwt()["tenant_id"]), uuid.UUID(get_jwt_identity())
+
+
+def _parse_datetime(value, timezone_name: str = "UTC") -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise CommunicationValidationError("Data e hora inválidas.") from None
+    if parsed.tzinfo is None:
+        try:
+            parsed = parsed.replace(tzinfo=ZoneInfo(timezone_name))
+        except ZoneInfoNotFoundError:
+            parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _service_request(request_id: uuid.UUID, tenant_id: uuid.UUID):
+    return db.session.execute(
+        select(ServiceRequest).where(
+            ServiceRequest.id == request_id,
+            ServiceRequest.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _template_payload(payload: dict, tenant_id: uuid.UUID) -> dict:
+    name = str(payload.get("nome", "")).strip()
+    channel = str(payload.get("canal", "")).upper().strip()
+    body = str(payload.get("conteudo", "")).strip()
+    if len(name) < 2 or not body:
+        raise CommunicationValidationError("Informe nome e conteúdo do template.")
+    if channel not in ALLOWED_CHANNELS:
+        raise CommunicationValidationError("Canal inválido.")
+    validate_template_body(body)
+    category_id = payload.get("categoriaId")
+    try:
+        category_uuid = uuid.UUID(str(category_id)) if category_id else None
+    except (TypeError, ValueError):
+        raise CommunicationValidationError("Categoria inválida.") from None
+    if category_uuid:
+        category = db.session.execute(
+            select(RequestCategory).where(
+                RequestCategory.id == category_uuid,
+                RequestCategory.tenant_id == tenant_id,
+            )
+        ).scalar_one_or_none()
+        if category is None:
+            raise CommunicationValidationError("Categoria não encontrada.")
+    return {
+        "name": name,
+        "channel": channel,
+        "body": body,
+        "subject": str(payload.get("assunto", "")).strip() or None,
+        "category_id": category_uuid,
+        "active": payload.get("ativa", True) is not False,
+    }
+
+
+@communications_bp.get("/admin/templates-resposta")
+@roles_required("admin", "manager", "staff")
+def list_templates():
+    tenant_id, _ = _context()
+    filters = [ResponseTemplate.tenant_id == tenant_id]
+    channel = request.args.get("canal")
+    category_id = request.args.get("categoriaId")
+    if channel:
+        filters.append(ResponseTemplate.channel == channel.upper())
+    if category_id:
+        try:
+            filters.append(ResponseTemplate.category_id == uuid.UUID(category_id))
+        except ValueError:
+            return jsonify(error="validation_error", message="Categoria inválida."), 422
+    items = db.session.execute(
+        select(ResponseTemplate).where(*filters).order_by(ResponseTemplate.name)
+    ).scalars()
+    return jsonify(content=[template_data(item) for item in items])
+
+
+@communications_bp.post("/admin/templates-resposta")
+@roles_required("admin", "manager")
+def create_template():
+    tenant_id, user_id = _context()
+    try:
+        values = _template_payload(request.get_json(silent=True) or {}, tenant_id)
+    except (CommunicationValidationError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    item = ResponseTemplate(tenant_id=tenant_id, created_by_id=user_id, **values)
+    db.session.add(item)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="conflict", message="Já existe um template com este nome."), 409
+    add_audit(
+        tenant_id,
+        user_id,
+        "response_template.created",
+        "response_template",
+        item.id,
+        after=template_data(item),
+    )
+    db.session.commit()
+    return jsonify(template_data(item)), 201
+
+
+@communications_bp.patch("/admin/templates-resposta/<uuid:template_id>")
+@roles_required("admin", "manager")
+def update_template(template_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(ResponseTemplate).where(
+            ResponseTemplate.id == template_id,
+            ResponseTemplate.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Template não encontrado."), 404
+    before = template_data(item)
+    payload = request.get_json(silent=True) or {}
+    merged = {
+        "nome": payload.get("nome", item.name),
+        "canal": payload.get("canal", item.channel),
+        "conteudo": payload.get("conteudo", item.body),
+        "assunto": payload.get("assunto", item.subject),
+        "categoriaId": payload.get(
+            "categoriaId", str(item.category_id) if item.category_id else None
+        ),
+        "ativa": payload.get("ativa", item.active),
+    }
+    try:
+        values = _template_payload(merged, tenant_id)
+    except (CommunicationValidationError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    for field, value in values.items():
+        setattr(item, field, value)
+    item.version += 1
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="conflict", message="Já existe um template com este nome."), 409
+    add_audit(
+        tenant_id,
+        user_id,
+        "response_template.updated",
+        "response_template",
+        item.id,
+        before=before,
+        after=template_data(item),
+    )
+    db.session.commit()
+    return jsonify(template_data(item))
+
+
+@communications_bp.post("/solicitacoes/<uuid:request_id>/respostas/preview")
+@jwt_required()
+def preview_response(request_id: uuid.UUID):
+    tenant_id, _ = _context()
+    service_request = _service_request(request_id, tenant_id)
+    template_id = (request.get_json(silent=True) or {}).get("templateId")
+    if service_request is None:
+        return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
+    try:
+        template_uuid = uuid.UUID(template_id)
+    except (TypeError, ValueError):
+        return jsonify(error="validation_error", message="Template inválido."), 422
+    template = db.session.execute(
+        select(ResponseTemplate).where(
+            ResponseTemplate.id == template_uuid,
+            ResponseTemplate.tenant_id == tenant_id,
+            ResponseTemplate.active.is_(True),
+        )
+    ).scalar_one_or_none()
+    if template is None:
+        return jsonify(error="resource_not_found", message="Template não encontrado."), 404
+    return jsonify(
+        templateId=str(template.id),
+        canal=template.channel,
+        assunto=template.subject,
+        conteudo=render_template(template, service_request),
+    )
+
+
+@communications_bp.post("/solicitacoes/<uuid:request_id>/respostas")
+@jwt_required()
+def send_response(request_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    service_request = _service_request(request_id, tenant_id)
+    if service_request is None:
+        return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    content = str(payload.get("conteudo", "")).strip()
+    channel = str(payload.get("canal", "")).upper().strip()
+    subject = str(payload.get("assunto", "")).strip()
+    if not content or channel not in ALLOWED_CHANNELS:
+        return jsonify(error="validation_error", message="Informe canal e resposta."), 422
+    template_id = payload.get("templateId")
+    template = None
+    if template_id:
+        try:
+            template = db.session.execute(
+                select(ResponseTemplate).where(
+                    ResponseTemplate.id == uuid.UUID(template_id),
+                    ResponseTemplate.tenant_id == tenant_id,
+                )
+            ).scalar_one_or_none()
+        except ValueError:
+            template = None
+        if template is None:
+            return jsonify(error="validation_error", message="Template inválido."), 422
+    delivery = None
+    destination = None
+    if channel == "EMAIL":
+        citizen = (
+            db.session.get(Citizen, service_request.citizen_id)
+            if service_request.citizen_id
+            else None
+        )
+        destination = _citizen_email(citizen)
+        subject = subject or (template.subject if template else None) or (
+            f"Atualização da solicitação {service_request.protocol}"
+        )
+        if destination is None:
+            return (
+                jsonify(
+                    error="validation_error",
+                    message="O cidadão não possui um e-mail cadastrado.",
+                ),
+                422,
+            )
+        try:
+            delivery = send_email(
+                recipient=destination,
+                subject=subject,
+                text=content,
+                idempotency_key=new_idempotency_key(service_request.id),
+            )
+        except EmailDeliveryError as error:
+            attempt = ContactAttempt(
+                tenant_id=tenant_id,
+                request_id=service_request.id,
+                citizen_id=service_request.citizen_id,
+                channel="EMAIL",
+                destination=destination,
+                outcome=ContactAttemptOutcome.FALHOU,
+                notes=str(error),
+                created_by_id=user_id,
+            )
+            db.session.add(attempt)
+            db.session.flush()
+            failure = {"canal": "EMAIL", "tentativaContatoId": str(attempt.id)}
+            db.session.add(
+                RequestHistory(
+                    tenant_id=tenant_id,
+                    request_id=service_request.id,
+                    user_id=user_id,
+                    action="request.response.failed",
+                    changes=failure,
+                )
+            )
+            add_audit(
+                tenant_id,
+                user_id,
+                "request.response.failed",
+                "service_request",
+                service_request.id,
+                after=failure,
+            )
+            db.session.commit()
+            return jsonify(error="email_delivery_failed", message=str(error)), 502
+    interaction = RequestInteraction(
+        tenant_id=tenant_id,
+        request_id=service_request.id,
+        interaction_type="RESPOSTA",
+        channel=channel,
+        direction=InteractionDirection.SAIDA,
+        content=content,
+        visibility=InteractionVisibility.CIDADAO,
+        author_id=user_id,
+    )
+    db.session.add(interaction)
+    db.session.flush()
+    attempt = None
+    if delivery:
+        attempt = ContactAttempt(
+            tenant_id=tenant_id,
+            request_id=service_request.id,
+            citizen_id=service_request.citizen_id,
+            channel="EMAIL",
+            destination=destination,
+            outcome=ContactAttemptOutcome.REALIZADO,
+            notes=f"Mensagem aceita pelo Resend. ID: {delivery.message_id}",
+            created_by_id=user_id,
+        )
+        db.session.add(attempt)
+        db.session.flush()
+    details = {
+        "canal": channel,
+        "assunto": subject or None,
+        "templateId": str(template.id) if template else None,
+        "templateVersao": template.version if template else None,
+        "interacaoId": str(interaction.id),
+        "provedor": delivery.provider if delivery else None,
+        "mensagemExternaId": delivery.message_id if delivery else None,
+        "tentativaContatoId": str(attempt.id) if attempt else None,
+    }
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=service_request.id,
+            user_id=user_id,
+            action="request.response.sent",
+            changes=details,
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "request.response.sent",
+        "service_request",
+        service_request.id,
+        after=details,
+    )
+    db.session.commit()
+    return jsonify(id=str(interaction.id), **details), 201
+
+
+def _citizen_email(citizen: Citizen | None) -> str | None:
+    if citizen is None:
+        return None
+    for contact in citizen.contacts or []:
+        if str(contact.get("tipo", "")).upper() == "EMAIL":
+            value = str(contact.get("valor", "")).strip()
+            if value:
+                return value
+    return None
+
+
+def _valid_assignee(tenant_id: uuid.UUID, assignee_id) -> User | None:
+    try:
+        assignee_uuid = uuid.UUID(str(assignee_id))
+    except (TypeError, ValueError):
+        return None
+    return db.session.execute(
+        select(User).where(
+            User.id == assignee_uuid,
+            User.tenant_id == tenant_id,
+            User.status == UserStatus.ACTIVE,
+        )
+    ).scalar_one_or_none()
+
+
+@communications_bp.post("/solicitacoes/<uuid:request_id>/retornos")
+@jwt_required()
+def schedule_return(request_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    service_request = _service_request(request_id, tenant_id)
+    if service_request is None:
+        return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    tenant = db.session.get(Tenant, tenant_id)
+    assignee = _valid_assignee(
+        tenant_id, payload.get("responsavelId") or service_request.responsible_id or user_id
+    )
+    if assignee is None:
+        return jsonify(error="validation_error", message="Responsável inválido."), 422
+    try:
+        scheduled_at = _parse_datetime(payload.get("agendadoPara"), tenant.timezone)
+        reminder_minutes = int(payload.get("lembreteMinutos", 60))
+    except (CommunicationValidationError, TypeError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    if scheduled_at <= datetime.now(UTC):
+        return jsonify(error="validation_error", message="Agende o retorno para o futuro."), 422
+    if not 0 <= reminder_minutes <= 10080:
+        return jsonify(error="validation_error", message="Lembrete deve ter até 7 dias."), 422
+    item = ScheduledReturn(
+        tenant_id=tenant_id,
+        request_id=service_request.id,
+        assignee_id=assignee.id,
+        scheduled_at=scheduled_at,
+        notes=str(payload.get("observacoes", "")).strip() or None,
+        reminder_enabled=payload.get("lembreteHabilitado", True) is not False,
+        reminder_minutes=reminder_minutes,
+        created_by_id=user_id,
+    )
+    db.session.add(item)
+    db.session.flush()
+    data = scheduled_return_data(item)
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=service_request.id,
+            user_id=user_id,
+            action="request.return.scheduled",
+            changes=data,
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "request.return.scheduled",
+        "scheduled_return",
+        item.id,
+        after=data,
+    )
+    db.session.commit()
+    return jsonify(data), 201
+
+
+@communications_bp.patch("/retornos/<uuid:return_id>")
+@jwt_required()
+def update_return(return_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(ScheduledReturn).where(
+            ScheduledReturn.id == return_id,
+            ScheduledReturn.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Retorno não encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    tenant = db.session.get(Tenant, tenant_id)
+    before = scheduled_return_data(item)
+    action = "updated"
+    if "responsavelId" in payload:
+        assignee = _valid_assignee(tenant_id, payload["responsavelId"])
+        if assignee is None:
+            return jsonify(error="validation_error", message="Responsável inválido."), 422
+        item.assignee = assignee
+    if "observacoes" in payload:
+        item.notes = str(payload["observacoes"]).strip() or None
+    if "lembreteHabilitado" in payload:
+        item.reminder_enabled = payload["lembreteHabilitado"] is True
+    if "lembreteMinutos" in payload:
+        try:
+            reminder_minutes = int(payload["lembreteMinutos"])
+        except (TypeError, ValueError):
+            return jsonify(error="validation_error", message="Lembrete inválido."), 422
+        if not 0 <= reminder_minutes <= 10080:
+            return jsonify(error="validation_error", message="Lembrete deve ter até 7 dias."), 422
+        item.reminder_minutes = reminder_minutes
+        item.reminder_sent_at = None
+    if "agendadoPara" in payload:
+        try:
+            scheduled_at = _parse_datetime(payload["agendadoPara"], tenant.timezone)
+        except CommunicationValidationError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
+        if scheduled_at <= datetime.now(UTC):
+            return jsonify(error="validation_error", message="Agende o retorno para o futuro."), 422
+        item.scheduled_at = scheduled_at
+        item.status = ScheduledReturnStatus.AGENDADO
+        item.completed_at = None
+        item.reminder_sent_at = None
+        action = "rescheduled"
+    if "status" in payload:
+        try:
+            status = ScheduledReturnStatus(str(payload["status"]).upper())
+        except ValueError:
+            return jsonify(error="validation_error", message="Status inválido."), 422
+        item.status = status
+        item.completed_at = datetime.now(UTC) if status == ScheduledReturnStatus.CONCLUIDO else None
+        action = status.value.lower()
+    db.session.flush()
+    data = scheduled_return_data(item)
+    history_action = f"request.return.{action}"
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=item.request_id,
+            user_id=user_id,
+            action=history_action,
+            changes={"antes": before, "depois": data},
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        history_action,
+        "scheduled_return",
+        item.id,
+        before=before,
+        after=data,
+    )
+    db.session.commit()
+    return jsonify(data)

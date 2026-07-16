@@ -1,0 +1,15 @@
+{
+  "solicitacaoId": "f69f4e4b-273e-44f8-b7a6-b21a0a99c290",
+  "categoria": "Infraestrutura",
+  "subcategoria": "Iluminação pública",
+  "prioridadeSugerida": "MEDIA",
+  "orgaoSugerido": "Secretaria responsável por iluminação pública",
+  "entidades": {
+    "logradouro": "Rua das Flores",
+    "numero": "120",
+    "quantidadePostes": 3
+  },
+  "confianca": 0.93,
+  "justificativa": "O relato menciona postes apagados e localização específica.",
+  "revisaoHumanaObrigatoria": true
+}
