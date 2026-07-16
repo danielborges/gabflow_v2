@@ -23,10 +23,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -52,15 +52,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: pnpm
@@ -109,10 +109,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -125,4 +125,23 @@ jobs:
         run: flask --app wsgi:app db upgrade
 
       - name: Verify migration head
-        run: flask --app wsgi:app db current --check-heads
+        run: |
+          python - <<'PY'
+          from alembic.runtime.migration import MigrationContext
+          from alembic.script import ScriptDirectory
+
+          from app.extensions import db
+          from wsgi import app
+
+          expected_heads = set(ScriptDirectory("migrations").get_heads())
+
+          with app.app_context(), db.engine.connect() as connection:
+              current_heads = set(MigrationContext.configure(connection).get_current_heads())
+
+          if current_heads != expected_heads:
+              raise SystemExit(
+                  f"Migration heads differ: current={current_heads}, expected={expected_heads}"
+              )
+
+          print(f"Database is at migration head: {', '.join(sorted(current_heads))}")
+          PY
