@@ -26,7 +26,9 @@ const request = {
 
 it("transfere o rascunho revisado sem enviar automaticamente", async () => {
   const updated = { ...request, assistenciaIA: { ...request.assistenciaIA, statusRevisao: "EDITADA" } };
-  apiRequest.mockResolvedValueOnce({ statusRevisao: "EDITADA" }).mockResolvedValueOnce(updated);
+  let finishReview;
+  const pendingReview = new Promise((resolve) => { finishReview = resolve; });
+  apiRequest.mockReturnValueOnce(pendingReview).mockResolvedValueOnce(updated);
   const onUse = vi.fn();
 
   render(<AIAssistancePanel request={request} onChanged={vi.fn()} onUse={onUse} onError={vi.fn()} />);
@@ -35,12 +37,14 @@ it("transfere o rascunho revisado sem enviar automaticamente", async () => {
   fireEvent.change(screen.getByLabelText("Resposta sugerida"), { target: { value: "Resposta revisada." } });
   fireEvent.click(screen.getByRole("button", { name: "Usar na resposta" }));
 
+  expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ conteudo: "Resposta revisada." }));
+  finishReview({ statusRevisao: "EDITADA" });
+
   await waitFor(() => {
     expect(apiRequest).toHaveBeenCalledWith(
       "/api/v1/assistencias-ia/assistance-1/revisao",
       expect.objectContaining({ method: "POST" }),
     );
-    expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ conteudo: "Resposta revisada." }));
   });
   expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("/respostas"), expect.anything());
 });

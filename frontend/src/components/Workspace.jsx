@@ -15,6 +15,7 @@ import { useState } from "react";
 import { AdministrationPage } from "./AdministrationPage";
 import { AIQualityPage } from "./AIQualityPage";
 import { DirectoryPage } from "./DirectoryPage";
+import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
 import { OperationalDashboard } from "./OperationalDashboard";
 import { PrivacyGovernancePage } from "./PrivacyGovernancePage";
@@ -25,7 +26,7 @@ const navigation = [
   { id: "requests", label: "Solicitações", icon: ClipboardList, enabled: true },
   { id: "citizens", label: "Cidadãos", icon: Users, enabled: true },
   { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true },
-  { id: "documents", label: "Documentos", icon: FileText, enabled: false },
+  { id: "documents", label: "Documentos", icon: FileText, enabled: true },
 ];
 
 export function Workspace({ user, onLogout }) {
@@ -108,6 +109,7 @@ export function Workspace({ user, onLogout }) {
         {activeView === "requests" && <RequestsPage user={user} />}
         {activeView === "citizens" && <DirectoryPage />}
         {activeView === "ai-quality" && <AIQualityPage />}
+        {activeView === "documents" && <LegislativeDocumentsPage user={user} />}
         {activeView === "admin" && <AdministrationPage />}
         {activeView === "privacy" && <PrivacyGovernancePage />}
         {activeView === "overview" && <OperationalDashboard onOpenRequests={() => setActiveView("requests")} />}

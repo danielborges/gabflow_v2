@@ -26,6 +26,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.communications.routes import communications_bp
     from app.directory.routes import directory_bp
     from app.health.routes import health_bp
+    from app.legislative.routes import legislative_bp
     from app.notifications.routes import notifications_bp
     from app.operations.routes import operations_bp, public_bp
     from app.privacy.routes import privacy_bp
@@ -36,6 +37,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
     app.register_blueprint(ai_bp, url_prefix="/api/v1")
     app.register_blueprint(health_bp, url_prefix="/api/v1")
+    app.register_blueprint(legislative_bp, url_prefix="/api/v1")
     app.register_blueprint(requests_bp, url_prefix="/api/v1")
     app.register_blueprint(communications_bp, url_prefix="/api/v1")
     app.register_blueprint(request_ops_bp, url_prefix="/api/v1")

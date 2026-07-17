@@ -11,3 +11,5 @@ faster-whisper==1.2.1
 Pillow==11.3.0
 pypdfium2==4.30.0
 pytesseract==0.3.13
+python-docx==1.2.0
+reportlab==4.4.3

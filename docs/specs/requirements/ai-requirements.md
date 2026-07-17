@@ -26,7 +26,7 @@
 
 - **RIA-030** Gerar minuta com base em fatos selecionados.
 - **RIA-031** Recuperar proposições semelhantes.
-- **RIA-032** Identificar fundamentação normativa.
+- **RIA-032** Identificar fundamentação normativa por recuperação tenant-safe, com citações versionadas e confirmação humana antes da aplicação.
 - **RIA-033** Sugerir estrutura e justificativa.
 - **RIA-034** Marcar trechos não fundamentados.
 - **RIA-035** Impedir protocolo automático.

@@ -21,6 +21,11 @@ from app.ai.transcription import (
 )
 from app.communications.email import EmailDeliveryError, send_email
 from app.extensions import db
+from app.legislative.service import (
+    LEGISLATIVE_GENERATION_EVENT,
+    execute_generation,
+    fail_generation,
+)
 from app.models import (
     AIExecution,
     AIExecutionStatus,
@@ -51,6 +56,9 @@ def handle_event(event: OutboxEvent) -> None:
     if event.event_type == AI_ASSISTANCE_EVENT:
         execution = _ai_execution(event)
         execute_assistance(execution)
+        return
+    if event.event_type == LEGISLATIVE_GENERATION_EVENT:
+        execute_generation(_ai_execution(event))
         return
     if event.event_type == AUDIO_TRANSCRIPTION_EVENT:
         try:
@@ -83,6 +91,9 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         execution = _ai_execution(event)
         execution.status = AIExecutionStatus.FALHOU
         execution.error = error_message[:2000]
+        return
+    if event.event_type == LEGISLATIVE_GENERATION_EVENT:
+        fail_generation(_ai_execution(event), error_message)
         return
     if event.event_type == AUDIO_TRANSCRIPTION_EVENT:
         transcription = _audio_transcription(event)

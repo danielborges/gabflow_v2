@@ -55,13 +55,13 @@
 
 - **RF-060** Criar minuta a partir de solicitação.
 - **RF-061** Suportar indicação, requerimento, ofício, moção, pedido de informação e projeto de lei.
-- **RF-062** Aplicar templates configuráveis.
-- **RF-063** Relacionar uma proposição a uma ou mais solicitações.
-- **RF-064** Controlar versões.
+- **RF-062** Aplicar templates configuráveis. **Implementado no P2.**
+- **RF-063** Relacionar uma proposição a uma ou mais solicitações. **Implementado no P2.**
+- **RF-064** Controlar versões. **Implementado no P2 com histórico, comparação e restauração auditável.**
 - **RF-065** Implementar revisão e aprovação.
 - **RF-066** Exportar para DOCX e PDF.
 - **RF-067** Registrar protocolo e tramitação.
-- **RF-068** Pesquisar proposições semelhantes.
+- **RF-068** Pesquisar proposições semelhantes. **Implementado no P2 com embeddings locais, filtros e fallback lexical.**
 
 ## Fiscalização
 
@@ -85,7 +85,7 @@
 ## Administração
 
 - **RF-090** Parametrizar categorias, territórios, status e SLA.
-- **RF-091** Configurar templates.
+- **RF-091** Configurar templates. **Implementado no P2.**
 - **RF-092** Configurar integrações.
 - **RF-093** Gerenciar bases documentais RAG.
 - **RF-094** Configurar retenção, anonimização e auditoria. **Implementado no P1.**

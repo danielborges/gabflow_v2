@@ -29,6 +29,12 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "audit_logs",
         "citizens",
         "document_ocrs",
+        "legislative_drafts",
+        "legislative_draft_requests",
+        "legislative_tramitations",
+        "legislative_draft_versions",
+        "legislative_templates",
+        "normative_sources",
         "privacy_requests",
         "scheduled_returns",
         "service_requests",
@@ -55,6 +61,9 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         notification_types = connection.execute(
             enum_query, {"enum_name": "notification_type"}
         ).scalars().all()
+        tramitation_statuses = connection.execute(
+            enum_query, {"enum_name": "legislative_tramitation_status"}
+        ).scalars().all()
 
     assert request_statuses == [
         "NOVA",
@@ -67,6 +76,18 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         "CANCELADA",
     ]
     assert notification_types == ["ATRIBUICAO", "TAREFA", "SLA", "SISTEMA", "RETORNO"]
+    assert tramitation_statuses == [
+        "PROTOCOLADA",
+        "DISTRIBUIDA",
+        "EM_COMISSAO",
+        "EM_PAUTA",
+        "APROVADA",
+        "REJEITADA",
+        "SANCIONADA",
+        "VETADA",
+        "ARQUIVADA",
+        "RETIRADA",
+    ]
 
 
 def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
@@ -85,7 +106,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             rolled_back_tables = set(inspector.get_table_names())
 
         assert rolled_back_heads == {previous_head}
-        assert "document_ocrs" not in rolled_back_tables
+        assert "legislative_drafts" in rolled_back_tables
+        assert "legislative_tramitations" in rolled_back_tables
+        assert "normative_sources" not in rolled_back_tables
 
         upgrade(directory="migrations")
 
@@ -94,7 +117,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             reapplied_tables = set(inspect(connection).get_table_names())
 
         assert reapplied_heads == {expected_head}
-        assert "document_ocrs" in reapplied_tables
+        assert "legislative_drafts" in reapplied_tables
+        assert "legislative_tramitations" in reapplied_tables
+        assert "normative_sources" in reapplied_tables
 
 
 def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres_app):

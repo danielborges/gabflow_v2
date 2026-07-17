@@ -1,11 +1,12 @@
 import enum
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -179,6 +180,42 @@ class AIReviewStatus(str, enum.Enum):
     ACEITA = "ACEITA"
     EDITADA = "EDITADA"
     REJEITADA = "REJEITADA"
+
+
+class LegislativeDocumentType(str, enum.Enum):
+    INDICACAO = "INDICACAO"
+    REQUERIMENTO = "REQUERIMENTO"
+    OFICIO = "OFICIO"
+    MOCAO = "MOCAO"
+    PEDIDO_INFORMACAO = "PEDIDO_INFORMACAO"
+    PROJETO_LEI = "PROJETO_LEI"
+
+
+class LegislativeDraftStatus(str, enum.Enum):
+    RASCUNHO = "RASCUNHO"
+    EM_REVISAO = "EM_REVISAO"
+    APROVADA = "APROVADA"
+    REJEITADA = "REJEITADA"
+
+
+class LegislativeGenerationStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    PROCESSANDO = "PROCESSANDO"
+    CONCLUIDA = "CONCLUIDA"
+    FALHOU = "FALHOU"
+
+
+class LegislativeTramitationStatus(str, enum.Enum):
+    PROTOCOLADA = "PROTOCOLADA"
+    DISTRIBUIDA = "DISTRIBUIDA"
+    EM_COMISSAO = "EM_COMISSAO"
+    EM_PAUTA = "EM_PAUTA"
+    APROVADA = "APROVADA"
+    REJEITADA = "REJEITADA"
+    SANCIONADA = "SANCIONADA"
+    VETADA = "VETADA"
+    ARQUIVADA = "ARQUIVADA"
+    RETIRADA = "RETIRADA"
 
 
 class Tenant(db.Model):
@@ -937,6 +974,213 @@ class DocumentOcr(db.Model):
     )
 
     attachment: Mapped[Attachment] = relationship(back_populates="ocr")
+
+
+class LegislativeTemplate(db.Model):
+    __tablename__ = "legislative_templates"
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    document_type: Mapped[LegislativeDocumentType] = mapped_column(
+        Enum(LegislativeDocumentType, name="legislative_document_type"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    structure: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class NormativeSource(db.Model):
+    __tablename__ = "normative_sources"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "title", "reference", "version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    reference: Mapped[str] = mapped_column(String(240), nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    jurisdiction: Mapped[str | None] = mapped_column(String(120))
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    version: Mapped[str] = mapped_column(String(80), default="1", nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    rag_collection: Mapped[str] = mapped_column(
+        String(80), default="legislacao", nullable=False, index=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class LegislativeDraft(db.Model):
+    __tablename__ = "legislative_drafts"
+    __table_args__ = (UniqueConstraint("tenant_id", "protocol_number"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    document_type: Mapped[LegislativeDocumentType] = mapped_column(
+        Enum(LegislativeDocumentType, name="legislative_document_type", create_type=False),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[LegislativeDraftStatus] = mapped_column(
+        Enum(LegislativeDraftStatus, name="legislative_draft_status"),
+        default=LegislativeDraftStatus.RASCUNHO,
+        nullable=False,
+        index=True,
+    )
+    generation_status: Mapped[LegislativeGenerationStatus] = mapped_column(
+        Enum(LegislativeGenerationStatus, name="legislative_generation_status"),
+        default=LegislativeGenerationStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    justification: Mapped[str | None] = mapped_column(Text)
+    legal_basis: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    sources: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    unsupported_passages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    similar_proposals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    generation_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("legislative_templates.id", ondelete="SET NULL"), index=True
+    )
+    ai_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ai_executions.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    current_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    protocol_number: Mapped[str | None] = mapped_column(String(100))
+    protocolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_tramitation_status: Mapped[LegislativeTramitationStatus | None] = mapped_column(
+        Enum(LegislativeTramitationStatus, name="legislative_tramitation_status"),
+        index=True,
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    approved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class LegislativeDraftRequest(db.Model):
+    __tablename__ = "legislative_draft_requests"
+    __table_args__ = (UniqueConstraint("draft_id", "request_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("legislative_drafts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class LegislativeDraftVersion(db.Model):
+    __tablename__ = "legislative_draft_versions"
+    __table_args__ = (UniqueConstraint("draft_id", "version_number"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("legislative_drafts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    justification: Mapped[str | None] = mapped_column(Text)
+    legal_basis: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    unsupported_passages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    change_reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class LegislativeTramitation(db.Model):
+    __tablename__ = "legislative_tramitations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("legislative_drafts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[LegislativeTramitationStatus] = mapped_column(
+        Enum(
+            LegislativeTramitationStatus,
+            name="legislative_tramitation_status",
+            create_type=False,
+        ),
+        nullable=False,
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(160), nullable=False)
+    destination: Mapped[str | None] = mapped_column(String(180))
+    external_reference: Mapped[str | None] = mapped_column(String(180))
+    notes: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
 
 
 class Notification(db.Model):

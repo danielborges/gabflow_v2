@@ -546,16 +546,489 @@ paths:
               properties:
                 tipo:
                   type: string
-                  enum: [INDICACAO, REQUERIMENTO, OFICIO, PEDIDO_INFORMACAO]
+                  enum: [INDICACAO, REQUERIMENTO, OFICIO, MOCAO, PEDIDO_INFORMACAO, PROJETO_LEI]
+                titulo:
+                  type: string
+                  maxLength: 240
+                templateId:
+                  type: string
+                  format: uuid
+                solicitacoesRelacionadasIds:
+                  type: array
+                  maxItems: 19
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+                fatosSelecionados:
+                  type: array
+                  items: { type: string }
                 instrucoes:
                   type: string
+                fontesNormativas:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FonteNormativa"
       responses:
         "202":
           description: Geração aceita
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Job"
+                $ref: "#/components/schemas/MinutaLegislativa"
+        "422": { description: Tipo, fonte ou conjunto de solicitações inválido }
+  /legislativo/minutas:
+    get:
+      summary: Lista minutas legislativas do tenant
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: tipo, schema: { type: string } }
+      responses:
+        "200": { description: Minutas filtradas do tenant }
+  /legislativo/minutas/{id}:
+    get:
+      summary: Consulta conteúdo, fontes, versões e vínculos da minuta
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Minuta encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MinutaLegislativa" }
+        "404": { description: Minuta inexistente no tenant }
+  /legislativo/minutas/{id}/versoes:
+    get:
+      summary: Lista o histórico imutável de versões da minuta
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Versões em ordem decrescente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/VersaoMinutaLegislativa" }
+        "404": { description: Minuta inexistente no tenant }
+  /legislativo/minutas/{id}/versoes/{numero}:
+    get:
+      summary: Consulta o snapshot completo de uma versão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: numero
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Snapshot imutável da versão
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersaoMinutaLegislativa" }
+        "404": { description: Minuta ou versão inexistente no tenant }
+  /legislativo/minutas/{id}/comparacao:
+    get:
+      summary: Compara dois snapshots da minuta campo a campo
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: query
+          name: de
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: para
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Diferenças entre as versões
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComparacaoVersoesMinuta" }
+        "404": { description: Minuta ou versão inexistente no tenant }
+        "422": { description: Números de versão ausentes, inválidos ou iguais }
+  /legislativo/minutas/{id}/versoes/{numero}/restaurar:
+    post:
+      summary: Restaura um snapshot como uma nova versão da minuta
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: numero
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [motivo]
+              properties:
+                motivo: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200":
+          description: Nova versão criada a partir do snapshot selecionado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MinutaLegislativa" }
+        "404": { description: Minuta ou versão inexistente no tenant }
+        "409": { description: Minuta em estado final ou versão já atual }
+        "422": { description: Motivo da restauração ausente }
+  /legislativo/minutas/{id}/revisao:
+    post:
+      summary: Salva versão, submete, aprova ou rejeita uma minuta
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao:
+                  type: string
+                  enum: [SALVAR, SUBMETER, APROVAR, REJEITAR]
+                titulo: { type: string }
+                conteudo: { type: string }
+                justificativa: { type: string }
+                motivo: { type: string }
+                confirmarFundamentacao: { type: boolean }
+      responses:
+        "200": { description: Decisão humana registrada e auditada }
+        "409": { description: Estado incompatível ou fundamentação sem confirmação }
+  /legislativo/minutas/{id}/protocolo:
+    post:
+      summary: Registra manualmente protocolo externo de minuta aprovada
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [protocolo]
+              properties:
+                protocolo: { type: string, maxLength: 100 }
+      responses:
+        "200": { description: Protocolo manual registrado }
+        "409": { description: Minuta não aprovada ou protocolo duplicado }
+  /legislativo/minutas/{id}/tramitacoes:
+    get:
+      summary: Lista a timeline imutável de tramitação da minuta
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Andamentos em ordem cronológica
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/TramitacaoLegislativa" }
+        "404": { description: Minuta inexistente no tenant }
+    post:
+      summary: Acrescenta um andamento à tramitação de uma minuta protocolada
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, etapa]
+              properties:
+                status:
+                  type: string
+                  enum: [DISTRIBUIDA, EM_COMISSAO, EM_PAUTA, APROVADA, REJEITADA, SANCIONADA, VETADA, ARQUIVADA, RETIRADA]
+                etapa: { type: string, maxLength: 160 }
+                destino: { type: string, maxLength: 180 }
+                referenciaExterna: { type: string, maxLength: 180 }
+                observacoes: { type: string, maxLength: 4000 }
+                ocorridaEm: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Andamento registrado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MinutaLegislativa" }
+        "403": { description: Perfil sem permissão de gestão }
+        "404": { description: Minuta inexistente no tenant }
+        "409": { description: Minuta ainda não aprovada e protocolada }
+        "422": { description: Estado, etapa ou data inválida }
+  /legislativo/minutas/{id}/exportar/{formato}:
+    get:
+      summary: Exporta uma minuta para DOCX ou PDF
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: formato
+          required: true
+          schema: { type: string, enum: [docx, pdf] }
+      responses:
+        "200": { description: Arquivo legislativo }
+  /legislativo/minutas/{id}/fundamentacao/recuperar:
+    post:
+      summary: Recupera fontes normativas vigentes para revisão humana
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                consulta: { type: string, minLength: 3, maxLength: 30000 }
+      responses:
+        "200":
+          description: Fontes ranqueadas sem aplicação automática
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResultadoRecuperacaoFundamentacao" }
+        "404": { description: Minuta inexistente no tenant }
+        "409": { description: Geração da minuta ainda não concluída }
+        "422": { description: Consulta inválida }
+  /legislativo/minutas/{id}/fundamentacao/aplicar:
+    post:
+      summary: Confirma fontes recuperadas e cria uma nova versão da minuta
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fonteIds, motivo]
+              properties:
+                fonteIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+                motivo: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200":
+          description: Fundamentação confirmada, versionada e auditada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MinutaLegislativa" }
+        "404": { description: Minuta inexistente no tenant }
+        "409": { description: Minuta não editável }
+        "422": { description: Fonte não recuperada, inativa, expirada ou inválida }
+  /legislativo/fontes-normativas:
+    get:
+      summary: Lista o catálogo normativo do tenant
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 100 }
+        - in: query
+          name: incluirInativas
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Fontes do tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/FonteNormativaCatalogo" }
+        "403": { description: Inclusão de fontes inativas exige perfil gestor }
+    post:
+      summary: Cadastra uma fonte normativa versionada no tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FonteNormativaCatalogoEntrada" }
+      responses:
+        "201":
+          description: Fonte criada e auditada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FonteNormativaCatalogo" }
+        "403": { description: Perfil sem permissão de gestão }
+        "409": { description: Mesma fonte, referência e versão já cadastradas }
+        "422": { description: Fonte inválida }
+  /legislativo/fontes-normativas/{id}:
+    put:
+      summary: Atualiza os metadados e o trecho de uma fonte normativa
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FonteNormativaCatalogoEntrada" }
+      responses:
+        "200":
+          description: Fonte atualizada e auditada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FonteNormativaCatalogo" }
+        "403": { description: Perfil sem permissão de gestão }
+        "404": { description: Fonte inexistente no tenant }
+        "409": { description: Versão duplicada }
+        "422": { description: Fonte inválida }
+  /legislativo/fontes-normativas/{id}/status:
+    patch:
+      summary: Ativa ou desativa uma fonte sem apagar seu histórico
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ativo]
+              properties:
+                ativo: { type: boolean }
+      responses:
+        "200":
+          description: Status alterado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FonteNormativaCatalogo" }
+        "403": { description: Perfil sem permissão de gestão }
+        "404": { description: Fonte inexistente no tenant }
+        "422": { description: Status inválido }
+  /legislativo/templates:
+    get:
+      summary: Lista templates legislativos do tenant
+      parameters:
+        - in: query
+          name: incluirInativos
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Templates disponíveis conforme o perfil e filtro
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/TemplateLegislativo" }
+        "403": { description: Inclusão de inativos exige perfil gestor }
+    post:
+      summary: Cadastra template legislativo do tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo, nome, estrutura]
+              properties:
+                tipo: { type: string }
+                nome: { type: string }
+                estrutura: { type: string }
+      responses:
+        "201":
+          description: Template criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TemplateLegislativo" }
+        "409": { description: Nome já utilizado no tenant }
+        "422": { description: Tipo, nome ou estrutura inválida }
+  /legislativo/templates/{id}:
+    put:
+      summary: Atualiza nome, tipo e estrutura de um template
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo, nome, estrutura]
+              properties:
+                tipo:
+                  type: string
+                  enum: [INDICACAO, REQUERIMENTO, OFICIO, MOCAO, PEDIDO_INFORMACAO, PROJETO_LEI]
+                nome: { type: string, maxLength: 160 }
+                estrutura: { type: string, maxLength: 20000 }
+      responses:
+        "200":
+          description: Template atualizado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TemplateLegislativo" }
+        "403": { description: Perfil sem permissão de gestão }
+        "404": { description: Template inexistente no tenant }
+        "409": { description: Nome já utilizado no tenant }
+        "422": { description: Tipo, nome ou estrutura inválida }
+  /legislativo/templates/{id}/status:
+    patch:
+      summary: Ativa ou desativa um template preservando seus vínculos históricos
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ativo]
+              properties:
+                ativo: { type: boolean }
+      responses:
+        "200":
+          description: Status alterado e auditado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TemplateLegislativo" }
+        "403": { description: Perfil sem permissão de gestão }
+        "404": { description: Template inexistente no tenant }
+        "422": { description: Status inválido }
+  /legislativo/precedentes:
+    get:
+      summary: Pesquisa semanticamente proposições do tenant com embeddings locais
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string, minLength: 3 }
+        - in: query
+          name: tipo
+          schema:
+            type: string
+            enum: [INDICACAO, REQUERIMENTO, OFICIO, MOCAO, PEDIDO_INFORMACAO, PROJETO_LEI]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [RASCUNHO, EM_REVISAO, APROVADA, REJEITADA]
+        - in: query
+          name: excluirMinutaId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: limite
+          schema: { type: integer, minimum: 1, maximum: 20, default: 10 }
+      responses:
+        "200":
+          description: Precedentes ordenados por similaridade semântica
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResultadoBuscaPrecedentes" }
+        "422": { description: Consulta curta ou filtros inválidos }
   /assistente/consultas:
     post:
       summary: Realiza consulta ao assistente RAG
@@ -979,6 +1452,247 @@ components:
             respostaSugerida: { type: object, additionalProperties: true }
             revisaoHumanaObrigatoria: { type: boolean, enum: [true] }
             envioAutomatico: { type: boolean, enum: [false] }
+    FonteNormativa:
+      type: object
+      required: [titulo]
+      properties:
+        titulo: { type: string }
+        referencia: { type: string }
+        trecho: { type: string }
+        validadaPeloUsuario: { type: boolean }
+        sourceId: { type: string, format: uuid }
+        versaoFonte: { type: string }
+        checksum: { type: string }
+        recuperadaVia: { type: string, enum: [RAG_NORMATIVO_V1] }
+        url: { type: string, format: uri, nullable: true }
+    FonteNormativaCatalogoEntrada:
+      type: object
+      required: [tipo, titulo, referencia, trecho]
+      properties:
+        tipo:
+          type: string
+          enum: [LEI_ORGANICA, REGIMENTO_INTERNO, LEI_MUNICIPAL, DECRETO, PLANO_DIRETOR, CODIGO_OBRAS, CODIGO_POSTURAS, OUTRO]
+        titulo: { type: string, maxLength: 240 }
+        referencia: { type: string, maxLength: 240 }
+        trecho: { type: string, minLength: 20, maxLength: 20000 }
+        jurisdicao: { type: string, maxLength: 120, nullable: true }
+        url: { type: string, format: uri, nullable: true }
+        versao: { type: string, maxLength: 80, default: "1" }
+        vigenteDesde: { type: string, format: date, nullable: true }
+        vigenteAte: { type: string, format: date, nullable: true }
+    FonteNormativaCatalogo:
+      allOf:
+        - $ref: "#/components/schemas/FonteNormativaCatalogoEntrada"
+        - type: object
+          required: [id, checksum, colecaoRag, ativo, criadaEm, atualizadaEm]
+          properties:
+            id: { type: string, format: uuid }
+            checksum: { type: string }
+            colecaoRag: { type: string, enum: [legislacao] }
+            ativo: { type: boolean }
+            criadaEm: { type: string, format: date-time }
+            atualizadaEm: { type: string, format: date-time }
+            pontuacao: { type: number, minimum: 0, maximum: 1 }
+            similaridadeSemantica: { type: number, minimum: 0, maximum: 1 }
+            similaridadeLexical: { type: number, minimum: 0, maximum: 1 }
+            justificativas:
+              type: array
+              items: { type: string }
+    ResultadoRecuperacaoFundamentacao:
+      type: object
+      required: [consulta, colecao, modelo, fallbackUtilizado, limiar, totalCandidatos, fontes, grounded, revisaoHumanaObrigatoria, aplicacaoAutomatica, conteudoTratadoComoDado]
+      properties:
+        consulta: { type: string }
+        colecao: { type: string, enum: [legislacao] }
+        modelo: { type: string }
+        fallbackUtilizado: { type: boolean }
+        erroFallback: { type: string, nullable: true }
+        limiar: { type: number, minimum: 0, maximum: 1 }
+        totalCandidatos: { type: integer, minimum: 0 }
+        fontes:
+          type: array
+          items: { $ref: "#/components/schemas/FonteNormativaCatalogo" }
+        grounded: { type: boolean }
+        revisaoHumanaObrigatoria: { type: boolean, enum: [true] }
+        aplicacaoAutomatica: { type: boolean, enum: [false] }
+        conteudoTratadoComoDado: { type: boolean, enum: [true] }
+    TemplateLegislativo:
+      type: object
+      required: [id, tipo, nome, estrutura, ativo, criadoEm, atualizadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        tipo:
+          type: string
+          enum: [INDICACAO, REQUERIMENTO, OFICIO, MOCAO, PEDIDO_INFORMACAO, PROJETO_LEI]
+        nome: { type: string, maxLength: 160 }
+        estrutura: { type: string, maxLength: 20000 }
+        ativo: { type: boolean }
+        criadoEm: { type: string, format: date-time }
+        atualizadoEm: { type: string, format: date-time }
+    SolicitacaoVinculada:
+      type: object
+      required: [id, protocolo, principal]
+      properties:
+        id: { type: string, format: uuid }
+        protocolo: { type: string }
+        titulo: { type: string }
+        principal: { type: boolean }
+    VersaoMinutaLegislativa:
+      type: object
+      required: [id, numero, motivo, autor, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: integer, minimum: 1 }
+        motivo: { type: string }
+        autor: { type: string }
+        criadaEm: { type: string, format: date-time }
+        titulo: { type: string }
+        conteudo: { type: string }
+        justificativa: { type: string, nullable: true }
+        fundamentacaoNormativa:
+          type: array
+          items: { $ref: "#/components/schemas/FonteNormativa" }
+        fundamentacaoSugerida:
+          allOf:
+            - $ref: "#/components/schemas/ResultadoRecuperacaoFundamentacao"
+          nullable: true
+        trechosSemFundamentacao:
+          type: array
+          items: { type: object, additionalProperties: true }
+    DiferencaCampoVersao:
+      type: object
+      required: [alterado, anterior, posterior, linhasAdicionadas, linhasRemovidas, diferencas]
+      properties:
+        alterado: { type: boolean }
+        anterior: { type: string }
+        posterior: { type: string }
+        linhasAdicionadas: { type: integer, minimum: 0 }
+        linhasRemovidas: { type: integer, minimum: 0 }
+        diferencas:
+          type: array
+          items:
+            type: object
+            required: [tipo, texto]
+            properties:
+              tipo: { type: string, enum: [IGUAL, ADICIONADA, REMOVIDA] }
+              texto: { type: string }
+    ComparacaoVersoesMinuta:
+      type: object
+      required: [de, para, camposAlterados, linhasAdicionadas, linhasRemovidas, campos]
+      properties:
+        de: { type: integer, minimum: 1 }
+        para: { type: integer, minimum: 1 }
+        camposAlterados:
+          type: array
+          items: { type: string }
+        linhasAdicionadas: { type: integer, minimum: 0 }
+        linhasRemovidas: { type: integer, minimum: 0 }
+        campos:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/DiferencaCampoVersao"
+    PrecedenteLegislativo:
+      type: object
+      required: [id, titulo, tipo, status, resumo, similaridade, similaridadeSemantica, similaridadeLexical, justificativas]
+      properties:
+        id: { type: string, format: uuid }
+        titulo: { type: string }
+        tipo:
+          type: string
+          enum: [INDICACAO, REQUERIMENTO, OFICIO, MOCAO, PEDIDO_INFORMACAO, PROJETO_LEI]
+        status:
+          type: string
+          enum: [RASCUNHO, EM_REVISAO, APROVADA, REJEITADA]
+        protocolo: { type: string, nullable: true }
+        resumo: { type: string }
+        similaridade: { type: number, minimum: 0, maximum: 1 }
+        similaridadeSemantica: { type: number, minimum: 0, maximum: 1 }
+        similaridadeLexical: { type: number, minimum: 0, maximum: 1 }
+        criadaEm: { type: string, format: date-time }
+        atualizadaEm: { type: string, format: date-time }
+        aprovadaEm: { type: string, format: date-time, nullable: true }
+        justificativas:
+          type: array
+          items: { type: string }
+    ResultadoBuscaPrecedentes:
+      type: object
+      required: [consulta, modelo, fallbackUtilizado, limiar, totalCandidatos, content]
+      properties:
+        consulta: { type: string }
+        modelo: { type: string }
+        fallbackUtilizado: { type: boolean }
+        erroFallback: { type: string, nullable: true }
+        limiar: { type: number, minimum: 0, maximum: 1 }
+        totalCandidatos: { type: integer, minimum: 0 }
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/PrecedenteLegislativo" }
+    MinutaLegislativa:
+      type: object
+      required: [id, tipo, status, statusGeracao, titulo, protocoloAutomatico]
+      properties:
+        id: { type: string, format: uuid }
+        tipo:
+          type: string
+          enum: [INDICACAO, REQUERIMENTO, OFICIO, MOCAO, PEDIDO_INFORMACAO, PROJETO_LEI]
+        status:
+          type: string
+          enum: [RASCUNHO, EM_REVISAO, APROVADA, REJEITADA]
+        statusGeracao:
+          type: string
+          enum: [PENDENTE, PROCESSANDO, CONCLUIDA, FALHOU]
+        titulo: { type: string }
+        conteudo: { type: string }
+        justificativa: { type: string }
+        versaoAtual: { type: integer, minimum: 0 }
+        versoes:
+          type: array
+          items: { $ref: "#/components/schemas/VersaoMinutaLegislativa" }
+        fundamentacaoNormativa:
+          type: array
+          items: { $ref: "#/components/schemas/FonteNormativa" }
+        fontes:
+          type: array
+          items: { $ref: "#/components/schemas/FonteNormativa" }
+        trechosSemFundamentacao:
+          type: array
+          items:
+            type: object
+            properties:
+              trecho: { type: string }
+              motivo: { type: string }
+              severidade: { type: string }
+        proposicoesSemelhantes:
+          type: array
+          items: { $ref: "#/components/schemas/PrecedenteLegislativo" }
+        solicitacoes:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: "#/components/schemas/SolicitacaoVinculada" }
+        protocolo: { type: string }
+        protocoladaEm: { type: string, format: date-time }
+        statusTramitacao:
+          type: string
+          enum: [PROTOCOLADA, DISTRIBUIDA, EM_COMISSAO, EM_PAUTA, APROVADA, REJEITADA, SANCIONADA, VETADA, ARQUIVADA, RETIRADA]
+        tramitacoes:
+          type: array
+          items: { $ref: "#/components/schemas/TramitacaoLegislativa" }
+        protocoloAutomatico: { type: boolean, enum: [false] }
+    TramitacaoLegislativa:
+      type: object
+      required: [id, status, etapa, ocorridaEm, registradaEm]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PROTOCOLADA, DISTRIBUIDA, EM_COMISSAO, EM_PAUTA, APROVADA, REJEITADA, SANCIONADA, VETADA, ARQUIVADA, RETIRADA]
+        etapa: { type: string }
+        destino: { type: string }
+        referenciaExterna: { type: string }
+        observacoes: { type: string }
+        ocorridaEm: { type: string, format: date-time }
+        registradaEm: { type: string, format: date-time }
     RagQueryRequest:
       type: object
       required: [pergunta]

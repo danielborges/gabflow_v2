@@ -1,5 +1,11 @@
 # Arquitetura RAG
 
+## Fundação normativa já implementada
+
+A Produção Legislativa utiliza o adaptador `FoundationRetriever` como primeira integração RAG-ready. Nesta fase, o catálogo relacional fornece fontes versionadas e vigentes, e o Ollama calcula embeddings localmente com fallback lexical. A resposta já preserva coleção, modelo, scores, IDs, referências, versões e checksums. A aplicação de uma citação continua condicionada à revisão humana e cria uma nova versão auditável da minuta.
+
+O índice vetorial e a ingestão documental genérica permanecem evoluções futuras de RIA-040 a RIA-049. A troca do backend de recuperação deve preservar o contrato, a filtragem por tenant, a validação de vigência e a proibição de executar instruções encontradas nas fontes.
+
 ## Fontes
 
 - Lei Orgânica.

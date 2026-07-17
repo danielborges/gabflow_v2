@@ -330,6 +330,9 @@ function RequestDetails({ request, references, onClose, onChanged }) {
     assunto: "",
     conteudo: "",
   });
+  const [responseDraftNotice, setResponseDraftNotice] = useState("");
+  const responseFormRef = useRef(null);
+  const responseMessageRef = useRef(null);
   const [scheduledReturn, setScheduledReturn] = useState({
     agendadoPara: "",
     responsavelId: request.responsavelId || "",
@@ -456,6 +459,7 @@ function RequestDetails({ request, references, onClose, onChanged }) {
         body: JSON.stringify(response),
       });
       setResponse({ templateId: "", canal: "WHATSAPP", assunto: "", conteudo: "" });
+      setResponseDraftNotice("");
       await refresh();
     } catch (requestError) {
       setError(requestError.message);
@@ -469,7 +473,13 @@ function RequestDetails({ request, references, onClose, onChanged }) {
       assunto: suggestion.assunto || "",
       conteudo: suggestion.conteudo || "",
     });
-    requestAnimationFrame(() => document.getElementById("citizen-response-form")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    setResponseDraftNotice(
+      "Resposta sugerida aplicada ao formulário. Revise o conteúdo antes de registrar a saída.",
+    );
+    requestAnimationFrame(() => {
+      responseFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      responseMessageRef.current?.focus({ preventScroll: true });
+    });
   }
 
   async function addScheduledReturn(event) {
@@ -768,11 +778,17 @@ function RequestDetails({ request, references, onClose, onChanged }) {
               onUse={useAssistantResponse}
               onError={setError}
             />
-            <form id="citizen-response-form" className="communication-form" onSubmit={sendResponse}>
+            <form
+              id="citizen-response-form"
+              ref={responseFormRef}
+              className={responseDraftNotice ? "communication-form response-draft-active" : "communication-form"}
+              onSubmit={sendResponse}
+            >
+              {responseDraftNotice && <p className="response-draft-notice"><CheckCircle2 size={16} /> {responseDraftNotice}</p>}
               <label>Template<select value={response.templateId} onChange={(event) => selectResponseTemplate(event.target.value)}><option value="">Resposta livre</option>{references.templates.filter((item) => item.ativa && (!item.categoriaId || item.categoriaId === request.categoriaId)).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
               <label>Canal<select value={response.canal} onChange={(event) => setResponse((current) => ({ ...current, canal: event.target.value }))}><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">E-mail</option><option value="TELEFONE">Telefone</option><option value="PRESENCIAL">Presencial</option><option value="INTERNO">Interno</option></select></label>
               {response.canal === "EMAIL" && <label>Assunto<input required value={response.assunto} onChange={(event) => setResponse((current) => ({ ...current, assunto: event.target.value }))} placeholder={`Atualização da solicitação ${request.protocolo}`} /></label>}
-              <label>Mensagem<textarea required rows="5" value={response.conteudo} onChange={(event) => setResponse((current) => ({ ...current, conteudo: event.target.value }))} placeholder="Visualize e ajuste a mensagem antes de registrar." /></label>
+              <label>Mensagem<textarea ref={responseMessageRef} required rows="5" value={response.conteudo} onChange={(event) => setResponse((current) => ({ ...current, conteudo: event.target.value }))} placeholder="Visualize e ajuste a mensagem antes de registrar." /></label>
               <button className="primary-button compact"><Send size={17} /> Registrar saída</button>
             </form>
           </section>
@@ -913,7 +929,16 @@ export function AttachmentDropzone({ file, uploading, onFile, onError, onSubmit 
   );
 }
 
-export function RequestSearchSelect({ value, excludeId, onChange }) {
+export function RequestSearchSelect({
+  value,
+  excludeId,
+  excludeIds = [],
+  label = "Solicitação relacionada",
+  placeholder = "Busque por protocolo, título ou descrição",
+  clearAfterSelect = false,
+  onChange,
+  onSelect,
+}) {
   const inputId = useId();
   const listboxId = useId();
   const [query, setQuery] = useState("");
@@ -923,6 +948,7 @@ export function RequestSearchSelect({ value, excludeId, onChange }) {
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
+  const excludedIdsKey = [excludeId, ...excludeIds].filter(Boolean).join("|");
 
   useEffect(() => {
     if (value) return;
@@ -941,7 +967,8 @@ export function RequestSearchSelect({ value, excludeId, onChange }) {
       try {
         const data = await apiRequest(`/api/v1/solicitacoes?${params}`);
         if (!active) return;
-        setOptions(data.content.filter((item) => item.id !== excludeId));
+        const excluded = new Set(excludedIdsKey.split("|").filter(Boolean));
+        setOptions(data.content.filter((item) => !excluded.has(item.id)));
         setActiveIndex(-1);
       } catch (requestError) {
         if (!active) return;
@@ -955,14 +982,15 @@ export function RequestSearchSelect({ value, excludeId, onChange }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [excludeId, open, query]);
+  }, [excludedIdsKey, open, query]);
 
   function selectOption(option) {
-    setSelected(option);
+    setSelected(clearAfterSelect ? null : option);
     setQuery("");
     setOpen(false);
     setActiveIndex(-1);
     onChange(option.id);
+    onSelect?.(option);
   }
 
   function changeQuery(event) {
@@ -1005,7 +1033,7 @@ export function RequestSearchSelect({ value, excludeId, onChange }) {
         }
       }}
     >
-      <label htmlFor={inputId}>Solicitação relacionada</label>
+      <label htmlFor={inputId}>{label}</label>
       <div className={`search-select-control ${open ? "is-open" : ""}`}>
         <Search size={17} aria-hidden="true" />
         <input
@@ -1016,7 +1044,7 @@ export function RequestSearchSelect({ value, excludeId, onChange }) {
           aria-expanded={open}
           aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
           autoComplete="off"
-          placeholder="Busque por protocolo, título ou descrição"
+          placeholder={placeholder}
           value={displayValue}
           onChange={changeQuery}
           onFocus={(event) => {
@@ -1335,6 +1363,7 @@ export function AIAssistancePanel({ request, defaultChannel = "WHATSAPP", onChan
   async function useSuggestion() {
     setSubmitting(true);
     onError("");
+    onUse(draft);
     try {
       if (assistance.statusRevisao === "PENDENTE") {
         await apiRequest(`/api/v1/assistencias-ia/${assistance.id}/revisao`, {
@@ -1343,7 +1372,6 @@ export function AIAssistancePanel({ request, defaultChannel = "WHATSAPP", onChan
         });
         await refresh();
       }
-      onUse(draft);
     } catch (requestError) {
       onError(requestError.message);
     } finally {
