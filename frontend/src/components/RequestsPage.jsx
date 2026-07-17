@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   ArrowRight,
   CalendarClock,
   CheckCircle2,
@@ -7,6 +8,7 @@ import {
   Filter,
   Link2,
   RotateCcw,
+  ScanText,
   ShieldAlert,
   Sparkles,
   MessageSquarePlus,
@@ -19,7 +21,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { apiRequest } from "../api";
 
 const sources = [
@@ -53,6 +55,21 @@ const emptyReferences = {
   agencies: [],
   templates: [],
 };
+
+const attachmentMimeTypes = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "text/plain",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/ogg",
+  "audio/wav",
+  "audio/webm",
+  "audio/x-wav",
+  "video/mp4",
+];
+const maximumAttachmentBytes = 15 * 1024 * 1024;
 
 export function RequestsPage() {
   const [items, setItems] = useState([]);
@@ -208,7 +225,6 @@ export function RequestsPage() {
       {selected && (
         <RequestDetails
           request={selected}
-          requests={items}
           references={references}
           onClose={() => setSelected(null)}
           onChanged={(updated) => {
@@ -299,7 +315,7 @@ function RequestForm({ references, onClose, onCreated }) {
   );
 }
 
-function RequestDetails({ request, requests, references, onClose, onChanged }) {
+function RequestDetails({ request, references, onClose, onChanged }) {
   const linkedCitizen = references.citizens.find((item) => item.id === request.cidadaoId);
   const preferredChannel = linkedCitizen?.canalPreferencial || "";
   const [status, setStatus] = useState(request.status);
@@ -325,6 +341,7 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
   const [duplicateId, setDuplicateId] = useState("");
   const [duplicateReason, setDuplicateReason] = useState("");
   const [attachment, setAttachment] = useState(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [forwarding, setForwarding] = useState({ orgaoId: request.orgaoId || "", protocoloExterno: "", prazo: "" });
   const [externalResponse, setExternalResponse] = useState("");
   const [reopenReason, setReopenReason] = useState("");
@@ -348,7 +365,15 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
   }, [request.categoriaId]);
 
   useEffect(() => {
-    if (!["PENDENTE", "PROCESSANDO"].includes(request.triagemIA?.status)) return undefined;
+    const triagePending = ["PENDENTE", "PROCESSANDO"].includes(request.triagemIA?.status);
+    const assistancePending = ["PENDENTE", "PROCESSANDO"].includes(request.assistenciaIA?.status);
+    const transcriptionPending = (request.anexos || []).some((item) =>
+      ["PENDENTE", "PROCESSANDO"].includes(item.transcricao?.status),
+    );
+    const ocrPending = (request.anexos || []).some((item) =>
+      ["PENDENTE", "PROCESSANDO"].includes(item.ocr?.status),
+    );
+    if (!triagePending && !assistancePending && !transcriptionPending && !ocrPending) return undefined;
     const timer = setInterval(async () => {
       try {
         onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
@@ -357,7 +382,7 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
       }
     }, 2000);
     return () => clearInterval(timer);
-  }, [onChanged, request.id, request.triagemIA?.status]);
+  }, [onChanged, request.anexos, request.assistenciaIA?.status, request.id, request.triagemIA?.status]);
 
   async function refresh() {
     onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
@@ -437,6 +462,16 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
     }
   }
 
+  function useAssistantResponse(suggestion) {
+    setResponse({
+      templateId: "",
+      canal: suggestion.canal || "WHATSAPP",
+      assunto: suggestion.assunto || "",
+      conteudo: suggestion.conteudo || "",
+    });
+    requestAnimationFrame(() => document.getElementById("citizen-response-form")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+
   async function addScheduledReturn(event) {
     event.preventDefault();
     setError("");
@@ -499,6 +534,7 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
 
   async function groupDuplicate(event) {
     event.preventDefault();
+    if (!duplicateId) return;
     setError("");
     try {
       await apiRequest("/api/v1/solicitacoes/agrupar-duplicadas", {
@@ -519,16 +555,18 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
     const formData = new FormData();
     formData.append("arquivo", attachment);
     setError("");
+    setUploadingAttachment(true);
     try {
       await apiRequest(`/api/v1/solicitacoes/${request.id}/anexos`, {
         method: "POST",
         body: formData,
       });
       setAttachment(null);
-      event.currentTarget.reset();
       await refresh();
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setUploadingAttachment(false);
     }
   }
 
@@ -616,7 +654,6 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
   }
 
   const closing = ["RESOLVIDA", "ENCERRADA", "CANCELADA"].includes(status);
-  const duplicateCandidates = requests.filter((item) => item.id !== request.id);
   return (
     <div className="drawer-backdrop" role="presentation">
       <aside className="request-drawer" role="dialog" aria-modal="true" aria-labelledby="request-title">
@@ -635,6 +672,7 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
           <AITriagePanel
             request={request}
             categories={references.categories}
+            agencies={references.agencies}
             onChanged={onChanged}
             onError={setError}
           />
@@ -674,25 +712,63 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
           <section className="drawer-section">
             <h3>Anexos</h3>
             <div className="attachment-list">
-              {(request.anexos || []).map((item) => <a key={item.id} href={item.downloadUrl} target="_blank" rel="noreferrer"><Paperclip size={16} /><span><strong>{item.nome}</strong><small>{formatBytes(item.tamanho)} · {item.statusVerificacao}</small></span></a>)}
+              {(request.anexos || []).map((item) => (
+                <article className="attachment-item" key={item.id}>
+                  <a href={item.downloadUrl} target="_blank" rel="noreferrer">
+                    <Paperclip size={16} />
+                    <span><strong>{item.nome}</strong><small>{formatBytes(item.tamanho)} · {item.statusVerificacao}</small></span>
+                  </a>
+                  {item.transcricao && (
+                    <AudioTranscriptionPanel
+                      attachment={item}
+                      onRefresh={refresh}
+                      onError={setError}
+                    />
+                  )}
+                  {item.ocr && (
+                    <DocumentOcrPanel
+                      attachment={item}
+                      onRefresh={refresh}
+                      onError={setError}
+                    />
+                  )}
+                </article>
+              ))}
               {(request.anexos || []).length === 0 && <p className="muted-copy">Nenhum anexo enviado.</p>}
             </div>
-            <form className="upload-form" onSubmit={uploadAttachment}><input aria-label="Selecionar anexo" type="file" onChange={(event) => setAttachment(event.target.files[0])} /><button className="secondary-button" disabled={!attachment}><Upload size={17} /> Enviar</button></form>
+            <AttachmentDropzone
+              file={attachment}
+              uploading={uploadingAttachment}
+              onFile={setAttachment}
+              onError={setError}
+              onSubmit={uploadAttachment}
+            />
           </section>
 
           <section className="drawer-section">
             <h3>Duplicidades</h3>
             {(request.duplicidades || []).length > 0 && <div className="duplicate-list">{request.duplicidades.map((item) => <span key={item.id}><Link2 size={15} /> {item.protocolo}</span>)}</div>}
             <form className="duplicate-form" onSubmit={groupDuplicate}>
-              <label>Solicitação relacionada<select required value={duplicateId} onChange={(event) => setDuplicateId(event.target.value)}><option value="">Selecione</option>{duplicateCandidates.map((item) => <option key={item.id} value={item.id}>{item.protocolo} · {item.titulo}</option>)}</select></label>
+              <RequestSearchSelect
+                value={duplicateId}
+                excludeId={request.id}
+                onChange={setDuplicateId}
+              />
               <label>Motivo<input required value={duplicateReason} onChange={(event) => setDuplicateReason(event.target.value)} placeholder="Mesmo relato, local e ocorrência" /></label>
-              <button className="secondary-button action-button"><Link2 size={17} /> Agrupar sem excluir</button>
+              <button className="secondary-button action-button" disabled={!duplicateId}><Link2 size={17} /> Agrupar sem excluir</button>
             </form>
           </section>
 
           <section className="drawer-section">
             <h3>Resposta ao cidadão</h3>
-            <form className="communication-form" onSubmit={sendResponse}>
+            <AIAssistancePanel
+              request={request}
+              defaultChannel={response.canal}
+              onChanged={onChanged}
+              onUse={useAssistantResponse}
+              onError={setError}
+            />
+            <form id="citizen-response-form" className="communication-form" onSubmit={sendResponse}>
               <label>Template<select value={response.templateId} onChange={(event) => selectResponseTemplate(event.target.value)}><option value="">Resposta livre</option>{references.templates.filter((item) => item.ativa && (!item.categoriaId || item.categoriaId === request.categoriaId)).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
               <label>Canal<select value={response.canal} onChange={(event) => setResponse((current) => ({ ...current, canal: event.target.value }))}><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">E-mail</option><option value="TELEFONE">Telefone</option><option value="PRESENCIAL">Presencial</option><option value="INTERNO">Interno</option></select></label>
               {response.canal === "EMAIL" && <label>Assunto<input required value={response.assunto} onChange={(event) => setResponse((current) => ({ ...current, assunto: event.target.value }))} placeholder={`Atualização da solicitação ${request.protocolo}`} /></label>}
@@ -759,12 +835,590 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
   );
 }
 
-export function AITriagePanel({ request, categories, onChanged, onError }) {
+export function AttachmentDropzone({ file, uploading, onFile, onError, onSubmit }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef(null);
+
+  function selectFile(selectedFile) {
+    if (!selectedFile) return;
+    if (selectedFile.size > maximumAttachmentBytes) {
+      onError("O arquivo excede o limite de 15 MB.");
+      return;
+    }
+    if (selectedFile.type && !attachmentMimeTypes.includes(selectedFile.type)) {
+      onError("Tipo de arquivo não permitido.");
+      return;
+    }
+    onError("");
+    onFile(selectedFile);
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setDragging(false);
+    selectFile(event.dataTransfer.files?.[0]);
+  }
+
+  return (
+    <form className="attachment-upload" onSubmit={onSubmit}>
+      <input
+        ref={inputRef}
+        className="visually-hidden"
+        type="file"
+        value=""
+        accept={attachmentMimeTypes.join(",")}
+        onChange={(event) => selectFile(event.target.files?.[0])}
+      />
+      <div
+        className={`attachment-dropzone ${dragging ? "is-dragging" : ""}`}
+        role="button"
+        tabIndex="0"
+        aria-label="Selecionar ou arrastar arquivo para anexar"
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+        }}
+        onDrop={handleDrop}
+      >
+        <span className="attachment-drop-icon"><Upload size={21} /></span>
+        <span><strong>Arraste o arquivo para cá</strong><small>ou clique para selecionar · máximo de 15 MB</small></span>
+      </div>
+      {file && (
+        <div className="selected-attachment">
+          <Paperclip size={17} />
+          <span><strong>{file.name}</strong><small>{formatBytes(file.size)}</small></span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Remover arquivo selecionado"
+            title="Remover arquivo"
+            onClick={() => onFile(null)}
+          >
+            <X size={17} />
+          </button>
+        </div>
+      )}
+      <button className="secondary-button attachment-submit" disabled={!file || uploading}>
+        <Upload size={17} /> {uploading ? "Enviando..." : "Enviar anexo"}
+      </button>
+    </form>
+  );
+}
+
+export function RequestSearchSelect({ value, excludeId, onChange }) {
+  const inputId = useId();
+  const listboxId = useId();
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [options, setOptions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  useEffect(() => {
+    if (value) return;
+    setSelected(null);
+    setQuery("");
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let active = true;
+    setLoading(true);
+    setSearchError("");
+    const timer = setTimeout(async () => {
+      const params = new URLSearchParams({ size: "8" });
+      if (query.trim()) params.set("q", query.trim());
+      try {
+        const data = await apiRequest(`/api/v1/solicitacoes?${params}`);
+        if (!active) return;
+        setOptions(data.content.filter((item) => item.id !== excludeId));
+        setActiveIndex(-1);
+      } catch (requestError) {
+        if (!active) return;
+        setOptions([]);
+        setSearchError(requestError.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [excludeId, open, query]);
+
+  function selectOption(option) {
+    setSelected(option);
+    setQuery("");
+    setOpen(false);
+    setActiveIndex(-1);
+    onChange(option.id);
+  }
+
+  function changeQuery(event) {
+    if (selected) {
+      setSelected(null);
+      onChange("");
+    }
+    setQuery(event.target.value);
+    setOpen(true);
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => Math.min(current + 1, options.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(current - 1, 0));
+    } else if (event.key === "Enter" && open && activeIndex >= 0) {
+      event.preventDefault();
+      selectOption(options[activeIndex]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  }
+
+  const displayValue = selected
+    ? `${selected.protocolo} · ${selected.titulo || "Sem título"}`
+    : query;
+
+  return (
+    <div
+      className="request-search-select"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setOpen(false);
+          setActiveIndex(-1);
+        }
+      }}
+    >
+      <label htmlFor={inputId}>Solicitação relacionada</label>
+      <div className={`search-select-control ${open ? "is-open" : ""}`}>
+        <Search size={17} aria-hidden="true" />
+        <input
+          id={inputId}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={open}
+          aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+          autoComplete="off"
+          placeholder="Busque por protocolo, título ou descrição"
+          value={displayValue}
+          onChange={changeQuery}
+          onFocus={(event) => {
+            setOpen(true);
+            if (selected) event.currentTarget.select();
+          }}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          type="button"
+          className="search-select-toggle"
+          aria-label={open ? "Fechar opções" : "Abrir opções"}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <ChevronDown size={17} aria-hidden="true" />
+        </button>
+      </div>
+      {open && (
+        <div className="search-select-menu" id={listboxId} role="listbox">
+          {loading ? (
+            <p>Buscando solicitações...</p>
+          ) : searchError ? (
+            <p className="search-select-error">{searchError}</p>
+          ) : options.length === 0 ? (
+            <p>Nenhuma solicitação encontrada.</p>
+          ) : options.map((option, index) => (
+            <div
+              id={`${listboxId}-${index}`}
+              key={option.id}
+              className={index === activeIndex ? "is-active" : ""}
+              role="option"
+              aria-selected={option.id === value}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => selectOption(option)}
+            >
+              <strong>{option.protocolo}</strong>
+              <span>{option.titulo || "Sem título"}</span>
+              <small>{statusLabel(option.status)}</small>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AudioTranscriptionPanel({ attachment, onRefresh, onError }) {
+  const transcription = attachment.transcricao;
+  const reviewed = transcription.statusRevisao !== "PENDENTE";
+  const [text, setText] = useState(
+    transcription.textoRevisado || transcription.textoGerado || "",
+  );
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setText(transcription.textoRevisado || transcription.textoGerado || "");
+  }, [transcription.textoGerado, transcription.textoRevisado]);
+
+  async function review(action) {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/transcricoes-audio/${transcription.id}/revisao`, {
+        method: "POST",
+        body: JSON.stringify({ acao: action, ...(action === "EDITAR" ? { texto: text } : {}) }),
+      });
+      await onRefresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function reprocess() {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/transcricoes-audio/${transcription.id}/reprocessar`, {
+        method: "POST",
+      });
+      await onRefresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (["PENDENTE", "PROCESSANDO"].includes(transcription.status)) {
+    return (
+      <div className="audio-transcription is-processing">
+        <div className="audio-transcription-heading">
+          <AudioLines size={17} />
+          <div><strong>Transcrevendo áudio</strong><small>Processamento local em andamento</small></div>
+        </div>
+        <div className="ai-progress" aria-label="Transcrição em processamento"><span /></div>
+      </div>
+    );
+  }
+
+  if (transcription.status === "FALHOU") {
+    return (
+      <div className="audio-transcription has-error">
+        <div className="audio-transcription-heading">
+          <AudioLines size={17} />
+          <div><strong>Não foi possível transcrever</strong><small>{transcription.erro}</small></div>
+        </div>
+        <button className="secondary-button" onClick={reprocess} disabled={submitting}>
+          <RotateCcw size={16} /> Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="audio-transcription">
+      <div className="audio-transcription-heading">
+        <AudioLines size={17} />
+        <div>
+          <strong>Transcrição local</strong>
+          <small>{transcription.modelo} · {transcription.idioma || "idioma não identificado"} · {formatDuration(transcription.duracaoSegundos)}</small>
+        </div>
+      </div>
+      <audio controls preload="metadata" src={attachment.downloadUrl}>
+        Seu navegador não suporta a reprodução deste áudio.
+      </audio>
+      <label>
+        Texto transcrito
+        <textarea
+          rows="6"
+          value={text}
+          disabled={reviewed}
+          onChange={(event) => setText(event.target.value)}
+        />
+      </label>
+      {reviewed ? (
+        <div className={`audio-review-status review-${transcription.statusRevisao.toLowerCase()}`}>
+          {transcription.statusRevisao === "REJEITADA" ? <X size={17} /> : <CheckCircle2 size={17} />}
+          <span>{transcriptionReviewLabel(transcription.statusRevisao)}</span>
+        </div>
+      ) : (
+        <div className="audio-review-actions">
+          <button className="primary-button compact" onClick={() => review("ACEITAR")} disabled={submitting}>
+            <CheckCircle2 size={16} /> Aceitar transcrição
+          </button>
+          <button className="secondary-button" onClick={() => review("EDITAR")} disabled={submitting || !text.trim()}>
+            Aplicar correções
+          </button>
+          <button className="secondary-button danger-text" onClick={() => review("REJEITAR")} disabled={submitting}>
+            <X size={16} /> Rejeitar
+          </button>
+        </div>
+      )}
+      <p className="audio-original-note">O arquivo de áudio original é preservado independentemente da revisão.</p>
+    </div>
+  );
+}
+
+export function DocumentOcrPanel({ attachment, onRefresh, onError }) {
+  const ocr = attachment.ocr;
+  const reviewed = ocr.statusRevisao !== "PENDENTE";
+  const [text, setText] = useState(ocr.textoRevisado || ocr.textoGerado || "");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setText(ocr.textoRevisado || ocr.textoGerado || "");
+  }, [ocr.textoGerado, ocr.textoRevisado]);
+
+  async function review(action) {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/ocr-documentos/${ocr.id}/revisao`, {
+        method: "POST",
+        body: JSON.stringify({ acao: action, ...(action === "EDITAR" ? { texto: text } : {}) }),
+      });
+      await onRefresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function reprocess() {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/ocr-documentos/${ocr.id}/reprocessar`, { method: "POST" });
+      await onRefresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (["PENDENTE", "PROCESSANDO"].includes(ocr.status)) {
+    return (
+      <div className="audio-transcription document-ocr is-processing">
+        <div className="audio-transcription-heading">
+          <ScanText size={17} />
+          <div><strong>Extraindo texto</strong><small>OCR local em andamento</small></div>
+        </div>
+        <div className="ai-progress" aria-label="OCR em processamento"><span /></div>
+      </div>
+    );
+  }
+
+  if (ocr.status === "FALHOU") {
+    return (
+      <div className="audio-transcription document-ocr has-error">
+        <div className="audio-transcription-heading">
+          <ScanText size={17} />
+          <div><strong>Não foi possível extrair o texto</strong><small>{ocr.erro}</small></div>
+        </div>
+        <button className="secondary-button" onClick={reprocess} disabled={submitting}>
+          <RotateCcw size={16} /> Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
+  const confidence = ocr.confianca == null ? null : Math.round(ocr.confianca * 100);
+  return (
+    <div className="audio-transcription document-ocr">
+      <div className="audio-transcription-heading">
+        <ScanText size={17} />
+        <div>
+          <strong>OCR local</strong>
+          <small>{ocr.modelo} · {ocr.idioma} · {ocr.paginas} {ocr.paginas === 1 ? "página" : "páginas"}</small>
+        </div>
+        {confidence != null && <span className="ocr-confidence">{confidence}% confiança</span>}
+      </div>
+      {(ocr.detalhesPaginas || []).length > 1 && (
+        <div className="ocr-page-confidence" aria-label="Confiança por página">
+          {ocr.detalhesPaginas.map((page) => (
+            <span key={page.pagina}>Pág. {page.pagina}: {Math.round(page.confianca * 100)}%</span>
+          ))}
+        </div>
+      )}
+      <label>
+        Texto extraído
+        <textarea
+          rows="8"
+          value={text}
+          disabled={reviewed}
+          onChange={(event) => setText(event.target.value)}
+        />
+      </label>
+      {reviewed ? (
+        <div className={`audio-review-status review-${ocr.statusRevisao.toLowerCase()}`}>
+          {ocr.statusRevisao === "REJEITADO" ? <X size={17} /> : <CheckCircle2 size={17} />}
+          <span>{ocrReviewLabel(ocr.statusRevisao)}</span>
+        </div>
+      ) : (
+        <div className="audio-review-actions ocr-review-actions">
+          <button className="primary-button compact" onClick={() => review("ACEITAR")} disabled={submitting}>
+            <CheckCircle2 size={16} /> Aceitar texto
+          </button>
+          <button className="secondary-button" onClick={() => review("EDITAR")} disabled={submitting || !text.trim()}>
+            Aplicar correções
+          </button>
+          <button className="secondary-button danger-text" onClick={() => review("REJEITAR")} disabled={submitting}>
+            <X size={16} /> Rejeitar
+          </button>
+        </div>
+      )}
+      <p className="audio-original-note">O documento original é preservado independentemente da revisão.</p>
+    </div>
+  );
+}
+
+export function AIAssistancePanel({ request, defaultChannel = "WHATSAPP", onChanged, onUse, onError }) {
+  const assistance = request.assistenciaIA;
+  const result = assistance?.resultado || {};
+  const suggestion = result.respostaSugerida || {};
+  const [tone, setTone] = useState("ACOLHEDOR");
+  const [channel, setChannel] = useState(defaultChannel);
+  const [draft, setDraft] = useState({ canal: defaultChannel, assunto: "", conteudo: "" });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!suggestion.conteudo) return;
+    setDraft({
+      canal: suggestion.canal || defaultChannel,
+      assunto: suggestion.assunto || "",
+      conteudo: suggestion.conteudo,
+    });
+    setChannel(suggestion.canal || defaultChannel);
+    setTone(suggestion.tom || "ACOLHEDOR");
+  }, [assistance?.id, defaultChannel, suggestion.assunto, suggestion.canal, suggestion.conteudo, suggestion.tom]);
+
+  async function refresh() {
+    onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
+  }
+
+  async function generate() {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/solicitacoes/${request.id}/assistencia-ia`, {
+        method: "POST",
+        body: JSON.stringify({ canal: channel, tom: tone }),
+      });
+      await refresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function useSuggestion() {
+    setSubmitting(true);
+    onError("");
+    try {
+      if (assistance.statusRevisao === "PENDENTE") {
+        await apiRequest(`/api/v1/assistencias-ia/${assistance.id}/revisao`, {
+          method: "POST",
+          body: JSON.stringify({ acao: "EDITAR", valores: draft }),
+        });
+        await refresh();
+      }
+      onUse(draft);
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function rejectSuggestion() {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/assistencias-ia/${assistance.id}/revisao`, {
+        method: "POST",
+        body: JSON.stringify({ acao: "REJEITAR" }),
+      });
+      await refresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!assistance || assistance.status === "FALHOU") {
+    return (
+      <div className="ai-assistance-panel">
+        <div className="ai-assistance-heading"><Sparkles size={18} /><div><strong>Assistência de resposta</strong><small>Resumo, perguntas, documentos e próximos passos</small></div></div>
+        {assistance?.erro && <p className="form-error">Não foi possível gerar as sugestões. Tente novamente.</p>}
+        <div className="ai-assistance-controls">
+          <label>Tom<select value={tone} onChange={(event) => setTone(event.target.value)}><option value="ACOLHEDOR">Acolhedor</option><option value="CLARO">Claro</option><option value="FORMAL">Formal</option><option value="OBJETIVO">Objetivo</option></select></label>
+          <label>Canal<select value={channel} onChange={(event) => setChannel(event.target.value)}><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">E-mail</option><option value="TELEFONE">Telefone</option><option value="PRESENCIAL">Presencial</option><option value="INTERNO">Interno</option></select></label>
+        </div>
+        <button type="button" className="secondary-button action-button" onClick={generate} disabled={submitting}><Sparkles size={17} /> Gerar sugestões</button>
+      </div>
+    );
+  }
+
+  if (["PENDENTE", "PROCESSANDO"].includes(assistance.status)) {
+    return <div className="ai-assistance-panel ai-processing"><div className="ai-assistance-heading"><Sparkles size={18} /><div><strong>Preparando assistência</strong><small>O histórico está sendo analisado localmente</small></div></div><div className="ai-progress" aria-label="Assistência em processamento"><span /></div></div>;
+  }
+
+  const reviewed = assistance.statusRevisao !== "PENDENTE";
+  return (
+    <div className="ai-assistance-panel">
+      <div className="ai-assistance-heading">
+        <Sparkles size={18} />
+        <div><strong>Assistência de resposta</strong><small>{assistance.modelo} · {Math.round((assistance.confianca || 0) * 100)}% de confiança</small></div>
+      </div>
+      <div className="ai-assistance-summary"><span>Resumo para atendimento</span><p>{result.resumoHistorico}</p></div>
+      <div className="ai-assistance-grid">
+        <div><strong>Perguntas que faltam</strong><ul>{(result.perguntasFaltantes || []).map((item) => <li key={item}>{item}</li>)}</ul></div>
+        <div><strong>Documentos a confirmar</strong><ul>{(result.documentosNecessarios || []).map((item) => <li key={`${item.nome}-${item.motivo}`}><b>{item.nome}</b>: {item.motivo}</li>)}</ul></div>
+      </div>
+      <div className="ai-next-steps"><strong>Próximos passos sugeridos</strong><ol>{(result.proximosPassos || []).map((item) => <li key={`${item.ordem}-${item.acao}`}><span>{item.responsavel}</span><div><b>{item.acao}</b><small>{item.justificativa}</small></div></li>)}</ol></div>
+      <div className="ai-response-draft">
+        <div className="form-grid">
+          <label>Canal<select value={draft.canal} disabled={reviewed} onChange={(event) => setDraft((current) => ({ ...current, canal: event.target.value }))}><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">E-mail</option><option value="TELEFONE">Telefone</option><option value="PRESENCIAL">Presencial</option><option value="INTERNO">Interno</option></select></label>
+          {draft.canal === "EMAIL" && <label>Assunto<input value={draft.assunto} disabled={reviewed} onChange={(event) => setDraft((current) => ({ ...current, assunto: event.target.value }))} /></label>}
+        </div>
+        <label>Resposta sugerida<textarea rows="6" value={draft.conteudo} disabled={reviewed} onChange={(event) => setDraft((current) => ({ ...current, conteudo: event.target.value }))} /></label>
+      </div>
+      <p className="ai-no-autosend"><ShieldAlert size={16} /> Esta sugestão não será enviada automaticamente. Revise e use o botão Registrar saída abaixo.</p>
+      {!reviewed ? <div className="ai-assistance-actions"><button type="button" className="primary-button compact" onClick={useSuggestion} disabled={submitting || !draft.conteudo.trim()}><ArrowRight size={17} /> Usar na resposta</button><button type="button" className="secondary-button compact danger" onClick={rejectSuggestion} disabled={submitting}><X size={17} /> Rejeitar</button></div> : <div className={`ai-review-status review-${assistance.statusRevisao.toLowerCase()}`}><CheckCircle2 size={16} /> Revisão concluída: {assistance.statusRevisao === "REJEITADA" ? "sugestão rejeitada" : "rascunho transferido para revisão"}</div>}
+      <button type="button" className="text-button ai-regenerate" onClick={generate} disabled={submitting}><RotateCcw size={15} /> Gerar nova versão</button>
+    </div>
+  );
+}
+
+export function AITriagePanel({ request, categories, agencies = [], onChanged, onError }) {
   const triage = request.triagemIA;
   const suggestion = triage?.resultado || {};
   const [submitting, setSubmitting] = useState(false);
   const [values, setValues] = useState({
     categoriaId: suggestion.categoriaId || "",
+    orgaoId: suggestion.orgaoId || "",
     subcategoria: suggestion.subcategoria || "",
     prioridadeSugerida: suggestion.prioridadeSugerida || "MEDIA",
     impacto: suggestion.impacto || "MEDIO",
@@ -774,6 +1428,7 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
   useEffect(() => {
     setValues({
       categoriaId: suggestion.categoriaId || "",
+      orgaoId: suggestion.orgaoId || "",
       subcategoria: suggestion.subcategoria || "",
       prioridadeSugerida: suggestion.prioridadeSugerida || "MEDIA",
       impacto: suggestion.impacto || "MEDIO",
@@ -782,6 +1437,7 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
   }, [
     suggestion.categoriaId,
     suggestion.impacto,
+    suggestion.orgaoId,
     suggestion.prioridadeSugerida,
     suggestion.subcategoria,
     suggestion.urgencia,
@@ -825,6 +1481,25 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
     }
   }
 
+  async function groupSuggestedDuplicate(candidate) {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest("/api/v1/solicitacoes/agrupar-duplicadas", {
+        method: "POST",
+        body: JSON.stringify({
+          solicitacaoIds: [request.id, candidate.id],
+          motivo: `Similaridade semântica confirmada pelo usuário (${Math.round(candidate.pontuacao * 100)}%).`,
+        }),
+      });
+      await refresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (!triage || triage.status === "FALHOU") {
     return (
       <section className="drawer-section ai-triage-panel">
@@ -854,6 +1529,11 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
 
   const reviewed = triage.statusRevisao !== "PENDENTE";
   const confidence = Math.round((triage.confianca || 0) * 100);
+  const groupedIds = new Set((request.duplicidades || []).map((item) => item.id));
+  const duplicateAnalysis = suggestion.analiseDuplicidade || {};
+  const duplicateCandidates = (duplicateAnalysis.candidatos || []).filter(
+    (candidate) => !groupedIds.has(candidate.id),
+  );
   return (
     <section className={`drawer-section ai-triage-panel ${suggestion.emergencia ? "ai-emergency" : ""}`}>
       <header className="ai-triage-header">
@@ -878,6 +1558,18 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
           <div><strong>Possível emergência</strong><p>{suggestion.orientacaoEmergencia}</p></div>
         </div>
       )}
+      {suggestion.conteudoOfensivo && (
+        <div className="content-warning">
+          <ShieldAlert size={19} />
+          <div>
+            <strong>Linguagem sensível identificada</strong>
+            <p>O relato foi preservado e não teve seu atendimento bloqueado.</p>
+            {(suggestion.marcadoresConteudo || []).length > 0 && (
+              <small>{suggestion.marcadoresConteudo.join(" · ")}</small>
+            )}
+          </div>
+        </div>
+      )}
       <div className="ai-result-copy">
         <div>
           <span className="ai-content-label">Resumo do relato</span>
@@ -887,6 +1579,65 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
           <span className="ai-content-label">Motivo da sugestão</span>
           <p className="muted-copy">{suggestion.justificativa}</p>
         </div>
+        {suggestion.resumoEstruturado && (
+          <div className="ai-structured-summary">
+            <span className="ai-content-label">Resumo estruturado</span>
+            <dl>
+              <div><dt>Situação</dt><dd>{suggestion.resumoEstruturado.situacao}</dd></div>
+              <div><dt>Local</dt><dd>{suggestion.resumoEstruturado.local || "Não informado"}</dd></div>
+              <div><dt>Afetados</dt><dd>{suggestion.resumoEstruturado.afetados || "Não informado"}</dd></div>
+            </dl>
+            {(suggestion.resumoEstruturado.informacoesAusentes || []).length > 0 && (
+              <p className="ai-missing-info">
+                <strong>Informações ausentes:</strong>{" "}
+                {suggestion.resumoEstruturado.informacoesAusentes.join(", ")}
+              </p>
+            )}
+          </div>
+        )}
+        {entityEntries(suggestion.entidades).length > 0 && (
+          <div>
+            <span className="ai-content-label">Entidades identificadas</span>
+            <div className="ai-entities">
+              {entityEntries(suggestion.entidades).map(([label, value]) => (
+                <span key={`${label}-${value}`}><strong>{label}</strong>{value}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        {duplicateCandidates.length > 0 && (
+          <div className="ai-duplicate-analysis">
+            <div className="ai-duplicate-heading">
+              <div>
+                <span className="ai-content-label">Possíveis duplicidades</span>
+                <p>Compare os relatos antes de confirmar o agrupamento.</p>
+              </div>
+              <small>{duplicateAnalysis.modelo}</small>
+            </div>
+            <div className="ai-duplicate-list">
+              {duplicateCandidates.map((candidate) => {
+                const score = Math.round(candidate.pontuacao * 100);
+                return (
+                  <article key={candidate.id} className="ai-duplicate-item">
+                    <div className="ai-duplicate-copy">
+                      <div><strong>{candidate.protocolo}</strong><span>{score}% compatível</span></div>
+                      <p>{candidate.titulo}</p>
+                      <small>{(candidate.justificativas || []).join(" · ")}</small>
+                    </div>
+                    <button
+                      className="secondary-button"
+                      disabled={submitting}
+                      onClick={() => groupSuggestedDuplicate(candidate)}
+                    >
+                      <Link2 size={16} /> Confirmar duplicidade
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+            <p className="ai-duplicate-notice">Nenhum registro é excluído; a confirmação apenas relaciona as solicitações.</p>
+          </div>
+        )}
       </div>
       <div className={`ai-classification ${reviewed ? "is-reviewed" : ""}`}>
         <div className="ai-classification-heading">
@@ -897,6 +1648,7 @@ export function AITriagePanel({ request, categories, onChanged, onError }) {
           <label>Categoria<select disabled={reviewed} value={values.categoriaId} onChange={(event) => setValues((current) => ({ ...current, categoriaId: event.target.value }))}><option value="">Sem categoria</option>{categories.filter((item) => item.ativa).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
           <label>Subcategoria<input disabled={reviewed} value={values.subcategoria} onChange={(event) => setValues((current) => ({ ...current, subcategoria: event.target.value }))} /></label>
         </div>
+        <label>Órgão sugerido<select disabled={reviewed} value={values.orgaoId} onChange={(event) => setValues((current) => ({ ...current, orgaoId: event.target.value }))}><option value="">Sem órgão sugerido</option>{agencies.filter((item) => item.ativa).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
         <div className="form-grid ai-level-grid">
           <label>Prioridade<select disabled={reviewed} value={values.prioridadeSugerida} onChange={(event) => setValues((current) => ({ ...current, prioridadeSugerida: event.target.value }))}><option value="BAIXA">Baixa</option><option value="MEDIA">Média</option><option value="ALTA">Alta</option><option value="CRITICA">Crítica</option></select></label>
           <label>Impacto<select disabled={reviewed} value={values.impacto} onChange={(event) => setValues((current) => ({ ...current, impacto: event.target.value }))}><LevelOptions /></select></label>
@@ -928,10 +1680,9 @@ function ScheduledReturnItem({ item, onUpdate }) {
   const overdue = active && new Date(item.agendadoPara) < new Date();
 
   return <article className={`scheduled-return-item ${overdue ? "overdue" : ""}`}>
-    <div>
+    <div className="return-summary">
       <strong>{item.responsavel}</strong>
       <small>{formatDate(item.agendadoPara)} · {returnStatusLabel(item.status)}</small>
-      {item.observacoes && <p>{item.observacoes}</p>}
     </div>
     {active && <>
       <input aria-label="Nova data do retorno" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
@@ -941,6 +1692,7 @@ function ScheduledReturnItem({ item, onUpdate }) {
         <button type="button" className="icon-button" title="Cancelar" onClick={() => onUpdate(item.id, { status: "CANCELADO" })}><X size={17} /></button>
       </div>
     </>}
+    {item.observacoes && <p className="return-notes">{item.observacoes}</p>}
   </article>;
 }
 
@@ -949,7 +1701,11 @@ function CloseButton({ onClick }) {
 }
 
 function StatusBadge({ status }) {
-  return <span className={`status-badge status-${status.toLowerCase()}`}>{statuses.find(([value]) => value === status)?.[1] || status}</span>;
+  return <span className={`status-badge status-${status.toLowerCase()}`}>{statusLabel(status)}</span>;
+}
+
+function statusLabel(status) {
+  return statuses.find(([value]) => value === status)?.[1] || status;
 }
 
 function sourceLabel(source) {
@@ -974,6 +1730,30 @@ function formatBytes(value) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(value) {
+  if (value == null) return "duração não informada";
+  const total = Math.round(value);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes ? `${minutes}min ${seconds}s` : `${seconds}s`;
+}
+
+function transcriptionReviewLabel(value) {
+  return {
+    ACEITA: "Transcrição aceita",
+    EDITADA: "Transcrição corrigida",
+    REJEITADA: "Transcrição rejeitada",
+  }[value] || value;
+}
+
+function ocrReviewLabel(value) {
+  return {
+    ACEITO: "Texto aceito",
+    EDITADO: "Texto corrigido",
+    REJEITADO: "Texto rejeitado",
+  }[value] || value;
 }
 
 function slaLabel(value) {
@@ -1025,4 +1805,21 @@ function reviewLabel(value) {
     EDITADA: "Sugestão ajustada",
     REJEITADA: "Sugestão rejeitada",
   }[value] || value;
+}
+
+function entityEntries(entities = {}) {
+  const labels = {
+    endereco: "Endereço",
+    bairro: "Bairro",
+    datas: "Data",
+    pessoas: "Pessoa",
+    protocolos: "Protocolo",
+    servicos: "Serviço",
+  };
+  return Object.entries(entities).flatMap(([key, value]) => {
+    const values = Array.isArray(value) ? value : [value];
+    return values
+      .filter(Boolean)
+      .map((item) => [labels[key] || key, String(item)]);
+  });
 }

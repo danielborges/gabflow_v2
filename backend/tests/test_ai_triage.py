@@ -46,9 +46,44 @@ def seed_categories(client, csrf):
         assert response.status_code == 201
 
 
+def seed_agency(client, csrf, name="Secretaria de Iluminação"):
+    response = client.post(
+        "/api/v1/admin/orgaos",
+        json={"nome": name},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    assert response.status_code == 201
+    return response.json
+
+
+def test_categorized_request_still_enqueues_duplicate_analysis(client):
+    csrf = login(client)
+    category = client.post(
+        "/api/v1/admin/categorias",
+        json={"nome": "Iluminação pública", "slaHoras": 72},
+        headers={"X-CSRF-TOKEN": csrf},
+    ).json
+
+    response = client.post(
+        "/api/v1/solicitacoes",
+        json={
+            "origem": "WHATSAPP",
+            "titulo": "Poste apagado",
+            "descricao": "Poste apagado na Rua das Flores.",
+            "categoriaId": category["id"],
+        },
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 201
+    assert response.json["categoriaId"] == category["id"]
+    assert response.json["triagemIA"]["status"] == "PENDENTE"
+
+
 def test_ai_triage_is_async_and_requires_human_acceptance(app, client):
     csrf = login(client)
     seed_categories(client, csrf)
+    agency = seed_agency(client, csrf)
     service_request = create_request(
         client,
         csrf,
@@ -75,6 +110,10 @@ def test_ai_triage_is_async_and_requires_human_acceptance(app, client):
     assert triage["statusRevisao"] == "PENDENTE"
     assert triage["confianca"] > 0.5
     assert triage["resultado"]["categoria"] == "Iluminação pública"
+    assert triage["resultado"]["orgaoId"] == agency["id"]
+    assert triage["resultado"]["entidades"]["endereco"].startswith("Rua das Flores")
+    assert triage["resultado"]["resumoEstruturado"]["situacao"]
+    assert triage["resultado"]["conteudoOfensivo"] is False
     assert triage["resultado"]["revisaoHumanaObrigatoria"] is True
 
     reviewed = client.post(
@@ -87,11 +126,13 @@ def test_ai_triage_is_async_and_requires_human_acceptance(app, client):
     assert reviewed.json["statusRevisao"] == "ACEITA"
     updated = client.get(f"/api/v1/solicitacoes/{service_request['id']}").json
     assert updated["categoria"] == "Iluminação pública"
+    assert updated["orgaoId"] == agency["id"]
     assert updated["prioridade"] == "MEDIA"
 
     with app.app_context():
         execution = db.session.execute(select(AIExecution)).scalar_one()
         assert execution.reviewed_at is not None
+        assert execution.output["revisao"]["decisao"] == "ACEITA"
         assert db.session.execute(
             select(AuditLog).where(AuditLog.action == "request.ai_triage.aceita")
         ).scalar_one()
@@ -227,3 +268,47 @@ def test_ollama_failure_uses_configured_local_fallback(app, client, monkeypatch)
     assert triage["status"] == "CONCLUIDA"
     assert triage["provedor"] == "LOCAL_FALLBACK"
     assert triage["resultado"]["fallbackUtilizado"] is True
+
+
+def test_ai_triage_flags_offensive_content_without_blocking_request(app, client):
+    csrf = login(client)
+    seed_categories(client, csrf)
+    service_request = create_request(
+        client,
+        csrf,
+        "O secretário é um incompetente, mas preciso de atendimento no posto de saúde.",
+    )
+
+    with app.app_context():
+        process_batch("ai-content-worker")
+
+    details = client.get(f"/api/v1/solicitacoes/{service_request['id']}").json
+    assert details["descricao"].startswith("O secretário é um incompetente")
+    assert details["triagemIA"]["resultado"]["conteudoOfensivo"] is True
+    assert "xingamento" in details["triagemIA"]["resultado"]["marcadoresConteudo"]
+
+
+def test_triage_quality_reports_human_review_and_tenant_metrics(app, client):
+    csrf = login(client)
+    seed_categories(client, csrf)
+    service_request = create_request(client, csrf, "Poste apagado na Rua das Flores.")
+    with app.app_context():
+        process_batch("ai-quality-worker")
+
+    triage = client.get(f"/api/v1/solicitacoes/{service_request['id']}").json["triagemIA"]
+    reviewed = client.post(
+        f"/api/v1/classificacoes-ia/{triage['id']}/revisao",
+        json={"acao": "ACEITAR"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    assert reviewed.status_code == 200
+
+    response = client.get("/api/v1/ia/qualidade-triagem?dias=30")
+    assert response.status_code == 200
+    assert response.json["indicadores"]["execucoes"] == 1
+    assert response.json["indicadores"]["taxaAceitacao"] == 1
+    assert response.json["indicadores"]["concordanciaCategoria"] == 1
+    assert response.json["revisoes"]["aceitas"] == 1
+    assert response.json["cobertura"]["analisesDuplicidade"] == 1
+    assert response.json["cobertura"]["candidatosDuplicidade"] == 0
+    assert response.json["porModelo"][0]["modelo"] == "gabflow-triage-rules-v1"

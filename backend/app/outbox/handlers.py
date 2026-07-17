@@ -3,15 +3,34 @@ import uuid
 from flask import current_app
 from sqlalchemy import select
 
-from app.ai.service import AI_TRIAGE_EVENT, execute_triage
+from app.ai.ocr import (
+    DOCUMENT_OCR_EVENT,
+    NonRetryableOcrError,
+    execute_document_ocr,
+)
+from app.ai.service import (
+    AI_ASSISTANCE_EVENT,
+    AI_TRIAGE_EVENT,
+    execute_assistance,
+    execute_triage,
+)
+from app.ai.transcription import (
+    AUDIO_TRANSCRIPTION_EVENT,
+    NonRetryableTranscriptionError,
+    execute_audio_transcription,
+)
 from app.communications.email import EmailDeliveryError, send_email
 from app.extensions import db
 from app.models import (
     AIExecution,
     AIExecutionStatus,
+    AudioTranscription,
+    AudioTranscriptionStatus,
     AuditLog,
     ContactAttempt,
     ContactAttemptOutcome,
+    DocumentOcr,
+    DocumentOcrStatus,
     OutboxEvent,
     RequestHistory,
     ServiceRequest,
@@ -29,6 +48,22 @@ def handle_event(event: OutboxEvent) -> None:
         execution = _ai_execution(event)
         execute_triage(execution)
         return
+    if event.event_type == AI_ASSISTANCE_EVENT:
+        execution = _ai_execution(event)
+        execute_assistance(execution)
+        return
+    if event.event_type == AUDIO_TRANSCRIPTION_EVENT:
+        try:
+            execute_audio_transcription(_audio_transcription(event))
+        except NonRetryableTranscriptionError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
+    if event.event_type == DOCUMENT_OCR_EVENT:
+        try:
+            execute_document_ocr(_document_ocr(event))
+        except NonRetryableOcrError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
         return
@@ -44,10 +79,20 @@ def handle_event(event: OutboxEvent) -> None:
 
 
 def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
-    if event.event_type == AI_TRIAGE_EVENT:
+    if event.event_type in {AI_TRIAGE_EVENT, AI_ASSISTANCE_EVENT}:
         execution = _ai_execution(event)
         execution.status = AIExecutionStatus.FALHOU
         execution.error = error_message[:2000]
+        return
+    if event.event_type == AUDIO_TRANSCRIPTION_EVENT:
+        transcription = _audio_transcription(event)
+        transcription.status = AudioTranscriptionStatus.FALHOU
+        transcription.error = error_message[:2000]
+        return
+    if event.event_type == DOCUMENT_OCR_EVENT:
+        ocr = _document_ocr(event)
+        ocr.status = DocumentOcrStatus.FALHOU
+        ocr.error = error_message[:2000]
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -190,3 +235,19 @@ def _ai_execution(event: OutboxEvent) -> AIExecution:
     if execution is None or execution.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Execução de IA não foi encontrada.")
     return execution
+
+
+def _audio_transcription(event: OutboxEvent) -> AudioTranscription:
+    transcription_id = _uuid(event.payload, "transcriptionId")
+    transcription = db.session.get(AudioTranscription, transcription_id)
+    if transcription is None or transcription.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Transcrição de áudio não foi encontrada.")
+    return transcription
+
+
+def _document_ocr(event: OutboxEvent) -> DocumentOcr:
+    ocr_id = _uuid(event.payload, "ocrId")
+    ocr = db.session.get(DocumentOcr, ocr_id)
+    if ocr is None or ocr.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Execução de OCR não encontrada.")
+    return ocr

@@ -13,7 +13,11 @@ ALLOWED_MIME_TYPES = {
     "image/png",
     "text/plain",
     "audio/mpeg",
+    "audio/mp4",
     "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "audio/x-wav",
     "video/mp4",
 }
 EICAR_SIGNATURE = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR"

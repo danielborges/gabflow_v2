@@ -53,6 +53,7 @@ gabflow-spec-driven/
 ├── features/
 │   ├── solicitacoes.feature
 │   ├── classificacao-ia.feature
+│   ├── assistencia-atendimento-ia.feature
 │   ├── documentos-legislativos.feature
 │   ├── assistente-rag.feature
 │   ├── insights.feature

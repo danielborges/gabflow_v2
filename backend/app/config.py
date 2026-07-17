@@ -44,12 +44,52 @@ class Config:
         "AI_TRIAGE_FALLBACK_MODEL",
         "gabflow-triage-rules-v1",
     )
-    AI_TRIAGE_PROMPT_VERSION = os.getenv("AI_TRIAGE_PROMPT_VERSION", "triage-v2")
+    AI_TRIAGE_PROMPT_VERSION = os.getenv("AI_TRIAGE_PROMPT_VERSION", "triage-v3")
     AI_TRIAGE_TIMEOUT_SECONDS = int(os.getenv("AI_TRIAGE_TIMEOUT_SECONDS", "120"))
     AI_TRIAGE_FALLBACK_ENABLED = os.getenv(
         "AI_TRIAGE_FALLBACK_ENABLED",
         "true",
     ).lower() == "true"
+    AI_ASSISTANCE_PROVIDER = os.getenv("AI_ASSISTANCE_PROVIDER", AI_TRIAGE_PROVIDER)
+    AI_ASSISTANCE_MODEL = os.getenv("AI_ASSISTANCE_MODEL", AI_TRIAGE_MODEL)
+    AI_ASSISTANCE_FALLBACK_MODEL = os.getenv(
+        "AI_ASSISTANCE_FALLBACK_MODEL", "gabflow-assistance-rules-v1"
+    )
+    AI_ASSISTANCE_PROMPT_VERSION = os.getenv(
+        "AI_ASSISTANCE_PROMPT_VERSION", "assistance-v1"
+    )
+    AI_ASSISTANCE_TIMEOUT_SECONDS = int(
+        os.getenv("AI_ASSISTANCE_TIMEOUT_SECONDS", str(AI_TRIAGE_TIMEOUT_SECONDS))
+    )
+    AI_ASSISTANCE_FALLBACK_ENABLED = os.getenv(
+        "AI_ASSISTANCE_FALLBACK_ENABLED", "true"
+    ).lower() == "true"
+    AI_DUPLICATE_PROVIDER = os.getenv("AI_DUPLICATE_PROVIDER", "ollama")
+    AI_EMBEDDING_MODEL = os.getenv("AI_EMBEDDING_MODEL", "nomic-embed-text")
+    AI_DUPLICATE_WINDOW_DAYS = int(os.getenv("AI_DUPLICATE_WINDOW_DAYS", "180"))
+    AI_DUPLICATE_SCORE_THRESHOLD = float(os.getenv("AI_DUPLICATE_SCORE_THRESHOLD", "0.72"))
+    AI_DUPLICATE_MAX_SUGGESTIONS = int(os.getenv("AI_DUPLICATE_MAX_SUGGESTIONS", "5"))
+    AI_DUPLICATE_CANDIDATE_LIMIT = int(os.getenv("AI_DUPLICATE_CANDIDATE_LIMIT", "100"))
+    AUDIO_TRANSCRIPTION_PROVIDER = os.getenv(
+        "AUDIO_TRANSCRIPTION_PROVIDER", "faster-whisper"
+    )
+    AUDIO_TRANSCRIPTION_MODEL = os.getenv("AUDIO_TRANSCRIPTION_MODEL", "base")
+    AUDIO_TRANSCRIPTION_DEVICE = os.getenv("AUDIO_TRANSCRIPTION_DEVICE", "cpu")
+    AUDIO_TRANSCRIPTION_COMPUTE_TYPE = os.getenv(
+        "AUDIO_TRANSCRIPTION_COMPUTE_TYPE", "int8"
+    )
+    AUDIO_TRANSCRIPTION_LANGUAGE = os.getenv("AUDIO_TRANSCRIPTION_LANGUAGE", "pt")
+    AUDIO_TRANSCRIPTION_CACHE_DIR = os.getenv(
+        "AUDIO_TRANSCRIPTION_CACHE_DIR", "/models/whisper"
+    )
+    AUDIO_TRANSCRIPTION_MAX_DURATION_SECONDS = int(
+        os.getenv("AUDIO_TRANSCRIPTION_MAX_DURATION_SECONDS", "900")
+    )
+    DOCUMENT_OCR_PROVIDER = os.getenv("DOCUMENT_OCR_PROVIDER", "tesseract")
+    DOCUMENT_OCR_MODEL = os.getenv("DOCUMENT_OCR_MODEL", "tesseract-5")
+    DOCUMENT_OCR_LANGUAGE = os.getenv("DOCUMENT_OCR_LANGUAGE", "por")
+    DOCUMENT_OCR_MAX_PAGES = int(os.getenv("DOCUMENT_OCR_MAX_PAGES", "25"))
+    DOCUMENT_OCR_MAX_PIXELS = int(os.getenv("DOCUMENT_OCR_MAX_PIXELS", "25000000"))
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 
 
@@ -65,3 +105,8 @@ class TestConfig(Config):
     AI_TRIAGE_MODEL = "gabflow-triage-rules-v1"
     AI_TRIAGE_FALLBACK_MODEL = "gabflow-triage-rules-v1"
     AI_TRIAGE_PROMPT_VERSION = "triage-v1"
+    AI_ASSISTANCE_PROVIDER = "local"
+    AI_ASSISTANCE_MODEL = "gabflow-assistance-rules-v1"
+    AI_ASSISTANCE_FALLBACK_MODEL = "gabflow-assistance-rules-v1"
+    AI_ASSISTANCE_PROMPT_VERSION = "assistance-v1"
+    AI_DUPLICATE_PROVIDER = "local"

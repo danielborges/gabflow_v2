@@ -28,6 +28,7 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "ai_executions",
         "audit_logs",
         "citizens",
+        "document_ocrs",
         "privacy_requests",
         "scheduled_returns",
         "service_requests",
@@ -84,7 +85,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             rolled_back_tables = set(inspector.get_table_names())
 
         assert rolled_back_heads == {previous_head}
-        assert "ai_executions" not in rolled_back_tables
+        assert "document_ocrs" not in rolled_back_tables
 
         upgrade(directory="migrations")
 
@@ -93,7 +94,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             reapplied_tables = set(inspect(connection).get_table_names())
 
         assert reapplied_heads == {expected_head}
-        assert "ai_executions" in reapplied_tables
+        assert "document_ocrs" in reapplied_tables
 
 
 def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres_app):

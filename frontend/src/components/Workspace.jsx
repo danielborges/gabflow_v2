@@ -1,4 +1,5 @@
 import {
+  BrainCircuit,
   ChevronRight,
   ClipboardList,
   FileText,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { AdministrationPage } from "./AdministrationPage";
+import { AIQualityPage } from "./AIQualityPage";
 import { DirectoryPage } from "./DirectoryPage";
 import { NotificationCenter } from "./NotificationCenter";
 import { OperationalDashboard } from "./OperationalDashboard";
@@ -22,6 +24,7 @@ const navigation = [
   { id: "overview", label: "Visão geral", icon: LayoutDashboard, enabled: true },
   { id: "requests", label: "Solicitações", icon: ClipboardList, enabled: true },
   { id: "citizens", label: "Cidadãos", icon: Users, enabled: true },
+  { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true },
   { id: "documents", label: "Documentos", icon: FileText, enabled: false },
 ];
 
@@ -92,11 +95,11 @@ export function Workspace({ user, onLogout }) {
             <Search size={18} aria-hidden="true" />
             <input aria-label="Pesquisar" placeholder="Pesquisar no GabFlow" disabled />
           </div>
-          <NotificationCenter />
           <div className="user-summary">
             <span className="avatar">{user.name.slice(0, 2).toUpperCase()}</span>
             <span><strong>{user.name}</strong><small>{user.tenant.name}</small></span>
           </div>
+          <NotificationCenter />
           <button className="icon-button" onClick={onLogout} aria-label="Sair" title="Sair">
             <LogOut size={20} />
           </button>
@@ -104,6 +107,7 @@ export function Workspace({ user, onLogout }) {
 
         {activeView === "requests" && <RequestsPage user={user} />}
         {activeView === "citizens" && <DirectoryPage />}
+        {activeView === "ai-quality" && <AIQualityPage />}
         {activeView === "admin" && <AdministrationPage />}
         {activeView === "privacy" && <PrivacyGovernancePage />}
         {activeView === "overview" && <OperationalDashboard onOpenRequests={() => setActiveView("requests")} />}

@@ -179,7 +179,69 @@ paths:
                 arquivo: { type: string, format: binary }
       responses:
         "201":
-          description: Anexo validado e armazenado
+          description: Anexo validado e armazenado; áudios iniciam transcrição e imagens/PDFs iniciam OCR assíncrono
+  /transcricoes-audio/{id}/revisao:
+    post:
+      summary: Aceita, corrige ou rejeita uma transcrição de áudio
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao:
+                  type: string
+                  enum: [ACEITAR, EDITAR, REJEITAR]
+                texto:
+                  type: string
+                  description: Obrigatório quando a ação for EDITAR
+      responses:
+        "200": { description: Revisão humana registrada e auditada }
+        "409": { description: Transcrição pendente ou já revisada }
+        "422": { description: Ação ou texto revisado inválido }
+  /transcricoes-audio/{id}/reprocessar:
+    post:
+      summary: Reagenda uma transcrição local que terminou com falha
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "202": { description: Reprocessamento agendado no outbox }
+        "409": { description: A transcrição não está com falha }
+  /ocr-documentos/{id}/revisao:
+    post:
+      summary: Aceita, corrige ou rejeita o texto extraído por OCR
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao:
+                  type: string
+                  enum: [ACEITAR, EDITAR, REJEITAR]
+                texto:
+                  type: string
+                  description: Obrigatório quando a ação for EDITAR
+      responses:
+        "200": { description: Revisão humana do OCR registrada e auditada }
+        "409": { description: OCR pendente ou já revisado }
+        "422": { description: Ação ou texto revisado inválido }
+  /ocr-documentos/{id}/reprocessar:
+    post:
+      summary: Reagenda um OCR local que terminou com falha
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "202": { description: Reprocessamento agendado no outbox }
+        "409": { description: O OCR não está com falha }
   /solicitacoes/{id}/encaminhamentos:
     post:
       summary: Encaminha uma solicitação para órgão externo
@@ -347,7 +409,11 @@ paths:
         "422": { description: Canal, destino ou resultado inválido }
   /solicitacoes/{id}/classificacao-ia:
     post:
-      summary: Solicita classificação assistida por IA
+      summary: Solicita triagem e detecção de possíveis duplicidades por IA
+      description: >-
+        Processa classificação, entidades, resumo e candidatos semanticamente similares
+        do mesmo tenant. Candidatos a duplicidade exigem confirmação humana pelo endpoint
+        de agrupamento e nenhuma solicitação é excluída.
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
@@ -377,6 +443,7 @@ paths:
                   type: object
                   properties:
                     categoriaId: { type: string, format: uuid }
+                    orgaoId: { type: string, format: uuid }
                     subcategoria: { type: string }
                     prioridadeSugerida:
                       type: string
@@ -392,6 +459,78 @@ paths:
           description: Revisão humana registrada
         "409":
           description: Execução ainda pendente ou já revisada
+  /solicitacoes/{id}/assistencia-ia:
+    post:
+      summary: Gera resumo, perguntas, documentos, próximos passos e resposta sugerida
+      description: >-
+        Processamento assíncrono e restrito ao tenant. A saída é somente um rascunho;
+        não registra interação nem envia mensagem.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                canal:
+                  type: string
+                  enum: [WHATSAPP, EMAIL, TELEFONE, PRESENCIAL, INTERNO]
+                tom:
+                  type: string
+                  enum: [ACOLHEDOR, CLARO, FORMAL, OBJETIVO]
+      responses:
+        "202":
+          description: Assistência aceita para processamento
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecucaoAssistenciaIA"
+        "422": { description: Canal ou tom inválido }
+  /assistencias-ia/{id}/revisao:
+    post:
+      summary: Aceita, edita ou rejeita o rascunho sem enviá-lo
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao:
+                  type: string
+                  enum: [ACEITAR, EDITAR, REJEITAR]
+                valores:
+                  type: object
+                  properties:
+                    canal:
+                      type: string
+                      enum: [WHATSAPP, EMAIL, TELEFONE, PRESENCIAL, INTERNO]
+                    assunto: { type: [string, "null"] }
+                    conteudo: { type: string }
+      responses:
+        "200":
+          description: Revisão auditada; nenhuma mensagem foi enviada
+        "409": { description: Assistência pendente ou já revisada }
+  /ia/qualidade-triagem:
+    get:
+      summary: Consolida métricas de qualidade da triagem assistida por tenant
+      parameters:
+        - in: query
+          name: dias
+          schema:
+            type: integer
+            enum: [30, 90, 180, 365]
+            default: 30
+      responses:
+        "200":
+          description: Indicadores de execução, revisão humana, cobertura e modelos
+        "422":
+          description: Período não suportado
   /solicitacoes/{id}/gerar-minuta:
     post:
       summary: Gera rascunho legislativo
@@ -811,6 +950,35 @@ components:
         status:
           type: string
           enum: [PENDENTE, PROCESSANDO, CONCLUIDO, FALHOU]
+    ExecucaoAssistenciaIA:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PENDENTE, PROCESSANDO, CONCLUIDA, FALHOU]
+        statusRevisao:
+          type: string
+          enum: [PENDENTE, ACEITA, EDITADA, REJEITADA]
+        modelo: { type: string }
+        versaoPrompt: { type: string }
+        confianca: { type: number, minimum: 0, maximum: 1 }
+        resultado:
+          type: object
+          properties:
+            resumoHistorico: { type: string }
+            perguntasFaltantes:
+              type: array
+              items: { type: string }
+            documentosNecessarios:
+              type: array
+              items: { type: object, additionalProperties: true }
+            proximosPassos:
+              type: array
+              items: { type: object, additionalProperties: true }
+            respostaSugerida: { type: object, additionalProperties: true }
+            revisaoHumanaObrigatoria: { type: boolean, enum: [true] }
+            envioAutomatico: { type: boolean, enum: [false] }
     RagQueryRequest:
       type: object
       required: [pergunta]

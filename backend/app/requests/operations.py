@@ -5,6 +5,12 @@ from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select
 
+from app.ai.ocr import enqueue_document_ocr, ocr_data, requeue_document_ocr
+from app.ai.transcription import (
+    enqueue_audio_transcription,
+    requeue_audio_transcription,
+    transcription_data,
+)
 from app.attachments import (
     AttachmentError,
     attachment_path,
@@ -17,6 +23,12 @@ from app.extensions import db
 from app.models import (
     Attachment,
     AttachmentScanStatus,
+    AudioTranscription,
+    AudioTranscriptionReviewStatus,
+    AudioTranscriptionStatus,
+    DocumentOcr,
+    DocumentOcrReviewStatus,
+    DocumentOcrStatus,
     DuplicateGroup,
     NotificationType,
     RequestHistory,
@@ -69,6 +81,8 @@ def attachment_data(item: Attachment) -> dict:
         "sha256": item.sha256,
         "statusVerificacao": item.scan_status.value,
         "downloadUrl": f"/api/v1/anexos/{item.id}/download?token={token}",
+        "transcricao": transcription_data(item.transcription),
+        "ocr": ocr_data(item.ocr),
         "criadoEm": item.created_at.isoformat(),
     }
 
@@ -278,6 +292,9 @@ def upload_attachment(request_id: uuid.UUID):
         **stored,
     )
     db.session.add(item)
+    db.session.flush()
+    enqueue_audio_transcription(item, user_id)
+    enqueue_document_ocr(item, user_id)
     service_request.history.append(
         RequestHistory(
             tenant_id=tenant_id,
@@ -300,6 +317,229 @@ def upload_attachment(request_id: uuid.UUID):
     )
     db.session.commit()
     return jsonify(attachment_data(item)), 201
+
+
+@request_ops_bp.post("/transcricoes-audio/<uuid:transcription_id>/revisao")
+@jwt_required()
+def review_audio_transcription(transcription_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    transcription = db.session.execute(
+        select(AudioTranscription).where(
+            AudioTranscription.id == transcription_id,
+            AudioTranscription.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if transcription is None:
+        return jsonify(error="resource_not_found", message="Transcrição não encontrada."), 404
+    if (
+        transcription.status != AudioTranscriptionStatus.CONCLUIDA
+        or transcription.review_status != AudioTranscriptionReviewStatus.PENDENTE
+    ):
+        return (
+            jsonify(
+                error="conflict",
+                message="A transcrição ainda não foi concluída ou já possui revisão.",
+            ),
+            409,
+        )
+
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("acao", "")).upper()
+    status_by_action = {
+        "ACEITAR": AudioTranscriptionReviewStatus.ACEITA,
+        "EDITAR": AudioTranscriptionReviewStatus.EDITADA,
+        "REJEITAR": AudioTranscriptionReviewStatus.REJEITADA,
+    }
+    if action not in status_by_action:
+        return jsonify(error="validation_error", message="Ação de revisão inválida."), 422
+    reviewed_text = None
+    if action == "ACEITAR":
+        reviewed_text = transcription.transcript
+    elif action == "EDITAR":
+        reviewed_text = str(payload.get("texto", "")).strip()
+        if not reviewed_text:
+            return jsonify(error="validation_error", message="Informe o texto revisado."), 422
+
+    transcription.review_status = status_by_action[action]
+    transcription.reviewed_transcript = reviewed_text
+    transcription.reviewed_by_id = user_id
+    transcription.reviewed_at = datetime.now(UTC)
+    details = {
+        "transcricaoId": str(transcription.id),
+        "acao": action,
+        "textoAlterado": action == "EDITAR",
+    }
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=transcription.request_id,
+            user_id=user_id,
+            action=f"audio.transcription.{action.lower()}",
+            changes=details,
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        f"audio.transcription.{action.lower()}",
+        "audio_transcription",
+        transcription.id,
+        after=details,
+    )
+    db.session.commit()
+    return jsonify(transcription_data(transcription))
+
+
+@request_ops_bp.post("/transcricoes-audio/<uuid:transcription_id>/reprocessar")
+@jwt_required()
+def reprocess_audio_transcription(transcription_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    transcription = db.session.execute(
+        select(AudioTranscription).where(
+            AudioTranscription.id == transcription_id,
+            AudioTranscription.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if transcription is None:
+        return jsonify(error="resource_not_found", message="Transcrição não encontrada."), 404
+    if transcription.status != AudioTranscriptionStatus.FALHOU:
+        return (
+            jsonify(error="conflict", message="Somente transcrições com falha podem ser refeitas."),
+            409,
+        )
+    requeue_audio_transcription(transcription)
+    details = {"transcricaoId": str(transcription.id), "acao": "REPROCESSAR"}
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=transcription.request_id,
+            user_id=user_id,
+            action="audio.transcription.reprocessed",
+            changes=details,
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "audio.transcription.reprocessed",
+        "audio_transcription",
+        transcription.id,
+        after=details,
+    )
+    db.session.commit()
+    return jsonify(transcription_data(transcription)), 202
+
+
+@request_ops_bp.post("/ocr-documentos/<uuid:ocr_id>/revisao")
+@jwt_required()
+def review_document_ocr(ocr_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    ocr = db.session.execute(
+        select(DocumentOcr).where(
+            DocumentOcr.id == ocr_id,
+            DocumentOcr.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if ocr is None:
+        return jsonify(error="resource_not_found", message="OCR não encontrado."), 404
+    if (
+        ocr.status != DocumentOcrStatus.CONCLUIDO
+        or ocr.review_status != DocumentOcrReviewStatus.PENDENTE
+    ):
+        return (
+            jsonify(
+                error="conflict",
+                message="O OCR ainda não foi concluído ou já possui revisão.",
+            ),
+            409,
+        )
+
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("acao", "")).upper()
+    status_by_action = {
+        "ACEITAR": DocumentOcrReviewStatus.ACEITO,
+        "EDITAR": DocumentOcrReviewStatus.EDITADO,
+        "REJEITAR": DocumentOcrReviewStatus.REJEITADO,
+    }
+    if action not in status_by_action:
+        return jsonify(error="validation_error", message="Ação de revisão inválida."), 422
+    reviewed_text = None
+    if action == "ACEITAR":
+        reviewed_text = ocr.extracted_text
+    elif action == "EDITAR":
+        reviewed_text = str(payload.get("texto", "")).strip()
+        if not reviewed_text:
+            return jsonify(error="validation_error", message="Informe o texto revisado."), 422
+
+    ocr.review_status = status_by_action[action]
+    ocr.reviewed_text = reviewed_text
+    ocr.reviewed_by_id = user_id
+    ocr.reviewed_at = datetime.now(UTC)
+    details = {
+        "ocrId": str(ocr.id),
+        "acao": action,
+        "textoAlterado": action == "EDITAR",
+        "confianca": ocr.confidence,
+    }
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=ocr.request_id,
+            user_id=user_id,
+            action=f"document.ocr.{action.lower()}",
+            changes=details,
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        f"document.ocr.{action.lower()}",
+        "document_ocr",
+        ocr.id,
+        after=details,
+    )
+    db.session.commit()
+    return jsonify(ocr_data(ocr))
+
+
+@request_ops_bp.post("/ocr-documentos/<uuid:ocr_id>/reprocessar")
+@jwt_required()
+def reprocess_document_ocr(ocr_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    ocr = db.session.execute(
+        select(DocumentOcr).where(
+            DocumentOcr.id == ocr_id,
+            DocumentOcr.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if ocr is None:
+        return jsonify(error="resource_not_found", message="OCR não encontrado."), 404
+    if ocr.status != DocumentOcrStatus.FALHOU:
+        return (
+            jsonify(error="conflict", message="Somente OCRs com falha podem ser refeitos."),
+            409,
+        )
+    requeue_document_ocr(ocr)
+    details = {"ocrId": str(ocr.id), "acao": "REPROCESSAR"}
+    db.session.add(
+        RequestHistory(
+            tenant_id=tenant_id,
+            request_id=ocr.request_id,
+            user_id=user_id,
+            action="document.ocr.reprocessed",
+            changes=details,
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "document.ocr.reprocessed",
+        "document_ocr",
+        ocr.id,
+        after=details,
+    )
+    db.session.commit()
+    return jsonify(ocr_data(ocr)), 202
 
 
 @request_ops_bp.get("/anexos/<uuid:attachment_id>/download")

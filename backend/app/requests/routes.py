@@ -8,7 +8,12 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import func, or_, select
 
-from app.ai.service import enqueue_triage_execution, execution_data, latest_triage_execution
+from app.ai.service import (
+    enqueue_triage_execution,
+    execution_data,
+    latest_assistance_execution,
+    latest_triage_execution,
+)
 from app.communications.service import scheduled_return_data
 from app.extensions import db
 from app.models import (
@@ -136,6 +141,9 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
         data["triagemIA"] = execution_data(
             latest_triage_execution(service_request.tenant_id, service_request.id)
         )
+        data["assistenciaIA"] = execution_data(
+            latest_assistance_execution(service_request.tenant_id, service_request.id)
+        )
     return data
 
 
@@ -236,8 +244,7 @@ def create_request():
     db.session.flush()
     service_request.history.append(_creation_history(service_request, user_id))
     db.session.add(creation_event(service_request))
-    if category is None:
-        enqueue_triage_execution(service_request, user_id)
+    enqueue_triage_execution(service_request, user_id)
     notify_user(
         tenant_id,
         service_request.responsible_id,

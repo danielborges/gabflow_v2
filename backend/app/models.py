@@ -92,6 +92,34 @@ class AttachmentScanStatus(str, enum.Enum):
     BLOQUEADO = "BLOQUEADO"
 
 
+class AudioTranscriptionStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    PROCESSANDO = "PROCESSANDO"
+    CONCLUIDA = "CONCLUIDA"
+    FALHOU = "FALHOU"
+
+
+class AudioTranscriptionReviewStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    ACEITA = "ACEITA"
+    EDITADA = "EDITADA"
+    REJEITADA = "REJEITADA"
+
+
+class DocumentOcrStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    PROCESSANDO = "PROCESSANDO"
+    CONCLUIDO = "CONCLUIDO"
+    FALHOU = "FALHOU"
+
+
+class DocumentOcrReviewStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    ACEITO = "ACEITO"
+    EDITADO = "EDITADO"
+    REJEITADO = "REJEITADO"
+
+
 class NotificationType(str, enum.Enum):
     ATRIBUICAO = "ATRIBUICAO"
     TAREFA = "TAREFA"
@@ -795,6 +823,120 @@ class Attachment(db.Model):
     )
 
     request: Mapped[ServiceRequest] = relationship(back_populates="attachments")
+    transcription: Mapped["AudioTranscription | None"] = relationship(
+        back_populates="attachment",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    ocr: Mapped["DocumentOcr | None"] = relationship(
+        back_populates="attachment",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class AudioTranscription(db.Model):
+    __tablename__ = "audio_transcriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    attachment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("attachments.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[AudioTranscriptionStatus] = mapped_column(
+        Enum(AudioTranscriptionStatus, name="audio_transcription_status"),
+        default=AudioTranscriptionStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    review_status: Mapped[AudioTranscriptionReviewStatus] = mapped_column(
+        Enum(AudioTranscriptionReviewStatus, name="audio_transcription_review_status"),
+        default=AudioTranscriptionReviewStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    language: Mapped[str | None] = mapped_column(String(20))
+    language_probability: Mapped[float | None] = mapped_column(Float)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    transcript: Mapped[str | None] = mapped_column(Text)
+    reviewed_transcript: Mapped[str | None] = mapped_column(Text)
+    segments: Mapped[list | None] = mapped_column(JSON)
+    requested_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    attachment: Mapped[Attachment] = relationship(back_populates="transcription")
+
+
+class DocumentOcr(db.Model):
+    __tablename__ = "document_ocrs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    attachment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("attachments.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[DocumentOcrStatus] = mapped_column(
+        Enum(DocumentOcrStatus, name="document_ocr_status"),
+        default=DocumentOcrStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    review_status: Mapped[DocumentOcrReviewStatus] = mapped_column(
+        Enum(DocumentOcrReviewStatus, name="document_ocr_review_status"),
+        default=DocumentOcrReviewStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    language: Mapped[str] = mapped_column(String(20), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    reviewed_text: Mapped[str | None] = mapped_column(Text)
+    pages: Mapped[list | None] = mapped_column(JSON)
+    requested_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    attachment: Mapped[Attachment] = relationship(back_populates="ocr")
 
 
 class Notification(db.Model):
