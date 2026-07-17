@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -8,9 +9,11 @@ from app.models import (
     AuditLog,
     ContactAttempt,
     Notification,
+    OutboxEvent,
     RequestInteraction,
     ScheduledReturn,
 )
+from app.outbox.service import process_batch
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -163,7 +166,7 @@ def test_scheduled_return_lifecycle_and_idempotent_reminder(app, client):
         assert "request.return.concluido" in actions
 
 
-def test_email_response_uses_resend_and_records_delivery(app, client, monkeypatch):
+def test_email_response_is_queued_and_worker_records_delivery(app, client, monkeypatch):
     _, csrf = login(client)
     citizen = client.post(
         "/api/v1/cidadaos",
@@ -189,7 +192,7 @@ def test_email_response_uses_resend_and_records_delivery(app, client, monkeypatc
         sent.update(values)
         return EmailDelivery(provider="RESEND", message_id="email_123")
 
-    monkeypatch.setattr("app.communications.routes.send_email", fake_send_email)
+    monkeypatch.setattr("app.outbox.handlers.send_email", fake_send_email)
     response = client.post(
         f"/api/v1/solicitacoes/{service_request['id']}/respostas",
         json={
@@ -200,9 +203,15 @@ def test_email_response_uses_resend_and_records_delivery(app, client, monkeypatc
         headers={"X-CSRF-TOKEN": csrf},
     )
 
-    assert response.status_code == 201
-    assert response.json["provedor"] == "RESEND"
-    assert response.json["mensagemExternaId"] == "email_123"
+    assert response.status_code == 202
+    assert response.json["statusEntrega"] == "AGENDADO"
+    assert response.json["eventoId"]
+    assert sent == {}
+
+    with app.app_context():
+        result = process_batch("test-worker")
+        assert result.succeeded == 3
+
     assert sent["recipient"] == "joana@example.com"
     assert sent["subject"] == "Atualização do atendimento"
 
@@ -210,9 +219,11 @@ def test_email_response_uses_resend_and_records_delivery(app, client, monkeypatc
         attempt = db.session.execute(select(ContactAttempt)).scalar_one()
         assert attempt.outcome.value == "REALIZADO"
         assert "email_123" in attempt.notes
+        event = db.session.get(OutboxEvent, uuid.UUID(response.json["eventoId"]))
+        assert event.published_at is not None
 
 
-def test_email_provider_failure_is_preserved_without_outgoing_interaction(
+def test_email_provider_failure_is_retried_and_preserved(
     app, client, monkeypatch
 ):
     _, csrf = login(client)
@@ -238,7 +249,7 @@ def test_email_provider_failure_is_preserved_without_outgoing_interaction(
     def fail_send_email(**_values):
         raise EmailDeliveryError("O provedor recusou o envio do e-mail.")
 
-    monkeypatch.setattr("app.communications.routes.send_email", fail_send_email)
+    monkeypatch.setattr("app.outbox.handlers.send_email", fail_send_email)
     response = client.post(
         f"/api/v1/solicitacoes/{service_request['id']}/respostas",
         json={
@@ -249,11 +260,14 @@ def test_email_provider_failure_is_preserved_without_outgoing_interaction(
         headers={"X-CSRF-TOKEN": csrf},
     )
 
-    assert response.status_code == 502
+    assert response.status_code == 202
     with app.app_context():
+        app.config["WORKER_MAX_ATTEMPTS"] = 1
+        result = process_batch("test-worker")
+        assert result.failed == 1
         attempt = db.session.execute(select(ContactAttempt)).scalar_one()
         assert attempt.outcome.value == "FALHOU"
-        assert db.session.execute(select(RequestInteraction)).scalars().all() == []
+        assert len(db.session.execute(select(RequestInteraction)).scalars().all()) == 1
         assert db.session.execute(
             select(AuditLog).where(AuditLog.action == "request.response.failed")
         ).scalar_one()

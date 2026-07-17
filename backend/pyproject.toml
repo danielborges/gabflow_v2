@@ -2,6 +2,9 @@
 testpaths = ["tests"]
 addopts = "-q --disable-warnings --strict-markers"
 pythonpath = ["."]
+markers = [
+    "postgres: integration tests that require an isolated PostgreSQL database",
+]
 
 [tool.ruff]
 line-length = 100

@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p /app/data/attachments \
     && chmod +x /app/docker-entrypoint.sh \
+    && chmod +x /app/worker-entrypoint.sh \
     && chown -R gabflow:gabflow /app
 
 USER gabflow

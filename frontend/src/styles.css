@@ -299,6 +299,56 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .dashboard-error { margin: 36px; }
 .classification-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .classification-summary span { padding: 4px 7px; border: 1px solid #cfe1f0; border-radius: 4px; color: #31506f; background: #f5faff; font-size: 0.68rem; font-weight: 700; }
+.ai-triage-panel { gap: 18px; padding: 20px; border: 1px solid #cfe5e9; border-left: 3px solid #17a9b8; background: #f8fcfd; }
+.ai-triage-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.ai-section-title { display: flex; align-items: center; gap: 10px; }
+.ai-section-title > div { min-width: 0; flex: 1; }
+.ai-section-title h3 { margin: 0; }
+.ai-section-title small { display: block; margin-top: 2px; color: #587188; }
+.ai-confidence { width: 96px; flex: 0 0 auto; display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 8px; }
+.ai-confidence > span:first-child { color: #587188; font-size: 0.66rem; font-weight: 700; }
+.ai-confidence strong { color: #087f8c; font-size: 0.9rem; }
+.ai-confidence-track { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 2px; background: #d9edf0; }
+.ai-confidence-track span { display: block; height: 100%; border-radius: inherit; background: #17a9b8; }
+.ai-result-copy { display: grid; gap: 14px; padding: 2px 0 17px; border-bottom: 1px solid #dce9ec; }
+.ai-result-copy > div { display: grid; gap: 5px; }
+.ai-content-label { color: #52677d; font-size: 0.67rem; font-weight: 800; text-transform: uppercase; }
+.ai-summary { margin: 0; color: #102a43; line-height: 1.5; }
+.ai-result-copy .muted-copy { line-height: 1.5; }
+.ai-classification { display: grid; gap: 14px; }
+.ai-classification-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ai-classification-heading strong { font-size: 0.84rem; }
+.ai-classification-heading small { color: var(--muted); font-size: 0.68rem; text-align: right; }
+.ai-category-grid { gap: 12px; }
+.ai-level-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ai-classification.is-reviewed input:disabled, .ai-classification.is-reviewed select:disabled { border-color: #d7e3e8; color: #334e68; background: #f1f7f8; opacity: 1; }
+.ai-review-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.ai-review-status { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid #a7dfce; color: #086650; background: #ecfbf6; }
+.ai-review-status > div { display: grid; gap: 2px; }
+.ai-review-status span { font-size: 0.69rem; }
+.ai-review-status strong { font-size: 0.82rem; }
+.ai-review-status.review-rejeitada { border-color: #fecaca; color: #991b1b; background: #fff1f2; }
+.ai-progress { height: 4px; margin-top: 14px; overflow: hidden; background: #d9edf0; }
+.ai-progress span { display: block; width: 45%; height: 100%; background: #17a9b8; animation: ai-progress 1.2s ease-in-out infinite alternate; }
+.ai-emergency { border-left-color: #dc2626; background: #fff9f8; }
+.emergency-alert { display: flex; gap: 10px; margin-top: 14px; padding: 10px; border: 1px solid #fecaca; background: #fff1f2; color: #991b1b; }
+.emergency-alert p { margin: 3px 0 0; line-height: 1.4; }
+.danger-text { color: #b42318; }
+@keyframes ai-progress { from { transform: translateX(-20%); } to { transform: translateX(140%); } }
+@media (max-width: 640px) {
+  .ai-triage-panel { padding: 16px; }
+  .ai-triage-header { align-items: flex-start; }
+  .ai-confidence { width: 78px; }
+  .ai-category-grid { grid-template-columns: 1fr; }
+  .ai-level-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .ai-classification-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .ai-classification-heading small { text-align: left; }
+}
+@media (max-width: 430px) {
+  .ai-triage-header { flex-direction: column; }
+  .ai-confidence { width: 100%; }
+  .ai-level-grid { grid-template-columns: 1fr; }
+}
 .forwarding-item { display: grid; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 5px; background: #fafcfe; }
 .forwarding-item > div { display: grid; gap: 3px; }
 .forwarding-item small { color: var(--muted); font-size: 0.7rem; }

@@ -357,6 +357,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Job"
+  /classificacoes-ia/{id}/revisao:
+    post:
+      summary: Aceita, edita ou rejeita uma classificação sugerida por IA
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao:
+                  type: string
+                  enum: [ACEITAR, EDITAR, REJEITAR]
+                valores:
+                  type: object
+                  properties:
+                    categoriaId: { type: string, format: uuid }
+                    subcategoria: { type: string }
+                    prioridadeSugerida:
+                      type: string
+                      enum: [BAIXA, MEDIA, ALTA, CRITICA]
+                    impacto:
+                      type: string
+                      enum: [BAIXO, MEDIO, ALTO, CRITICO]
+                    urgencia:
+                      type: string
+                      enum: [BAIXO, MEDIO, ALTO, CRITICO]
+      responses:
+        "200":
+          description: Revisão humana registrada
+        "409":
+          description: Execução ainda pendente ou já revisada
   /solicitacoes/{id}/gerar-minuta:
     post:
       summary: Gera rascunho legislativo
@@ -468,7 +503,7 @@ paths:
           description: Prévia editável da resposta
   /solicitacoes/{solicitacaoId}/respostas:
     post:
-      summary: Registra resposta e envia e-mail pelo Resend quando aplicável
+      summary: Registra resposta e agenda envio assíncrono de e-mail quando aplicável
       parameters:
         - in: path
           name: solicitacaoId
@@ -478,9 +513,9 @@ paths:
             format: uuid
       responses:
         "201":
-          description: Resposta registrada
-        "502":
-          description: Falha registrada na tentativa de entrega por e-mail
+          description: Resposta registrada em canal sem entrega assíncrona
+        "202":
+          description: Resposta registrada e entrega de e-mail agendada no outbox
   /solicitacoes/{solicitacaoId}/retornos:
     post:
       summary: Agenda retorno com responsável e lembrete

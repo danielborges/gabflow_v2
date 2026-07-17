@@ -9,6 +9,7 @@ parlamentares.
 - Python 3.12 + Flask no backend;
 - PostgreSQL 17;
 - Docker Compose para execução local;
+- Ollama com modelo local para triagem assistida;
 - Sentry no frontend e backend;
 - JWT em cookie `HttpOnly`, proteção CSRF, RBAC, Argon2 e auditoria.
 
@@ -35,6 +36,10 @@ docker compose up --build
 O aplicativo ficará disponível na porta definida por `WEB_PORT` (por padrão,
 `http://localhost:8080`). O tenant e o usuário iniciais são definidos em `.env`;
 a senha nunca possui valor padrão no código.
+
+Na primeira inicialização, o serviço `ollama-init` baixa o modelo configurado em
+`AI_TRIAGE_MODEL`. O download fica persistido no volume `ollama_data`; as próximas
+inicializações reutilizam o modelo local.
 
 Para habilitar e-mails, verifique um domínio no Resend e configure
 `RESEND_API_KEY` e `RESEND_FROM_EMAIL` no `.env`. A chave deve possuir somente
@@ -72,6 +77,26 @@ cd ..\frontend
 pnpm run lint
 pnpm test
 pnpm run build
+```
+
+Testes de integração com PostgreSQL exigem um banco descartável cujo nome termine em
+`_test` ou `_ci`. A suíte recria o schema público antes de aplicar as migrations:
+
+```powershell
+cd backend
+$env:POSTGRES_TEST_DATABASE_URL="postgresql+psycopg://gabflow:senha@localhost:5432/gabflow_test"
+pytest -m postgres tests/postgres
+```
+
+## Worker e scheduler
+
+O serviço `worker` do Docker Compose processa o outbox transacional, aplica retentativas
+com backoff exponencial e gera lembretes de retornos agendados. Para executar apenas um
+ciclo manualmente:
+
+```powershell
+cd backend
+flask --app wsgi:app worker --once
 ```
 
 ## Segurança operacional

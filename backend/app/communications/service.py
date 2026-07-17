@@ -51,16 +51,32 @@ def render_template(template: ResponseTemplate, service_request) -> str:
 
 
 def generate_return_reminders(tenant_id: uuid.UUID, user_id: uuid.UUID) -> int:
+    return generate_due_return_reminders(tenant_id=tenant_id, user_id=user_id)
+
+
+def generate_due_return_reminders(
+    *,
+    tenant_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+    limit: int = 100,
+) -> int:
     now = datetime.now(UTC)
-    returns = db.session.execute(
-        select(ScheduledReturn).where(
-            ScheduledReturn.tenant_id == tenant_id,
-            ScheduledReturn.assignee_id == user_id,
+    statement = (
+        select(ScheduledReturn)
+        .where(
             ScheduledReturn.status == ScheduledReturnStatus.AGENDADO,
             ScheduledReturn.reminder_enabled.is_(True),
             ScheduledReturn.reminder_sent_at.is_(None),
         )
-    ).scalars()
+        .order_by(ScheduledReturn.scheduled_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    if tenant_id is not None:
+        statement = statement.where(ScheduledReturn.tenant_id == tenant_id)
+    if user_id is not None:
+        statement = statement.where(ScheduledReturn.assignee_id == user_id)
+    returns = db.session.execute(statement).scalars()
     generated = 0
     for item in returns:
         scheduled_at = (
@@ -71,8 +87,8 @@ def generate_return_reminders(tenant_id: uuid.UUID, user_id: uuid.UUID) -> int:
         if now < scheduled_at - timedelta(minutes=item.reminder_minutes):
             continue
         notify_user(
-            tenant_id,
-            user_id,
+            item.tenant_id,
+            item.assignee_id,
             NotificationType.RETORNO,
             "Retorno pendente",
             f"O retorno da solicitação {item.request.protocol} está próximo ou vencido.",

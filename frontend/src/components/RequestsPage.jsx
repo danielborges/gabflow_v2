@@ -7,6 +7,8 @@ import {
   Filter,
   Link2,
   RotateCcw,
+  ShieldAlert,
+  Sparkles,
   MessageSquarePlus,
   Paperclip,
   PhoneCall,
@@ -341,6 +343,22 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
   });
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    setCategoryId(request.categoriaId || "");
+  }, [request.categoriaId]);
+
+  useEffect(() => {
+    if (!["PENDENTE", "PROCESSANDO"].includes(request.triagemIA?.status)) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
+      } catch {
+        // The regular page error handling remains responsible for visible failures.
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [onChanged, request.id, request.triagemIA?.status]);
+
   async function refresh() {
     onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
   }
@@ -614,6 +632,13 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
             {request.urgencia && <span>Urgência {request.urgencia.toLowerCase()}</span>}
           </div>
 
+          <AITriagePanel
+            request={request}
+            categories={references.categories}
+            onChanged={onChanged}
+            onError={setError}
+          />
+
           <section className="drawer-section">
             <h3>Acompanhamento</h3>
             <div className="form-grid">
@@ -734,6 +759,169 @@ function RequestDetails({ request, requests, references, onClose, onChanged }) {
   );
 }
 
+export function AITriagePanel({ request, categories, onChanged, onError }) {
+  const triage = request.triagemIA;
+  const suggestion = triage?.resultado || {};
+  const [submitting, setSubmitting] = useState(false);
+  const [values, setValues] = useState({
+    categoriaId: suggestion.categoriaId || "",
+    subcategoria: suggestion.subcategoria || "",
+    prioridadeSugerida: suggestion.prioridadeSugerida || "MEDIA",
+    impacto: suggestion.impacto || "MEDIO",
+    urgencia: suggestion.urgencia || "MEDIO",
+  });
+
+  useEffect(() => {
+    setValues({
+      categoriaId: suggestion.categoriaId || "",
+      subcategoria: suggestion.subcategoria || "",
+      prioridadeSugerida: suggestion.prioridadeSugerida || "MEDIA",
+      impacto: suggestion.impacto || "MEDIO",
+      urgencia: suggestion.urgencia || "MEDIO",
+    });
+  }, [
+    suggestion.categoriaId,
+    suggestion.impacto,
+    suggestion.prioridadeSugerida,
+    suggestion.subcategoria,
+    suggestion.urgencia,
+  ]);
+
+  async function refresh() {
+    onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
+  }
+
+  async function runTriage() {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/solicitacoes/${request.id}/classificacao-ia`, {
+        method: "POST",
+      });
+      await refresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function review(action) {
+    setSubmitting(true);
+    onError("");
+    try {
+      await apiRequest(`/api/v1/classificacoes-ia/${triage.id}/revisao`, {
+        method: "POST",
+        body: JSON.stringify({
+          acao: action,
+          ...(action === "EDITAR" ? { valores: values } : {}),
+        }),
+      });
+      await refresh();
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!triage || triage.status === "FALHOU") {
+    return (
+      <section className="drawer-section ai-triage-panel">
+        <div className="ai-section-title">
+          <span className="entity-icon"><Sparkles size={19} /></span>
+          <div><h3>Triagem assistida</h3><small>Classificação sujeita à revisão humana</small></div>
+        </div>
+        {triage?.erro && <p className="form-error">{triage.erro}</p>}
+        <button className="secondary-button action-button" onClick={runTriage} disabled={submitting}>
+          <Sparkles size={17} /> {submitting ? "Agendando..." : "Executar triagem"}
+        </button>
+      </section>
+    );
+  }
+
+  if (["PENDENTE", "PROCESSANDO"].includes(triage.status)) {
+    return (
+      <section className="drawer-section ai-triage-panel ai-processing">
+        <div className="ai-section-title">
+          <span className="entity-icon"><Sparkles size={19} /></span>
+          <div><h3>Triagem em processamento</h3><small>O worker está analisando o relato</small></div>
+        </div>
+        <div className="ai-progress" aria-label="Triagem em processamento"><span /></div>
+      </section>
+    );
+  }
+
+  const reviewed = triage.statusRevisao !== "PENDENTE";
+  const confidence = Math.round((triage.confianca || 0) * 100);
+  return (
+    <section className={`drawer-section ai-triage-panel ${suggestion.emergencia ? "ai-emergency" : ""}`}>
+      <header className="ai-triage-header">
+        <div className="ai-section-title">
+          <span className="entity-icon"><Sparkles size={19} /></span>
+          <div>
+            <h3>Triagem assistida</h3>
+            <small>{triage.modelo} · prompt {triage.versaoPrompt}</small>
+          </div>
+        </div>
+        <div className="ai-confidence" aria-label={`Confiança da sugestão: ${confidence}%`}>
+          <span>Confiança</span>
+          <strong>{confidence}%</strong>
+          <span className="ai-confidence-track" aria-hidden="true">
+            <span style={{ width: `${confidence}%` }} />
+          </span>
+        </div>
+      </header>
+      {suggestion.emergencia && (
+        <div className="emergency-alert">
+          <ShieldAlert size={20} />
+          <div><strong>Possível emergência</strong><p>{suggestion.orientacaoEmergencia}</p></div>
+        </div>
+      )}
+      <div className="ai-result-copy">
+        <div>
+          <span className="ai-content-label">Resumo do relato</span>
+          <p className="ai-summary">{suggestion.resumo}</p>
+        </div>
+        <div>
+          <span className="ai-content-label">Motivo da sugestão</span>
+          <p className="muted-copy">{suggestion.justificativa}</p>
+        </div>
+      </div>
+      <div className={`ai-classification ${reviewed ? "is-reviewed" : ""}`}>
+        <div className="ai-classification-heading">
+          <strong>Classificação sugerida</strong>
+          <small>{reviewed ? "Valores aplicados na solicitação" : "Revise os valores antes de aplicar"}</small>
+        </div>
+        <div className="form-grid ai-category-grid">
+          <label>Categoria<select disabled={reviewed} value={values.categoriaId} onChange={(event) => setValues((current) => ({ ...current, categoriaId: event.target.value }))}><option value="">Sem categoria</option>{categories.filter((item) => item.ativa).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+          <label>Subcategoria<input disabled={reviewed} value={values.subcategoria} onChange={(event) => setValues((current) => ({ ...current, subcategoria: event.target.value }))} /></label>
+        </div>
+        <div className="form-grid ai-level-grid">
+          <label>Prioridade<select disabled={reviewed} value={values.prioridadeSugerida} onChange={(event) => setValues((current) => ({ ...current, prioridadeSugerida: event.target.value }))}><option value="BAIXA">Baixa</option><option value="MEDIA">Média</option><option value="ALTA">Alta</option><option value="CRITICA">Crítica</option></select></label>
+          <label>Impacto<select disabled={reviewed} value={values.impacto} onChange={(event) => setValues((current) => ({ ...current, impacto: event.target.value }))}><LevelOptions /></select></label>
+          <label>Urgência<select disabled={reviewed} value={values.urgencia} onChange={(event) => setValues((current) => ({ ...current, urgencia: event.target.value }))}><LevelOptions /></select></label>
+        </div>
+      </div>
+      {reviewed ? (
+        <div className={`ai-review-status review-${triage.statusRevisao.toLowerCase()}`}>
+          {triage.statusRevisao === "REJEITADA" ? <X size={18} /> : <CheckCircle2 size={18} />}
+          <div>
+            <span>Revisão humana concluída</span>
+            <strong>{reviewLabel(triage.statusRevisao)}</strong>
+          </div>
+        </div>
+      ) : (
+        <div className="ai-review-actions">
+          <button className="primary-button compact" onClick={() => review("ACEITAR")} disabled={submitting}><CheckCircle2 size={17} /> Aceitar sugestão</button>
+          <button className="secondary-button" onClick={() => review("EDITAR")} disabled={submitting}>Aplicar ajustes</button>
+          <button className="secondary-button danger-text" onClick={() => review("REJEITAR")} disabled={submitting}><X size={17} /> Rejeitar</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ScheduledReturnItem({ item, onUpdate }) {
   const [scheduledAt, setScheduledAt] = useState(toLocalDateTime(item.agendadoPara));
   const active = item.status === "AGENDADO";
@@ -828,5 +1016,13 @@ function contactResultLabel(value) {
     SEM_RESPOSTA: "Sem resposta",
     FALHOU: "Falhou",
     AGENDADO: "Retorno agendado",
+  }[value] || value;
+}
+
+function reviewLabel(value) {
+  return {
+    ACEITA: "Sugestão aceita",
+    EDITADA: "Sugestão ajustada",
+    REJEITADA: "Sugestão rejeitada",
   }[value] || value;
 }

@@ -1,4 +1,29 @@
 services:
+  ollama:
+    image: ollama/ollama:0.12.3
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-10m}
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:0.12.3
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull ${AI_TRIAGE_MODEL:-qwen2.5:3b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
   db:
     image: postgres:17-alpine
     environment:
@@ -29,6 +54,13 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
       RESEND_TIMEOUT_SECONDS: ${RESEND_TIMEOUT_SECONDS:-10}
+      AI_TRIAGE_PROVIDER: ${AI_TRIAGE_PROVIDER:-ollama}
+      AI_TRIAGE_MODEL: ${AI_TRIAGE_MODEL:-qwen2.5:3b}
+      AI_TRIAGE_FALLBACK_MODEL: ${AI_TRIAGE_FALLBACK_MODEL:-gabflow-triage-rules-v1}
+      AI_TRIAGE_PROMPT_VERSION: ${AI_TRIAGE_PROMPT_VERSION:-triage-v2}
+      AI_TRIAGE_TIMEOUT_SECONDS: ${AI_TRIAGE_TIMEOUT_SECONDS:-120}
+      AI_TRIAGE_FALLBACK_ENABLED: ${AI_TRIAGE_FALLBACK_ENABLED:-true}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       ATTACHMENT_STORAGE_PATH: /app/data/attachments
       MAX_ATTACHMENT_BYTES: ${MAX_ATTACHMENT_BYTES:-15728640}
       ATTACHMENT_TOKEN_MAX_AGE: ${ATTACHMENT_TOKEN_MAX_AGE:-300}
@@ -46,6 +78,42 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+    entrypoint: ["/app/worker-entrypoint.sh"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_RELEASE: ${APP_RELEASE:-local}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-gabflow}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gabflow}
+      SECRET_KEY: ${SECRET_KEY:?Defina SECRET_KEY no arquivo .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Defina JWT_SECRET_KEY no arquivo .env}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      RESEND_TIMEOUT_SECONDS: ${RESEND_TIMEOUT_SECONDS:-10}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
+      WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-5}
+      WORKER_RETRY_BASE_SECONDS: ${WORKER_RETRY_BASE_SECONDS:-30}
+      WORKER_RETRY_MAX_SECONDS: ${WORKER_RETRY_MAX_SECONDS:-3600}
+      WORKER_LOCK_TIMEOUT_SECONDS: ${WORKER_LOCK_TIMEOUT_SECONDS:-300}
+      SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-30}
+      AI_TRIAGE_PROVIDER: ${AI_TRIAGE_PROVIDER:-ollama}
+      AI_TRIAGE_MODEL: ${AI_TRIAGE_MODEL:-qwen2.5:3b}
+      AI_TRIAGE_FALLBACK_MODEL: ${AI_TRIAGE_FALLBACK_MODEL:-gabflow-triage-rules-v1}
+      AI_TRIAGE_PROMPT_VERSION: ${AI_TRIAGE_PROMPT_VERSION:-triage-v2}
+      AI_TRIAGE_TIMEOUT_SECONDS: ${AI_TRIAGE_TIMEOUT_SECONDS:-120}
+      AI_TRIAGE_FALLBACK_ENABLED: ${AI_TRIAGE_FALLBACK_ENABLED:-true}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+    depends_on:
+      api:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   web:
@@ -66,3 +134,4 @@ services:
 volumes:
   postgres_data:
   attachment_data:
+  ollama_data:

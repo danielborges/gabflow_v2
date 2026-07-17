@@ -1,13 +1,25 @@
 import click
-from flask import Flask
+from flask import Flask, current_app
 from sqlalchemy import select
 
 from app.auth.security import hash_password
 from app.extensions import db
 from app.models import ExternalAgency, RequestCategory, Role, Tenant, Territory, User
+from app.outbox.worker import run_worker
 
 
 def register_commands(app: Flask) -> None:
+    @app.cli.command("worker")
+    @click.option("--once", is_flag=True, help="Processa um lote e encerra.")
+    def worker(once: bool) -> None:
+        result = run_worker(current_app._get_current_object(), once=once)
+        click.echo(
+            "Outbox processado: "
+            f"{result.succeeded} sucesso(s), "
+            f"{result.retried} reagendado(s), "
+            f"{result.failed} falha(s) definitiva(s)."
+        )
+
     @app.cli.command("seed")
     @click.option("--tenant", default="gabinete-demo")
     @click.option("--email", default="admin@gabflow.local")

@@ -20,6 +20,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     register_http_hooks(app)
 
     from app.admin.routes import admin_bp
+    from app.ai.routes import ai_bp
     from app.auth.routes import auth_bp
     from app.cli import register_commands
     from app.communications.routes import communications_bp
@@ -33,6 +34,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     register_commands(app)
     app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
+    app.register_blueprint(ai_bp, url_prefix="/api/v1")
     app.register_blueprint(health_bp, url_prefix="/api/v1")
     app.register_blueprint(requests_bp, url_prefix="/api/v1")
     app.register_blueprint(communications_bp, url_prefix="/api/v1")

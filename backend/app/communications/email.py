@@ -7,7 +7,9 @@ from flask import current_app
 
 
 class EmailDeliveryError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,10 @@ def send_email(
     api_key = current_app.config.get("RESEND_API_KEY")
     sender = current_app.config.get("RESEND_FROM_EMAIL")
     if not api_key or not sender:
-        raise EmailDeliveryError("O envio de e-mail ainda não está configurado.")
+        raise EmailDeliveryError(
+            "O envio de e-mail ainda não está configurado.",
+            retryable=False,
+        )
 
     payload = json.dumps(
         {
@@ -58,7 +63,11 @@ def send_email(
             current_app.logger.warning(
                 "Resend rejected an email with status %s.", response.status
             )
-            raise EmailDeliveryError("O provedor recusou o envio do e-mail.")
+            retryable = response.status in {408, 429} or response.status >= 500
+            raise EmailDeliveryError(
+                "O provedor recusou o envio do e-mail.",
+                retryable=retryable,
+            )
         result = json.loads(body.decode("utf-8"))
     except EmailDeliveryError:
         raise
@@ -74,5 +83,5 @@ def send_email(
     return EmailDelivery(provider="RESEND", message_id=str(message_id))
 
 
-def new_idempotency_key(request_id: uuid.UUID) -> str:
-    return f"gabflow-response-{request_id}-{uuid.uuid4()}"
+def email_idempotency_key(event_id: uuid.UUID) -> str:
+    return f"gabflow-email-{event_id}"

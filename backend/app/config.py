@@ -31,6 +31,26 @@ class Config:
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL")
     RESEND_TIMEOUT_SECONDS = int(os.getenv("RESEND_TIMEOUT_SECONDS", "10"))
+    WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+    WORKER_BATCH_SIZE = int(os.getenv("WORKER_BATCH_SIZE", "20"))
+    WORKER_MAX_ATTEMPTS = int(os.getenv("WORKER_MAX_ATTEMPTS", "5"))
+    WORKER_RETRY_BASE_SECONDS = int(os.getenv("WORKER_RETRY_BASE_SECONDS", "30"))
+    WORKER_RETRY_MAX_SECONDS = int(os.getenv("WORKER_RETRY_MAX_SECONDS", "3600"))
+    WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv("WORKER_LOCK_TIMEOUT_SECONDS", "300"))
+    SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "30"))
+    AI_TRIAGE_PROVIDER = os.getenv("AI_TRIAGE_PROVIDER", "ollama")
+    AI_TRIAGE_MODEL = os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
+    AI_TRIAGE_FALLBACK_MODEL = os.getenv(
+        "AI_TRIAGE_FALLBACK_MODEL",
+        "gabflow-triage-rules-v1",
+    )
+    AI_TRIAGE_PROMPT_VERSION = os.getenv("AI_TRIAGE_PROMPT_VERSION", "triage-v2")
+    AI_TRIAGE_TIMEOUT_SECONDS = int(os.getenv("AI_TRIAGE_TIMEOUT_SECONDS", "120"))
+    AI_TRIAGE_FALLBACK_ENABLED = os.getenv(
+        "AI_TRIAGE_FALLBACK_ENABLED",
+        "true",
+    ).lower() == "true"
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 
 
 class TestConfig(Config):
@@ -41,3 +61,7 @@ class TestConfig(Config):
     SENTRY_DSN = None
     RESEND_API_KEY = None
     RESEND_FROM_EMAIL = None
+    AI_TRIAGE_PROVIDER = "local"
+    AI_TRIAGE_MODEL = "gabflow-triage-rules-v1"
+    AI_TRIAGE_FALLBACK_MODEL = "gabflow-triage-rules-v1"
+    AI_TRIAGE_PROMPT_VERSION = "triage-v1"

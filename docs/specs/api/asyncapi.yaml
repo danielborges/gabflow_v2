@@ -14,6 +14,11 @@ channels:
     messages:
       SolicitacaoAtualizada:
         $ref: "#/components/messages/SolicitacaoAtualizada"
+  respostaEmailSolicitacao:
+    address: gabflow.comunicacao.resposta-email.v1
+    messages:
+      RespostaEmailSolicitacao:
+        $ref: "#/components/messages/RespostaEmailSolicitacao"
   classificacaoConcluida:
     address: gabflow.ia.classificacao-concluida.v1
     messages:
@@ -34,6 +39,10 @@ operations:
     action: send
     channel:
       $ref: "#/channels/solicitacaoCriada"
+  processRespostaEmailSolicitacao:
+    action: receive
+    channel:
+      $ref: "#/channels/respostaEmailSolicitacao"
   receiveClassificacaoConcluida:
     action: receive
     channel:
@@ -46,6 +55,26 @@ components:
     SolicitacaoAtualizada:
       payload:
         $ref: "#/components/schemas/DomainEvent"
+    RespostaEmailSolicitacao:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/DomainEvent"
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [solicitacaoId, destinatario, assunto, conteudo]
+                properties:
+                  solicitacaoId:
+                    type: string
+                    format: uuid
+                  destinatario:
+                    type: string
+                    format: email
+                  assunto:
+                    type: string
+                  conteudo:
+                    type: string
     ClassificacaoConcluida:
       payload:
         allOf:

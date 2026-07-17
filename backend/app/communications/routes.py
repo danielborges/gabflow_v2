@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.audit import add_audit
 from app.auth.permissions import roles_required
-from app.communications.email import EmailDeliveryError, new_idempotency_key, send_email
+from app.communications.email import email_idempotency_key
 from app.communications.service import (
     ALLOWED_CHANNELS,
     CommunicationValidationError,
@@ -21,10 +21,9 @@ from app.communications.service import (
 from app.extensions import db
 from app.models import (
     Citizen,
-    ContactAttempt,
-    ContactAttemptOutcome,
     InteractionDirection,
     InteractionVisibility,
+    OutboxEvent,
     RequestCategory,
     RequestHistory,
     RequestInteraction,
@@ -36,6 +35,7 @@ from app.models import (
     User,
     UserStatus,
 )
+from app.outbox.handlers import EMAIL_RESPONSE_EVENT
 
 communications_bp = Blueprint("communications", __name__)
 
@@ -251,7 +251,6 @@ def send_response(request_id: uuid.UUID):
             template = None
         if template is None:
             return jsonify(error="validation_error", message="Template inválido."), 422
-    delivery = None
     destination = None
     if channel == "EMAIL":
         citizen = (
@@ -271,46 +270,6 @@ def send_response(request_id: uuid.UUID):
                 ),
                 422,
             )
-        try:
-            delivery = send_email(
-                recipient=destination,
-                subject=subject,
-                text=content,
-                idempotency_key=new_idempotency_key(service_request.id),
-            )
-        except EmailDeliveryError as error:
-            attempt = ContactAttempt(
-                tenant_id=tenant_id,
-                request_id=service_request.id,
-                citizen_id=service_request.citizen_id,
-                channel="EMAIL",
-                destination=destination,
-                outcome=ContactAttemptOutcome.FALHOU,
-                notes=str(error),
-                created_by_id=user_id,
-            )
-            db.session.add(attempt)
-            db.session.flush()
-            failure = {"canal": "EMAIL", "tentativaContatoId": str(attempt.id)}
-            db.session.add(
-                RequestHistory(
-                    tenant_id=tenant_id,
-                    request_id=service_request.id,
-                    user_id=user_id,
-                    action="request.response.failed",
-                    changes=failure,
-                )
-            )
-            add_audit(
-                tenant_id,
-                user_id,
-                "request.response.failed",
-                "service_request",
-                service_request.id,
-                after=failure,
-            )
-            db.session.commit()
-            return jsonify(error="email_delivery_failed", message=str(error)), 502
     interaction = RequestInteraction(
         tenant_id=tenant_id,
         request_id=service_request.id,
@@ -323,49 +282,54 @@ def send_response(request_id: uuid.UUID):
     )
     db.session.add(interaction)
     db.session.flush()
-    attempt = None
-    if delivery:
-        attempt = ContactAttempt(
+    event = None
+    if channel == "EMAIL":
+        event = OutboxEvent(
+            id=uuid.uuid4(),
             tenant_id=tenant_id,
-            request_id=service_request.id,
-            citizen_id=service_request.citizen_id,
-            channel="EMAIL",
-            destination=destination,
-            outcome=ContactAttemptOutcome.REALIZADO,
-            notes=f"Mensagem aceita pelo Resend. ID: {delivery.message_id}",
-            created_by_id=user_id,
+            event_type=EMAIL_RESPONSE_EVENT,
+            aggregate_type="Solicitacao",
+            aggregate_id=str(service_request.id),
+            payload={},
         )
-        db.session.add(attempt)
-        db.session.flush()
+        event.payload = {
+            "requestId": str(service_request.id),
+            "userId": str(user_id),
+            "interactionId": str(interaction.id),
+            "recipient": destination,
+            "subject": subject,
+            "text": content,
+            "idempotencyKey": email_idempotency_key(event.id),
+        }
+        db.session.add(event)
     details = {
         "canal": channel,
         "assunto": subject or None,
         "templateId": str(template.id) if template else None,
         "templateVersao": template.version if template else None,
         "interacaoId": str(interaction.id),
-        "provedor": delivery.provider if delivery else None,
-        "mensagemExternaId": delivery.message_id if delivery else None,
-        "tentativaContatoId": str(attempt.id) if attempt else None,
+        "eventoId": str(event.id) if event else None,
+        "statusEntrega": "AGENDADO" if event else "REGISTRADO",
     }
     db.session.add(
         RequestHistory(
             tenant_id=tenant_id,
             request_id=service_request.id,
             user_id=user_id,
-            action="request.response.sent",
+            action="request.response.queued" if event else "request.response.sent",
             changes=details,
         )
     )
     add_audit(
         tenant_id,
         user_id,
-        "request.response.sent",
+        "request.response.queued" if event else "request.response.sent",
         "service_request",
         service_request.id,
         after=details,
     )
     db.session.commit()
-    return jsonify(id=str(interaction.id), **details), 201
+    return jsonify(id=str(interaction.id), **details), 202 if event else 201
 
 
 def _citizen_email(citizen: Citizen | None) -> str | None:

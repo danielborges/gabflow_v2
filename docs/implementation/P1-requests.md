@@ -33,6 +33,8 @@ evoluindo juntos em fatias verticais.
 | RF-044 / RF-045 | Tentativas de contato com canal, destino, resultado, responsável, próxima tentativa e justificativa obrigatória ao divergir do canal preferencial |
 | RF-080 / RF-087 | Painel por status, categoria e território, com atrasos, demandas próximas do prazo e fila prioritária |
 | Segurança de anexos | Namespace por tenant, limite de tamanho, allowlist de MIME, SHA-256, bloqueio da assinatura EICAR e URL temporária assinada |
+| Worker / ADR-002 | Outbox PostgreSQL com `SKIP LOCKED`, idempotência, backoff exponencial, limite de tentativas e registro de falha definitiva |
+| Scheduler | Lembretes de retorno gerados periodicamente sem depender da abertura do painel |
 
 ## Interface entregue
 
@@ -55,6 +57,6 @@ evoluindo juntos em fatias verticais.
 
 - a verificação de anexos usa controles locais e a assinatura EICAR; a implantação
   produtiva deve conectar o fluxo a um scanner dedicado, como ClamAV ou equivalente;
-- notificações externas por e-mail ou mensageria permanecem desacopladas;
-- templates de resposta, agendamento de retorno e notificações externas ficam para
-  incrementos posteriores de comunicação.
+- o worker publica eventos de domínio no log estruturado até a adoção de um barramento
+  externo; o outbox e os consumidores já preservam o contrato idempotente;
+- e-mails usam Resend pelo worker; outros canais externos ainda dependem de provedores.
