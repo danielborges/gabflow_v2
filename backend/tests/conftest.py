@@ -11,6 +11,7 @@ from app.models import Role, Tenant, User
 def app(tmp_path):
     application = create_app(TestConfig)
     application.config["ATTACHMENT_STORAGE_PATH"] = str(tmp_path / "attachments")
+    application.config["RAG_STORAGE_PATH"] = str(tmp_path / "rag")
     with application.app_context():
         db.create_all()
         tenant_a = Tenant(name="Gabinete A", slug="gabinete-a")

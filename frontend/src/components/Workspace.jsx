@@ -2,6 +2,7 @@ import {
   BrainCircuit,
   ChevronRight,
   ClipboardList,
+  Database,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -19,6 +20,7 @@ import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
 import { OperationalDashboard } from "./OperationalDashboard";
 import { PrivacyGovernancePage } from "./PrivacyGovernancePage";
+import { RagKnowledgeBasePage } from "./RagKnowledgeBasePage";
 import { RequestsPage } from "./RequestsPage";
 
 const navigation = [
@@ -27,6 +29,7 @@ const navigation = [
   { id: "citizens", label: "Cidadãos", icon: Users, enabled: true },
   { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true },
   { id: "documents", label: "Documentos", icon: FileText, enabled: true },
+  { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true },
 ];
 
 export function Workspace({ user, onLogout }) {
@@ -47,11 +50,11 @@ export function Workspace({ user, onLogout }) {
           </button>
         </div>
         <nav aria-label="Navegação principal">
-          {navigation.map(({ id, label, icon: Icon, enabled }) => (
+          {navigation.map(({ id, label, icon: Icon, enabled, managerOnly }) => (
             <button
               key={id}
               className={activeView === id ? "nav-item active" : "nav-item"}
-              disabled={!enabled}
+              disabled={!enabled || (managerOnly && !["admin", "manager"].includes(user.role))}
               onClick={() => {
                 setActiveView(id);
                 setMenuOpen(false);
@@ -110,6 +113,7 @@ export function Workspace({ user, onLogout }) {
         {activeView === "citizens" && <DirectoryPage />}
         {activeView === "ai-quality" && <AIQualityPage />}
         {activeView === "documents" && <LegislativeDocumentsPage user={user} />}
+        {activeView === "rag" && <RagKnowledgeBasePage />}
         {activeView === "admin" && <AdministrationPage />}
         {activeView === "privacy" && <PrivacyGovernancePage />}
         {activeView === "overview" && <OperationalDashboard onOpenRequests={() => setActiveView("requests")} />}

@@ -33,11 +33,11 @@
 
 ## RAG
 
-- **RIA-040** Indexar documentos com metadados, vigência, órgão, tipo e versão.
-- **RIA-041** Aplicar filtros por tenant e nível de acesso antes da recuperação.
-- **RIA-042** Retornar citações por documento, página ou seção.
-- **RIA-043** Exibir data da fonte.
-- **RIA-044** Diferenciar conteúdo vigente, revogado, histórico e rascunho.
+- **RIA-040** Indexar documentos com metadados, vigência, órgão, tipo e versão. **Implementado na Release 4.**
+- **RIA-041** Aplicar filtros por tenant e nível de acesso antes da recuperação. **Implementado na base documental.**
+- **RIA-042** Retornar citações por documento, página ou seção. **Estrutura de página e versão implementada; uso nas respostas será concluído na próxima fatia.**
+- **RIA-043** Exibir data da fonte. **Implementado na gestão da base documental.**
+- **RIA-044** Diferenciar conteúdo vigente, revogado, histórico e rascunho. **Implementado na Release 4.**
 - **RIA-045** Recusar resposta conclusiva quando a recuperação for insuficiente.
 - **RIA-046** Registrar consulta, documentos recuperados e resposta.
 - **RIA-047** Avaliar risco de prompt injection nos documentos.

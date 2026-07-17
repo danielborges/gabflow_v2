@@ -36,12 +36,16 @@ class OllamaEmbeddingProvider:
         self.timeout_seconds = timeout_seconds
 
     def similarities(self, source: str, candidates: list[str]) -> list[float]:
-        response = self._request({"model": self.model, "input": [source, *candidates]})
+        embeddings = self.embeddings([source, *candidates])
+        source_vector = embeddings[0]
+        return [_cosine(source_vector, vector) for vector in embeddings[1:]]
+
+    def embeddings(self, texts: list[str]) -> list[list[float]]:
+        response = self._request({"model": self.model, "input": texts})
         embeddings = response.get("embeddings")
-        if not isinstance(embeddings, list) or len(embeddings) != len(candidates) + 1:
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
             raise EmbeddingProviderError("O Ollama retornou embeddings incompletos.")
-        source_vector = _numeric_vector(embeddings[0])
-        return [_cosine(source_vector, _numeric_vector(vector)) for vector in embeddings[1:]]
+        return [_numeric_vector(vector) for vector in embeddings]
 
     def _request(self, payload: dict) -> dict:
         request = urllib.request.Request(  # noqa: S310 - URL validated in __init__

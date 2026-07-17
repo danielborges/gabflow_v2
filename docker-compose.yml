@@ -125,6 +125,13 @@ services:
       ATTACHMENT_STORAGE_PATH: /app/data/attachments
       MAX_ATTACHMENT_BYTES: ${MAX_ATTACHMENT_BYTES:-15728640}
       ATTACHMENT_TOKEN_MAX_AGE: ${ATTACHMENT_TOKEN_MAX_AGE:-300}
+      RAG_STORAGE_PATH: /app/data/rag
+      RAG_MAX_DOCUMENT_BYTES: ${RAG_MAX_DOCUMENT_BYTES:-26214400}
+      RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-ollama}
+      RAG_INGESTION_TIMEOUT_SECONDS: ${RAG_INGESTION_TIMEOUT_SECONDS:-120}
+      RAG_CHUNK_SIZE_CHARS: ${RAG_CHUNK_SIZE_CHARS:-1200}
+      RAG_CHUNK_OVERLAP_CHARS: ${RAG_CHUNK_OVERLAP_CHARS:-150}
+      RAG_MIN_TEXT_CHARS: ${RAG_MIN_TEXT_CHARS:-20}
       SEED_ADMIN_ON_START: ${SEED_ADMIN_ON_START:-true}
       SEED_TENANT: ${SEED_TENANT:-gabinete-demo}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@gabflow.local}
@@ -134,6 +141,7 @@ services:
         condition: service_healthy
     volumes:
       - attachment_data:/app/data/attachments
+      - rag_data:/app/data/rag
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
       interval: 10s
@@ -209,8 +217,16 @@ services:
       DOCUMENT_OCR_MAX_PIXELS: ${DOCUMENT_OCR_MAX_PIXELS:-25000000}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       ATTACHMENT_STORAGE_PATH: /app/data/attachments
+      RAG_STORAGE_PATH: /app/data/rag
+      RAG_MAX_DOCUMENT_BYTES: ${RAG_MAX_DOCUMENT_BYTES:-26214400}
+      RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-ollama}
+      RAG_INGESTION_TIMEOUT_SECONDS: ${RAG_INGESTION_TIMEOUT_SECONDS:-120}
+      RAG_CHUNK_SIZE_CHARS: ${RAG_CHUNK_SIZE_CHARS:-1200}
+      RAG_CHUNK_OVERLAP_CHARS: ${RAG_CHUNK_OVERLAP_CHARS:-150}
+      RAG_MIN_TEXT_CHARS: ${RAG_MIN_TEXT_CHARS:-20}
     volumes:
       - attachment_data:/app/data/attachments
+      - rag_data:/app/data/rag
       - whisper_models:/models/whisper
     depends_on:
       api:
@@ -239,5 +255,6 @@ services:
 volumes:
   postgres_data:
   attachment_data:
+  rag_data:
   ollama_data:
   whisper_models:

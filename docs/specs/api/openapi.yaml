@@ -575,6 +575,95 @@ paths:
               schema:
                 $ref: "#/components/schemas/MinutaLegislativa"
         "422": { description: Tipo, fonte ou conjunto de solicitações inválido }
+  /rag/documentos:
+    get:
+      summary: Lista documentos acessíveis da base RAG do tenant
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Documentos filtrados por tenant e nível de acesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/DocumentoRag" }
+    post:
+      summary: Cadastra documento e enfileira sua primeira versão para ingestão
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/EntradaDocumentoRag" }
+      responses:
+        "202": { description: Documento aceito para processamento }
+        "403": { description: Perfil sem permissão de gestão }
+        "409": { description: Título já cadastrado no tenant }
+        "422": { description: Metadados ou arquivo inválido }
+  /rag/documentos/{id}:
+    get:
+      summary: Consulta documento e histórico de versões
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Documento com versões
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentoRag" }
+        "404": { description: Documento inexistente ou sem acesso }
+  /rag/documentos/{id}/versoes:
+    post:
+      summary: Adiciona versão imutável e enfileira nova ingestão
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/EntradaVersaoRag" }
+      responses:
+        "202": { description: Versão aceita para processamento }
+        "404": { description: Documento inexistente no tenant }
+        "409": { description: Identificador de versão duplicado }
+        "422": { description: Metadados ou arquivo inválido }
+  /rag/documentos/{id}/versoes/{version_id}/estado:
+    patch:
+      summary: Publica, torna histórica ou revoga uma versão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado]
+              properties:
+                estado: { type: string, enum: [RASCUNHO, VIGENTE, HISTORICO, REVOGADO] }
+      responses:
+        "200": { description: Estado alterado e auditado }
+        "409": { description: Versão ainda não indexada }
+        "422": { description: Estado inválido }
+  /rag/documentos/{id}/versoes/{version_id}/reprocessar:
+    post:
+      summary: Reenfileira uma versão para extração e indexação
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Reprocessamento enfileirado }
+        "409": { description: Versão já em processamento }
   /legislativo/minutas:
     get:
       summary: Lista minutas legislativas do tenant
@@ -1251,6 +1340,51 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    EntradaVersaoRag:
+      type: object
+      required: [arquivo, versao]
+      properties:
+        arquivo: { type: string, format: binary }
+        versao: { type: string, maxLength: 80 }
+        vigenteDesde: { type: string, format: date }
+        vigenteAte: { type: string, format: date }
+        urlFonte: { type: string, format: uri }
+    EntradaDocumentoRag:
+      allOf:
+        - $ref: "#/components/schemas/EntradaVersaoRag"
+        - type: object
+          required: [titulo, tipo, nivelAcesso]
+          properties:
+            titulo: { type: string, maxLength: 240 }
+            tipo: { type: string, enum: [LEGISLACAO, ATO, ATA, RESPOSTA_ORGAO, CONTRATO, PROCESSO, PROCEDIMENTO_INTERNO, OUTRO] }
+            orgao: { type: string, maxLength: 180 }
+            nivelAcesso: { type: string, enum: [INTERNO, RESTRITO] }
+    VersaoDocumentoRag:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: integer, minimum: 1 }
+        versao: { type: string }
+        estado: { type: string, enum: [RASCUNHO, VIGENTE, HISTORICO, REVOGADO] }
+        statusIngestao: { type: string, enum: [PENDENTE, PROCESSANDO, INDEXADO, FALHOU] }
+        checksum: { type: string }
+        paginas: { type: integer }
+        fragmentos: { type: integer }
+        modeloEmbedding: { type: string }
+        erro: { type: string, nullable: true }
+    DocumentoRag:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        titulo: { type: string }
+        tipo: { type: string }
+        orgao: { type: string, nullable: true }
+        nivelAcesso: { type: string, enum: [INTERNO, RESTRITO] }
+        ativo: { type: boolean }
+        quantidadeVersoes: { type: integer }
+        versoes:
+          type: array
+          items: { $ref: "#/components/schemas/VersaoDocumentoRag" }
     CriarSolicitacaoRequest:
       type: object
       required: [origem, descricao]

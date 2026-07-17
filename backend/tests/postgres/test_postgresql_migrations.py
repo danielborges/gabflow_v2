@@ -36,6 +36,9 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "legislative_templates",
         "normative_sources",
         "privacy_requests",
+        "rag_chunks",
+        "rag_documents",
+        "rag_document_versions",
         "scheduled_returns",
         "service_requests",
         "tenants",
@@ -108,7 +111,8 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert rolled_back_heads == {previous_head}
         assert "legislative_drafts" in rolled_back_tables
         assert "legislative_tramitations" in rolled_back_tables
-        assert "normative_sources" not in rolled_back_tables
+        assert "normative_sources" in rolled_back_tables
+        assert "rag_documents" not in rolled_back_tables
 
         upgrade(directory="migrations")
 
@@ -120,6 +124,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "legislative_drafts" in reapplied_tables
         assert "legislative_tramitations" in reapplied_tables
         assert "normative_sources" in reapplied_tables
+        assert "rag_documents" in reapplied_tables
+        assert "rag_document_versions" in reapplied_tables
+        assert "rag_chunks" in reapplied_tables
 
 
 def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres_app):

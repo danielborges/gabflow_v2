@@ -51,6 +51,7 @@ def postgres_app(tmp_path):
             "RESEND_API_KEY": None,
             "RESEND_FROM_EMAIL": None,
             "ATTACHMENT_STORAGE_PATH": str(tmp_path / "attachments"),
+            "RAG_STORAGE_PATH": str(tmp_path / "rag"),
         },
     )
     application = create_app(config)

@@ -87,5 +87,5 @@
 - **RF-090** Parametrizar categorias, territórios, status e SLA.
 - **RF-091** Configurar templates. **Implementado no P2.**
 - **RF-092** Configurar integrações.
-- **RF-093** Gerenciar bases documentais RAG.
+- **RF-093** Gerenciar bases documentais RAG. **Implementado na Release 4 com ingestão assíncrona, versionamento e níveis de acesso.**
 - **RF-094** Configurar retenção, anonimização e auditoria. **Implementado no P1.**

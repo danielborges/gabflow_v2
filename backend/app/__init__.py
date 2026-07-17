@@ -30,6 +30,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.notifications.routes import notifications_bp
     from app.operations.routes import operations_bp, public_bp
     from app.privacy.routes import privacy_bp
+    from app.rag.routes import rag_bp
     from app.requests.operations import request_ops_bp
     from app.requests.routes import requests_bp
 
@@ -46,6 +47,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(notifications_bp, url_prefix="/api/v1")
     app.register_blueprint(operations_bp, url_prefix="/api/v1")
     app.register_blueprint(privacy_bp, url_prefix="/api/v1")
+    app.register_blueprint(rag_bp, url_prefix="/api/v1")
     app.register_blueprint(public_bp, url_prefix="/api/v1")
 
     @app.errorhandler(404)

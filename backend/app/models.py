@@ -121,6 +121,25 @@ class DocumentOcrReviewStatus(str, enum.Enum):
     REJEITADO = "REJEITADO"
 
 
+class RagDocumentAccess(str, enum.Enum):
+    INTERNO = "INTERNO"
+    RESTRITO = "RESTRITO"
+
+
+class RagDocumentLifecycle(str, enum.Enum):
+    RASCUNHO = "RASCUNHO"
+    VIGENTE = "VIGENTE"
+    HISTORICO = "HISTORICO"
+    REVOGADO = "REVOGADO"
+
+
+class RagIngestionStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    PROCESSANDO = "PROCESSANDO"
+    INDEXADO = "INDEXADO"
+    FALHOU = "FALHOU"
+
+
 class NotificationType(str, enum.Enum):
     ATRIBUICAO = "ATRIBUICAO"
     TAREFA = "TAREFA"
@@ -1036,6 +1055,121 @@ class NormativeSource(db.Model):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
+
+
+class RagDocument(db.Model):
+    __tablename__ = "rag_documents"
+    __table_args__ = (UniqueConstraint("tenant_id", "title"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    document_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    agency: Mapped[str | None] = mapped_column(String(180), index=True)
+    access_level: Mapped[RagDocumentAccess] = mapped_column(
+        Enum(RagDocumentAccess, name="rag_document_access"), nullable=False, index=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    versions: Mapped[list["RagDocumentVersion"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+
+
+class RagDocumentVersion(db.Model):
+    __tablename__ = "rag_document_versions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number"),
+        UniqueConstraint("document_id", "version_label"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rag_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    lifecycle_status: Mapped[RagDocumentLifecycle] = mapped_column(
+        Enum(RagDocumentLifecycle, name="rag_document_lifecycle"),
+        default=RagDocumentLifecycle.RASCUNHO,
+        nullable=False,
+        index=True,
+    )
+    ingestion_status: Mapped[RagIngestionStatus] = mapped_column(
+        Enum(RagIngestionStatus, name="rag_ingestion_status"),
+        default=RagIngestionStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    storage_key: Mapped[str] = mapped_column(String(400), unique=True, nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    language: Mapped[str] = mapped_column(String(20), default="pt", nullable=False)
+    embedding_model: Mapped[str | None] = mapped_column(String(120))
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    document: Mapped[RagDocument] = relationship(back_populates="versions")
+    chunks: Mapped[list["RagChunk"]] = relationship(
+        back_populates="version", cascade="all, delete-orphan"
+    )
+
+
+class RagChunk(db.Model):
+    __tablename__ = "rag_chunks"
+    __table_args__ = (UniqueConstraint("version_id", "position"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rag_document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    page_start: Mapped[int | None] = mapped_column(Integer)
+    page_end: Mapped[int | None] = mapped_column(Integer)
+    section: Mapped[str | None] = mapped_column(String(240))
+    embedding: Mapped[list] = mapped_column(JSON, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+    version: Mapped[RagDocumentVersion] = relationship(back_populates="chunks")
 
 
 class LegislativeDraft(db.Model):

@@ -37,8 +37,15 @@ from app.models import (
     DocumentOcr,
     DocumentOcrStatus,
     OutboxEvent,
+    RagDocumentVersion,
     RequestHistory,
     ServiceRequest,
+)
+from app.rag.service import (
+    RAG_INGESTION_EVENT,
+    NonRetryableRagError,
+    execute_ingestion,
+    fail_ingestion,
 )
 
 EMAIL_RESPONSE_EVENT = "RespostaEmailSolicitacao"
@@ -70,6 +77,12 @@ def handle_event(event: OutboxEvent) -> None:
         try:
             execute_document_ocr(_document_ocr(event))
         except NonRetryableOcrError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
+    if event.event_type == RAG_INGESTION_EVENT:
+        try:
+            execute_ingestion(_rag_document_version(event))
+        except NonRetryableRagError as error:
             raise NonRetryableEventError(str(error)) from error
         return
     if event.event_type == EMAIL_RESPONSE_EVENT:
@@ -104,6 +117,9 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         ocr = _document_ocr(event)
         ocr.status = DocumentOcrStatus.FALHOU
         ocr.error = error_message[:2000]
+        return
+    if event.event_type == RAG_INGESTION_EVENT:
+        fail_ingestion(_rag_document_version(event), error_message)
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -262,3 +278,11 @@ def _document_ocr(event: OutboxEvent) -> DocumentOcr:
     if ocr is None or ocr.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Execução de OCR não encontrada.")
     return ocr
+
+
+def _rag_document_version(event: OutboxEvent) -> RagDocumentVersion:
+    version_id = _uuid(event.payload, "versionId")
+    version = db.session.get(RagDocumentVersion, version_id)
+    if version is None or version.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Versão da base documental não encontrada.")
+    return version
