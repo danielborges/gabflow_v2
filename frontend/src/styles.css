@@ -172,6 +172,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .request-form input, .request-form select, .drawer-section input, .drawer-section select { height: 42px; padding: 0 11px; }
 .request-form textarea, .drawer-section textarea, .interaction-form textarea { padding: 10px 11px; resize: vertical; }
 .request-form input:focus, .request-form select:focus, .request-form textarea:focus, .drawer-section select:focus, .drawer-section textarea:focus, .interaction-form textarea:focus { border-color: var(--blue-600); box-shadow: 0 0 0 3px #1688ef16; }
+.request-form input[aria-invalid="true"] { border-color: var(--danger); background: #fffafa; }
+.request-form input[aria-invalid="true"]:focus { border-color: var(--danger); box-shadow: 0 0 0 3px #b4231816; }
+.request-form .field-error { color: var(--danger); font-size: 0.7rem; font-weight: 600; line-height: 1.35; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .request-form footer { display: flex; justify-content: flex-end; gap: 10px; padding-top: 5px; }
 .drawer-backdrop { justify-items: end; }
@@ -222,6 +225,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .directory-list { padding: 0 36px 36px; }
 .entity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .entity-grid article, .category-list article { min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 15px; border: 1px solid var(--line); border-radius: 7px; background: white; }
+.entity-grid article.interactive { cursor: pointer; transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease; }
+.entity-grid article.interactive:hover { border-color: #a9cdec; box-shadow: 0 6px 18px #10213f0d; transform: translateY(-1px); }
+.entity-grid article.interactive:focus-visible { outline: 0; border-color: var(--blue-600); box-shadow: 0 0 0 3px #1688ef1c; }
 .entity-grid article div, .category-list article div { display: grid; min-width: 0; gap: 4px; }
 .entity-grid article strong, .category-list article strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.87rem; }
 .entity-grid article small, .category-list article small { color: var(--muted); font-size: 0.74rem; }
