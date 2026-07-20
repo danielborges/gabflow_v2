@@ -24,10 +24,10 @@ export async function apiRequest(path, options = {}) {
     headers,
     credentials: "include",
   });
-  const data = await response.json().catch(() => ({}));
+  const data = await readResponsePayload(response);
 
   if (!response.ok) {
-    throw new Error(data.message || "Não foi possível concluir a operação.");
+    throw new Error(errorMessageFor(response, data, "Não foi possível concluir a operação."));
   }
   return data;
 }
@@ -46,8 +46,24 @@ export async function apiDownload(path, options = {}) {
     credentials: "include",
   });
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.message || "Não foi possível gerar o arquivo.");
+    const data = await readResponsePayload(response);
+    throw new Error(errorMessageFor(response, data, "Não foi possível gerar o arquivo."));
   }
   return response.blob();
+}
+
+async function readResponsePayload(response) {
+  const contentType = response.headers?.get?.("content-type") || "";
+  if (contentType.includes("application/json") || (!contentType && response.json)) {
+    return response.json().catch(() => ({}));
+  }
+  const text = await response.text?.().catch(() => "");
+  return text ? { message: text } : {};
+}
+
+function errorMessageFor(response, data, fallback) {
+  if (response.status === 413) {
+    return "O arquivo enviado excede o limite permitido. Para a base documental RAG, use arquivos de até 25 MB.";
+  }
+  return data.message || data.error || fallback;
 }

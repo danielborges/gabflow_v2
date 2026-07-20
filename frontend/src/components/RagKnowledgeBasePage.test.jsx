@@ -68,3 +68,17 @@ it("publica versão indexada e preserva indicadores de proveniência", async () 
   ));
   expect(await screen.findByText("Vigente")).toBeInTheDocument();
 });
+
+it("bloqueia documentos acima de 25 MB antes do envio", async () => {
+  vi.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ content: [] }) });
+
+  render(<RagKnowledgeBasePage />);
+  fireEvent.click(screen.getByRole("button", { name: "Novo documento" }));
+  fireEvent.change(screen.getByLabelText("Título do documento"), { target: { value: "Plano de mobilidade" } });
+  const file = new File(["conteudo"], "plano.pdf", { type: "application/pdf" });
+  Object.defineProperty(file, "size", { value: 25 * 1024 * 1024 + 1 });
+  fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("limite da base documental RAG é 25 MB");
+  expect(global.fetch).toHaveBeenCalledTimes(1);
+});

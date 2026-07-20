@@ -23,6 +23,8 @@ const TYPES = [
 const INGESTION = { PENDENTE: "Na fila", PROCESSANDO: "Processando", INDEXADO: "Indexado", FALHOU: "Falhou" };
 const LIFECYCLE = { RASCUNHO: "Rascunho", VIGENTE: "Vigente", HISTORICO: "Histórico", REVOGADO: "Revogado" };
 const EMPTY_FORM = { titulo: "", tipo: "LEGISLACAO", orgao: "", nivelAcesso: "INTERNO", versao: "1", vigenteDesde: "", vigenteAte: "", urlFonte: "" };
+const RAG_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const RAG_ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg"];
 
 export function RagKnowledgeBasePage() {
   const [items, setItems] = useState([]);
@@ -58,10 +60,25 @@ export function RagKnowledgeBasePage() {
 
   function startNew() { setCreating(true); setAddingVersion(false); setSelected(null); setForm(EMPTY_FORM); setFile(null); setError(""); }
   function startVersion() { setAddingVersion(true); setCreating(false); setForm({ ...EMPTY_FORM, versao: String((selected?.quantidadeVersoes || 0) + 1) }); setFile(null); }
+  function selectFile(nextFile) {
+    if (!nextFile) { setFile(null); return; }
+    const validationError = validateRagFile(nextFile);
+    if (validationError) {
+      setFile(null);
+      setError(validationError);
+      return;
+    }
+    setError("");
+    setFile(nextFile);
+  }
 
   async function submit(event) {
     event.preventDefault();
-    if (!file) return;
+    const validationError = validateRagFile(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setBusy(true); setError("");
     try {
       const body = new FormData();
@@ -98,10 +115,10 @@ export function RagKnowledgeBasePage() {
 
   return <>
     <section className="page-heading rag-heading"><div><p className="eyebrow">Assistente RAG</p><h1>Base documental</h1><p>Ingestão versionada, rastreável e isolada por gabinete.</p></div><button className="primary-button" onClick={startNew}><Plus size={18} /> Novo documento</button></section>
-    {error && <p className="form-error rag-error">{error}</p>}
+    {error && <div className="rag-error-banner" role="alert"><AlertTriangle size={18} /><span><strong>Ação não concluída</strong><small>{error}</small></span></div>}
     <section className="rag-workspace">
       <aside className="rag-list"><div className="rag-search"><Search size={17} /><input aria-label="Pesquisar documentos RAG" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Título, tipo ou órgão" /><button className="icon-button" title="Atualizar" onClick={load}><RefreshCw size={17} /></button></div>{items.map((item) => <button key={item.id} className={selected?.id === item.id ? "rag-list-item active" : "rag-list-item"} onClick={() => { setCreating(false); setAddingVersion(false); loadDetail(item.id); }}><Database size={18} /><span><strong>{item.titulo}</strong><small>{typeLabel(item.tipo)} · {item.quantidadeVersoes} versão(ões)</small></span>{item.ultimaVersao && <i className={`rag-status status-${item.ultimaVersao.statusIngestao.toLowerCase()}`}>{INGESTION[item.ultimaVersao.statusIngestao]}</i>}</button>)}{!items.length && <div className="rag-empty-list"><Database size={26} /><p>Nenhum documento cadastrado.</p></div>}</aside>
-      <div className="rag-content">{creating || addingVersion ? <RagUploadForm form={form} setForm={setForm} file={file} setFile={setFile} busy={busy} addingVersion={addingVersion} document={selected} onCancel={() => { setCreating(false); setAddingVersion(false); }} onSubmit={submit} /> : selected ? <RagDocumentDetail document={selected} busy={busy} onAddVersion={startVersion} onChangeState={changeState} onReprocess={reprocess} /> : <div className="rag-empty"><Database size={36} /><h2>Selecione um documento</h2><p>Consulte versões, processamento e proveniência.</p></div>}</div>
+      <div className="rag-content">{creating || addingVersion ? <RagUploadForm form={form} setForm={setForm} file={file} setFile={selectFile} busy={busy} addingVersion={addingVersion} document={selected} onCancel={() => { setCreating(false); setAddingVersion(false); }} onSubmit={submit} /> : selected ? <RagDocumentDetail document={selected} busy={busy} onAddVersion={startVersion} onChangeState={changeState} onReprocess={reprocess} /> : <div className="rag-empty"><Database size={36} /><h2>Selecione um documento</h2><p>Consulte versões, processamento e proveniência.</p></div>}</div>
     </section>
   </>;
 }
@@ -117,4 +134,21 @@ function RagDocumentDetail({ document, busy, onAddVersion, onChangeState, onRepr
 }
 
 function typeLabel(value) { return TYPES.find(([id]) => id === value)?.[1] || value; }
-function formatBytes(value) { return `${Math.max(1, Math.round((value || 0) / 1024))} KB`; }
+function validateRagFile(nextFile) {
+  if (!nextFile) return "Selecione um arquivo para enviar à base documental.";
+  const fileName = nextFile.name?.toLowerCase() || "";
+  if (!RAG_ACCEPTED_EXTENSIONS.some((extension) => fileName.endsWith(extension))) {
+    return "Formato não permitido. Envie um arquivo PDF, DOCX, TXT, PNG ou JPEG.";
+  }
+  if (nextFile.size > RAG_MAX_FILE_BYTES) {
+    return `O arquivo selecionado tem ${formatBytes(nextFile.size)}. O limite da base documental RAG é 25 MB. Reduza, compacte ou divida o documento antes de enviar.`;
+  }
+  return "";
+}
+function formatBytes(value) {
+  const bytes = value || 0;
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}

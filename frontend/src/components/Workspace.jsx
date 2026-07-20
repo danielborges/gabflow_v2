@@ -10,6 +10,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   Users,
 } from "lucide-react";
 import { useState } from "react";
@@ -20,6 +21,7 @@ import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
 import { OperationalDashboard } from "./OperationalDashboard";
 import { PrivacyGovernancePage } from "./PrivacyGovernancePage";
+import { RagAssistantPage } from "./RagAssistantPage";
 import { RagKnowledgeBasePage } from "./RagKnowledgeBasePage";
 import { RequestsPage } from "./RequestsPage";
 
@@ -28,6 +30,7 @@ const navigation = [
   { id: "requests", label: "Solicitações", icon: ClipboardList, enabled: true },
   { id: "citizens", label: "Cidadãos", icon: Users, enabled: true },
   { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true },
+  { id: "rag-assistant", label: "Assistente RAG", icon: Sparkles, enabled: true },
   { id: "documents", label: "Documentos", icon: FileText, enabled: true },
   { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true },
 ];
@@ -112,6 +115,7 @@ export function Workspace({ user, onLogout }) {
         {activeView === "requests" && <RequestsPage user={user} />}
         {activeView === "citizens" && <DirectoryPage />}
         {activeView === "ai-quality" && <AIQualityPage />}
+        {activeView === "rag-assistant" && <RagAssistantPage />}
         {activeView === "documents" && <LegislativeDocumentsPage user={user} />}
         {activeView === "rag" && <RagKnowledgeBasePage />}
         {activeView === "admin" && <AdministrationPage />}
