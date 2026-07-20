@@ -4,10 +4,14 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  FileCheck2,
+  Forward,
   ListTodo,
   MapPin,
   MapPinned,
+  MessageSquareReply,
   Navigation,
+  RotateCcw,
   UserMinus,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -88,6 +92,7 @@ export function OperationalDashboard({ onOpenRequests }) {
       </section>
       <section className="dashboard-layout">
         <div className="dashboard-main">
+          <OperationalMetricsPanel metrics={data.metricasOperacionais} />
           <header><div><h2>Fila prioritária</h2><p>Demandas abertas ordenadas por atraso e prazo.</p></div><button className="secondary-button" onClick={onOpenRequests}>Ver solicitações</button></header>
           {data.filaPrioritaria.length === 0 ? <p className="muted-copy">Nenhuma demanda aberta.</p> : (
             <div className="priority-queue">
@@ -121,6 +126,64 @@ export function OperationalDashboard({ onOpenRequests }) {
         </div>
       </section>
     </>
+  );
+}
+
+function OperationalMetricsPanel({ metrics = {} }) {
+  const items = [
+    {
+      label: "Primeira resposta",
+      value: formatHours(metrics.tempoMedioPrimeiraRespostaHoras),
+      helper: `${metrics.primeirasRespostasRegistradas || 0} com resposta`,
+      Icon: MessageSquareReply,
+    },
+    {
+      label: "Primeiro encaminhamento",
+      value: formatHours(metrics.tempoMedioPrimeiroEncaminhamentoHoras),
+      helper: `${metrics.encaminhamentosRegistrados || 0} encaminhadas`,
+      Icon: Forward,
+    },
+    {
+      label: "Encerramento",
+      value: formatHours(metrics.tempoMedioEncerramentoHoras),
+      helper: `${metrics.encerramentosRegistrados || 0} encerradas`,
+      Icon: FileCheck2,
+    },
+    {
+      label: "Resolução",
+      value: formatHours(metrics.tempoMedioResolucaoHoras),
+      helper: `${metrics.resolucoesRegistradas || 0} resolvidas`,
+      Icon: CheckCircle2,
+    },
+    {
+      label: "Reaberturas",
+      value: metrics.reaberturas || 0,
+      helper: "casos reabertos",
+      Icon: RotateCcw,
+    },
+  ];
+
+  return (
+    <section className="operational-metrics">
+      <header>
+        <div>
+          <h2>Métricas operacionais</h2>
+          <p>Tempos médios e reaberturas para acompanhar a eficiência do atendimento.</p>
+        </div>
+      </header>
+      <div>
+        {items.map(({ label, value, helper, Icon }) => (
+          <article key={label}>
+            <Icon size={17} />
+            <span>
+              <strong>{value}</strong>
+              <small>{label}</small>
+              <em>{helper}</em>
+            </span>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -180,6 +243,14 @@ function formatDate(value) {
 
 function formatPercent(value) {
   return `${Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
+}
+
+function formatHours(value) {
+  if (value === null || value === undefined) return "Sem dados";
+  if (value >= 24) {
+    return `${(value / 24).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dias`;
+  }
+  return `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`;
 }
 
 function coordinateLabel(item) {

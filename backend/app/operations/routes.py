@@ -384,11 +384,7 @@ def operational_dashboard():
         for item in open_items
         if item.due_at and 0 <= (_utc(item.due_at) - now).total_seconds() <= 86400
     ]
-    resolution_hours = [
-        (_utc(item.closed_at) - _utc(item.created_at)).total_seconds() / 3600
-        for item in items
-        if item.closed_at
-    ]
+    operational_metrics = _operational_metrics(items)
     territory_names = {
         item.id: item.name
         for item in db.session.execute(
@@ -439,12 +435,9 @@ def operational_dashboard():
             "tarefasPendentes": len(list(pending_tasks)),
             "retornosVencidos": len(overdue_returns),
             "retornosProximos": len(near_returns),
-            "tempoMedioResolucaoHoras": (
-                round(sum(resolution_hours) / len(resolution_hours), 1)
-                if resolution_hours
-                else None
-            ),
+            "tempoMedioResolucaoHoras": operational_metrics["tempoMedioResolucaoHoras"],
         },
+        metricasOperacionais=operational_metrics,
         porStatus=_counter(item.status.value for item in items),
         porCategoria=_counter(item.category or "Sem categoria" for item in items),
         porOrigem=_counter(item.source.value for item in items),
@@ -636,6 +629,95 @@ def _territorial_dashboard(
         "pontos": points[:200],
         "hotspots": hotspots[:8],
     }
+
+
+def _operational_metrics(items: list[ServiceRequest]) -> dict:
+    first_response_hours = []
+    first_forwarding_hours = []
+    closing_hours = []
+    resolution_hours = []
+    reopenings = 0
+
+    for item in items:
+        created_at = _utc(item.created_at)
+        first_response = _first_citizen_response_at(item)
+        if first_response:
+            first_response_hours.append(_hours_between(created_at, first_response))
+
+        if item.forwardings:
+            first_forwarding_hours.append(
+                _hours_between(created_at, item.forwardings[0].created_at)
+            )
+
+        for closed_at, closed_status in _closure_events(item):
+            elapsed = _hours_between(created_at, closed_at)
+            closing_hours.append(elapsed)
+            if closed_status == RequestStatus.RESOLVIDA:
+                resolution_hours.append(elapsed)
+
+        reopenings += sum(1 for history in item.history if history.action == "request.reopened")
+
+    return {
+        "tempoMedioPrimeiraRespostaHoras": _average(first_response_hours),
+        "tempoMedioPrimeiroEncaminhamentoHoras": _average(first_forwarding_hours),
+        "tempoMedioEncerramentoHoras": _average(closing_hours),
+        "tempoMedioResolucaoHoras": _average(resolution_hours),
+        "primeirasRespostasRegistradas": len(first_response_hours),
+        "encaminhamentosRegistrados": len(first_forwarding_hours),
+        "encerramentosRegistrados": len(closing_hours),
+        "resolucoesRegistradas": len(resolution_hours),
+        "reaberturas": reopenings,
+    }
+
+
+def _first_citizen_response_at(item: ServiceRequest) -> datetime | None:
+    for interaction in item.interactions:
+        if (
+            interaction.direction == InteractionDirection.SAIDA
+            and interaction.visibility == InteractionVisibility.CIDADAO
+        ):
+            return _utc(interaction.created_at)
+    return None
+
+
+def _closure_events(item: ServiceRequest) -> list[tuple[datetime, RequestStatus]]:
+    events = []
+    for history in item.history:
+        if history.action != "request.updated":
+            continue
+        changes = history.changes or {}
+        closed_change = changes.get("closed_at") or {}
+        closed_at = _history_datetime(closed_change.get("depois"))
+        if closed_at is None:
+            continue
+        status_value = (changes.get("status") or {}).get("depois") or item.status.value
+        try:
+            status = RequestStatus(status_value)
+        except ValueError:
+            continue
+        if status in CLOSED_STATUSES:
+            events.append((closed_at, status))
+    if not events and item.closed_at:
+        events.append((_utc(item.closed_at), item.status))
+    return events
+
+
+def _history_datetime(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _utc(parsed)
+
+
+def _hours_between(start: datetime, end: datetime) -> float:
+    return max((_utc(end) - _utc(start)).total_seconds() / 3600, 0)
+
+
+def _average(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 1) if values else None
 
 
 def _geocode_reference(item: ServiceRequest, territory_names: dict) -> str | None:

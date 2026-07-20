@@ -28,6 +28,17 @@ describe("OperationalDashboard", () => {
         ],
         porCategoria: [{ nome: "Saúde", total: 2 }],
         porTerritorio: [{ nome: "Centro", total: 1 }],
+        metricasOperacionais: {
+          tempoMedioPrimeiraRespostaHoras: 2.5,
+          tempoMedioPrimeiroEncaminhamentoHoras: 4,
+          tempoMedioEncerramentoHoras: null,
+          tempoMedioResolucaoHoras: null,
+          primeirasRespostasRegistradas: 2,
+          encaminhamentosRegistrados: 1,
+          encerramentosRegistrados: 0,
+          resolucoesRegistradas: 0,
+          reaberturas: 1,
+        },
         filaPrioritaria: [{
           id: "1",
           protocolo: "GF-2026-000001",
@@ -64,6 +75,10 @@ describe("OperationalDashboard", () => {
     expect(screen.getByText("Nova")).toBeInTheDocument();
     expect(screen.getByText("Aguardando cidadão")).toBeInTheDocument();
     expect(screen.queryByText("AGUARDANDO_CIDADAO")).not.toBeInTheDocument();
+    expect(screen.getByText("Métricas operacionais")).toBeInTheDocument();
+    expect(screen.getByText("Primeira resposta")).toBeInTheDocument();
+    expect(screen.getByText("2,5 h")).toBeInTheDocument();
+    expect(screen.getByText("Reaberturas")).toBeInTheDocument();
     expect(screen.getByText("Inteligência territorial")).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.getByText("GF-2026-000001")).toBeInTheDocument();

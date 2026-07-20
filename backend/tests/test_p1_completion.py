@@ -83,6 +83,19 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert answered.json["status"] == "RESPONDIDO"
     detail = client.get(f"/api/v1/solicitacoes/{created.json['id']}")
     assert detail.json["interacoes"][0]["tipo"] == "RESPOSTA_ORGAO"
+    public_response = post(
+        client,
+        f"/api/v1/solicitacoes/{created.json['id']}/interacoes",
+        csrf,
+        {
+            "tipo": "RESPOSTA_CIDADAO",
+            "canal": "WHATSAPP",
+            "direcao": "SAIDA",
+            "visibilidade": "CIDADAO",
+            "conteudo": "Recebemos sua demanda e vamos acompanhar o reparo.",
+        },
+    )
+    assert public_response.status_code == 201
 
     dashboard = client.get("/api/v1/painel/operacional")
     assert dashboard.status_code == 200
@@ -90,6 +103,11 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert dashboard.json["porTerritorio"][0] == {"nome": "Centro", "total": 1}
     assert dashboard.json["territorial"]["geocodificadas"] == 0
     assert dashboard.json["territorial"]["semCoordenadas"] == 1
+    metrics = dashboard.json["metricasOperacionais"]
+    assert metrics["primeirasRespostasRegistradas"] == 1
+    assert metrics["encaminhamentosRegistrados"] == 1
+    assert metrics["tempoMedioPrimeiraRespostaHoras"] is not None
+    assert metrics["tempoMedioPrimeiroEncaminhamentoHoras"] is not None
 
     geocoded = post(client, "/api/v1/painel/territorial/geocodificar", csrf, {})
     assert geocoded.status_code == 200
@@ -146,6 +164,10 @@ def test_public_lookup_reopen_and_key_rotation_are_safe(app, client):
         },
     )
     assert closed.status_code == 200
+    closed_dashboard = client.get("/api/v1/painel/operacional")
+    closed_metrics = closed_dashboard.json["metricasOperacionais"]
+    assert closed_metrics["encerramentosRegistrados"] == 1
+    assert closed_metrics["tempoMedioEncerramentoHoras"] is not None
     reopened = post(
         client,
         f"/api/v1/solicitacoes/{created['id']}/reabrir",
@@ -153,6 +175,9 @@ def test_public_lookup_reopen_and_key_rotation_are_safe(app, client):
         {"motivo": "Chegaram novas informações."},
     )
     assert reopened.json["status"] == "EM_ATENDIMENTO"
+    reopened_metrics = client.get("/api/v1/painel/operacional").json["metricasOperacionais"]
+    assert reopened_metrics["reaberturas"] == 1
+    assert reopened_metrics["encerramentosRegistrados"] == 1
 
     rotated = post(
         client,
