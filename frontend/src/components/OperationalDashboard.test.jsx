@@ -49,10 +49,19 @@ describe("OperationalDashboard", () => {
         }],
         retornosPrioritarios: [],
         territorial: {
+          metodo: "POSTGIS",
           coberturaPercentual: 50,
           geocodificadas: 1,
           semCoordenadas: 1,
           hotspots: [{ nome: "Centro", total: 2, abertas: 2, atrasadas: 1 }],
+          heatmap: [{
+            territorio: "Centro",
+            latitude: -21.7619,
+            longitude: -43.3496,
+            total: 2,
+            abertas: 2,
+            raioMetros: 1000,
+          }],
           pontos: [{
             id: "1",
             protocolo: "GF-2026-000001",
@@ -80,6 +89,10 @@ describe("OperationalDashboard", () => {
     expect(screen.getByText("2,5 h")).toBeInTheDocument();
     expect(screen.getByText("Reaberturas")).toBeInTheDocument();
     expect(screen.getByText("Inteligência territorial")).toBeInTheDocument();
+    expect(screen.getByText("PostGIS ativo")).toBeInTheDocument();
+    expect(screen.getByText("Mapa de calor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Mapa visual de calor territorial")).toBeInTheDocument();
+    expect(screen.getByText("2 demanda(s)")).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.getByText("GF-2026-000001")).toBeInTheDocument();
 

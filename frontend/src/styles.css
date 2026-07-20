@@ -373,14 +373,34 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .territorial-panel { display: grid; gap: 13px; }
 .territorial-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .territorial-panel header p { margin: 4px 0 0; color: var(--muted); font-size: .66rem; line-height: 1.4; }
+.territorial-panel header small { display: inline-flex; width: fit-content; margin-top: 6px; padding: 3px 6px; border-radius: 4px; color: #0f7282; background: #e6f8fb; font-size: .58rem; font-weight: 900; text-transform: uppercase; }
 .territorial-coverage { display: grid !important; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr) !important; align-items: center; gap: 9px !important; padding: 10px !important; border: 1px solid #cce3e7; border-radius: 6px; color: #176074; background: #f4fbfc; }
 .territorial-coverage span { display: grid; gap: 2px; }
 .territorial-coverage strong { color: #0f7282; font-size: .9rem; }
 .territorial-coverage small { color: #527084; font-size: .62rem; }
-.territorial-hotspots, .territorial-points { display: grid; gap: 7px; }
-.territorial-hotspots h3, .territorial-points h3 { margin: 0; color: #29425f; font-size: .7rem; text-transform: uppercase; }
+.territorial-hotspots, .territorial-points, .territorial-heatmap { display: grid; gap: 7px; }
+.territorial-hotspots h3, .territorial-points h3, .territorial-heatmap h3 { margin: 0; color: #29425f; font-size: .7rem; text-transform: uppercase; }
 .territorial-hotspots div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid #edf2f7; }
 .territorial-hotspots span, .territorial-hotspots strong { font-size: .68rem; }
+.territorial-heatmap article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 7px 8px; border: 1px solid #d8e5ee; border-radius: 5px; background: #fbfdff; }
+.territorial-heatmap span, .territorial-heatmap strong { font-size: .68rem; }
+.territorial-heatmap small { grid-column: 1 / -1; color: var(--muted); font-size: .61rem; }
+.territorial-map { display: grid !important; grid-template-columns: 1fr !important; gap: 7px !important; padding: 0 0 5px !important; }
+.territorial-map svg { width: 100%; height: 210px; overflow: hidden; border: 1px solid #cce3e7; border-radius: 7px; background: #eefbfc; box-shadow: inset 0 0 0 1px #ffffffa8; }
+.territorial-map-base { fill: url("#territorialMapBase"); }
+.territorial-map-water { fill: #d8edf5; opacity: .72; }
+.territorial-map-road { fill: none; stroke: #b9cad8; stroke-dasharray: 7 7; stroke-linecap: round; stroke-width: 2; opacity: .72; }
+.territorial-map-road.primary { stroke: #8fb0c2; stroke-dasharray: none; stroke-width: 3; }
+.territorial-map-heat { fill: #f97316; stroke: #dc2626; stroke-width: 1; }
+.territorial-map-core { fill: #ef4444; stroke: #fff7ed; stroke-width: 2; }
+.territorial-map-point { fill: #08285c; stroke: white; stroke-width: 1.3; }
+.territorial-map.empty { min-height: 150px; place-items: center; color: #7890a6; border: 1px dashed #b8c7d4; border-radius: 7px; background: #fbfdff; }
+.territorial-map.empty span { font-size: .68rem; }
+.territorial-map-legend { display: flex !important; justify-content: space-between; gap: 10px !important; padding: 0 !important; color: #52677f; font-size: .6rem; }
+.territorial-map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.territorial-map-legend i { width: 18px; height: 7px; border-radius: 999px; }
+.territorial-map-legend .low { background: #fed7aa; }
+.territorial-map-legend .high { background: #ef4444; }
 .territorial-points article { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid #e3eaf1; border-radius: 5px; color: #29425f; background: #fbfdff; }
 .territorial-points article span { display: grid; gap: 2px; }
 .territorial-points article strong { font-size: .7rem; }

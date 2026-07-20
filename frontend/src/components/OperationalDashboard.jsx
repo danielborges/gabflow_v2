@@ -190,12 +190,14 @@ function OperationalMetricsPanel({ metrics = {} }) {
 function TerritorialPanel({ data, busy, onGeocode }) {
   const points = data?.pontos || [];
   const hotspots = data?.hotspots || [];
+  const heatmap = data?.heatmap || [];
   return (
     <section className="breakdown territorial-panel">
       <header>
         <div>
           <h2>Inteligência territorial</h2>
           <p>Geocodificação local e concentração por território.</p>
+          <small>{data?.metodo === "POSTGIS" ? "PostGIS ativo" : "Geografia aproximada"}</small>
         </div>
         <button className="secondary-button compact" disabled={busy || !data?.semCoordenadas} onClick={onGeocode}>
           <MapPinned size={15} /> {busy ? "Geocodificando..." : "Geocodificar"}
@@ -215,6 +217,17 @@ function TerritorialPanel({ data, busy, onGeocode }) {
           </div>
         )) : <p className="muted-copy">Sem agrupamentos territoriais.</p>}
       </div>
+      <div className="territorial-heatmap">
+        <h3>Mapa de calor</h3>
+        <TerritorialHeatmapMap cells={heatmap} points={points} />
+        {heatmap.length ? heatmap.slice(0, 4).map((item) => (
+          <article key={`${item.territorio}-${item.latitude}-${item.longitude}`}>
+            <span>{item.territorio}</span>
+            <strong>{item.total} demanda(s)</strong>
+            <small>{Number(item.latitude).toFixed(4)}, {Number(item.longitude).toFixed(4)}</small>
+          </article>
+        )) : <p className="muted-copy">Sem células de calor calculadas.</p>}
+      </div>
       <div className="territorial-points">
         <h3>Pontos geocodificados</h3>
         {points.length ? points.slice(0, 4).map((item) => (
@@ -225,6 +238,71 @@ function TerritorialPanel({ data, busy, onGeocode }) {
         )) : <p className="muted-copy">Nenhuma solicitação com coordenadas.</p>}
       </div>
     </section>
+  );
+}
+
+function TerritorialHeatmapMap({ cells = [], points = [] }) {
+  const coordinates = [...cells, ...points].filter(hasCoordinates);
+  if (!coordinates.length) {
+    return (
+      <div className="territorial-map empty">
+        <MapPin size={20} />
+        <span>Sem coordenadas para desenhar o mapa.</span>
+      </div>
+    );
+  }
+
+  const bounds = coordinateBounds(coordinates);
+  const maxTotal = Math.max(...cells.map((item) => item.total || 0), 1);
+  const projectedCells = cells.filter(hasCoordinates).map((item) => ({
+    ...item,
+    ...projectCoordinate(item, bounds),
+    radius: 16 + Math.sqrt((item.total || 1) / maxTotal) * 32,
+    opacity: 0.22 + ((item.total || 1) / maxTotal) * 0.46,
+  }));
+  const projectedPoints = points.filter(hasCoordinates).slice(0, 40).map((item) => ({
+    ...item,
+    ...projectCoordinate(item, bounds),
+  }));
+
+  return (
+    <div className="territorial-map" aria-label="Mapa visual de calor territorial" role="img">
+      <svg viewBox="0 0 320 210" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="territorialMapBase" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stopColor="#eefbfc" />
+            <stop offset="100%" stopColor="#f8fbff" />
+          </linearGradient>
+        </defs>
+        <rect className="territorial-map-base" x="0" y="0" width="320" height="210" rx="8" />
+        <path className="territorial-map-water" d="M0 164 C52 144 92 188 143 166 S248 134 320 158 L320 210 L0 210 Z" />
+        <path className="territorial-map-road primary" d="M22 42 C74 76 108 68 146 105 S242 146 300 116" />
+        <path className="territorial-map-road" d="M46 178 C76 126 121 123 162 83 S232 45 294 38" />
+        <path className="territorial-map-road" d="M18 108 C72 102 113 139 158 132 S242 85 304 94" />
+        {projectedCells.map((item) => (
+          <g key={`${item.territorio}-${item.latitude}-${item.longitude}`}>
+            <circle
+              className="territorial-map-heat"
+              cx={item.x}
+              cy={item.y}
+              r={item.radius}
+              style={{ opacity: item.opacity }}
+            />
+            <circle className="territorial-map-core" cx={item.x} cy={item.y} r={Math.max(item.radius * 0.22, 5)} />
+            <title>{`${item.territorio}: ${item.total} demanda(s), ${item.abertas} aberta(s)`}</title>
+          </g>
+        ))}
+        {projectedPoints.map((item) => (
+          <circle key={item.id || `${item.latitude}-${item.longitude}`} className="territorial-map-point" cx={item.x} cy={item.y} r="2.8">
+            <title>{`${item.protocolo || item.territorio}: ${item.titulo || "Solicitação"}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="territorial-map-legend">
+        <span><i className="low" /> Menor concentração</span>
+        <span><i className="high" /> Maior concentração</span>
+      </div>
+    </div>
   );
 }
 
@@ -255,4 +333,35 @@ function formatHours(value) {
 
 function coordinateLabel(item) {
   return `${Number(item.latitude).toFixed(4)}, ${Number(item.longitude).toFixed(4)}`;
+}
+
+function hasCoordinates(item) {
+  return Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+}
+
+function coordinateBounds(items) {
+  const latitudes = items.map((item) => Number(item.latitude));
+  const longitudes = items.map((item) => Number(item.longitude));
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+  return {
+    minLatitude,
+    maxLatitude: maxLatitude === minLatitude ? maxLatitude + 0.01 : maxLatitude,
+    minLongitude,
+    maxLongitude: maxLongitude === minLongitude ? maxLongitude + 0.01 : maxLongitude,
+  };
+}
+
+function projectCoordinate(item, bounds) {
+  const width = 320;
+  const height = 210;
+  const margin = 24;
+  const latitudeRange = bounds.maxLatitude - bounds.minLatitude;
+  const longitudeRange = bounds.maxLongitude - bounds.minLongitude;
+  return {
+    x: margin + ((Number(item.longitude) - bounds.minLongitude) / longitudeRange) * (width - margin * 2),
+    y: height - margin - ((Number(item.latitude) - bounds.minLatitude) / latitudeRange) * (height - margin * 2),
+  };
 }

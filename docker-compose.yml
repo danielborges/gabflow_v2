@@ -48,7 +48,7 @@ services:
     restart: "no"
 
   db:
-    image: postgres:17-alpine
+    image: postgis/postgis:17-3.5-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-gabflow}
       POSTGRES_USER: ${POSTGRES_USER:-gabflow}

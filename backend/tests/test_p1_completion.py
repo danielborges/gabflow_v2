@@ -120,6 +120,8 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert territorial["pontos"][0]["protocolo"] == created.json["protocolo"]
     assert territorial["pontos"][0]["territorio"] == "Centro"
     assert territorial["hotspots"][0]["nome"] == "Centro"
+    assert territorial["metodo"] == "LOCAL_APROXIMADO"
+    assert territorial["heatmap"][0]["territorio"] == "Centro"
 
     with app.app_context():
         item = db.session.execute(select(ServiceRequest)).scalar_one()

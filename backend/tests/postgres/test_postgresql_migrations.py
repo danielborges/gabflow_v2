@@ -8,7 +8,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Citizen, Role, Tenant, User
+from app.models import Citizen, RequestSource, Role, ServiceRequest, Tenant, User
 
 pytestmark = pytest.mark.postgres
 TEST_PASSWORD_HASH = "integration-test-only"  # noqa: S105
@@ -93,6 +93,83 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
     ]
 
 
+def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
+    with postgres_app.app_context():
+        extension_enabled = db.session.execute(
+            text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')")
+        ).scalar_one()
+        columns = {
+            row["column_name"]: row["udt_name"]
+            for row in db.session.execute(
+                text(
+                    """
+                    SELECT column_name, udt_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'service_requests'
+                    """
+                )
+            ).mappings()
+        }
+        index_definition = db.session.execute(
+            text(
+                """
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE tablename = 'service_requests'
+                  AND indexname = 'ix_service_requests_location_geography'
+                """
+            )
+        ).scalar_one()
+
+        tenant = Tenant(name="Gabinete PostGIS", slug="gabinete-postgis")
+        db.session.add(tenant)
+        db.session.flush()
+        user = User(
+            tenant_id=tenant.id,
+            name="Admin PostGIS",
+            email="admin@postgis.test",
+            password_hash=TEST_PASSWORD_HASH,
+            role=Role.ADMIN,
+        )
+        db.session.add(user)
+        db.session.flush()
+        request = ServiceRequest(
+            tenant_id=tenant.id,
+            protocol="GF-POSTGIS-001",
+            source=RequestSource.WHATSAPP,
+            title="Ponto territorial",
+            description="Demanda com coordenada para teste espacial.",
+            latitude=-21.7619,
+            longitude=-43.3496,
+            created_by_id=user.id,
+        )
+        db.session.add(request)
+        db.session.commit()
+
+        location = db.session.execute(
+            text(
+                """
+                SELECT
+                    ST_AsText(location_geography::geometry) AS point,
+                    ST_DWithin(
+                        location_geography,
+                        ST_SetSRID(ST_MakePoint(-43.3496, -21.7619), 4326)::geography,
+                        50
+                    ) AS near_reference
+                FROM service_requests
+                WHERE id = CAST(:request_id AS uuid)
+                """
+            ),
+            {"request_id": str(request.id)},
+        ).mappings().one()
+
+    assert extension_enabled is True
+    assert columns["location_geography"] == "geography"
+    assert "using gist" in index_definition.lower()
+    assert location["point"] == "POINT(-43.3496 -21.7619)"
+    assert location["near_reference"] is True
+
+
 def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
     migrations = ScriptDirectory("migrations")
     expected_head = migrations.get_current_head()
@@ -107,6 +184,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             )
             inspector = inspect(connection)
             rolled_back_tables = set(inspector.get_table_names())
+            rolled_back_columns = {
+                column["name"] for column in inspector.get_columns("service_requests")
+            }
 
         assert rolled_back_heads == {previous_head}
         assert "legislative_drafts" in rolled_back_tables
@@ -115,13 +195,18 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_documents" in rolled_back_tables
         assert "rag_document_versions" in rolled_back_tables
         assert "rag_chunks" in rolled_back_tables
-        assert "rag_assistant_queries" not in rolled_back_tables
+        assert "rag_assistant_queries" in rolled_back_tables
+        assert "location_geography" not in rolled_back_columns
 
         upgrade(directory="migrations")
 
         with db.engine.connect() as connection:
             reapplied_heads = set(MigrationContext.configure(connection).get_current_heads())
-            reapplied_tables = set(inspect(connection).get_table_names())
+            inspector = inspect(connection)
+            reapplied_tables = set(inspector.get_table_names())
+            reapplied_columns = {
+                column["name"] for column in inspector.get_columns("service_requests")
+            }
 
         assert reapplied_heads == {expected_head}
         assert "legislative_drafts" in reapplied_tables
@@ -131,6 +216,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_document_versions" in reapplied_tables
         assert "rag_chunks" in reapplied_tables
         assert "rag_assistant_queries" in reapplied_tables
+        assert "location_geography" in reapplied_columns
 
 
 def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres_app):

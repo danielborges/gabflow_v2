@@ -7,7 +7,8 @@ from math import cos, pi, sin
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.audit import add_audit
 from app.extensions import db, limiter
@@ -464,7 +465,7 @@ def operational_dashboard():
             }
             for item in active_returns[:10]
         ],
-        territorial=_territorial_dashboard(items, open_items, overdue, territory_names),
+        territorial=_territorial_dashboard(tenant_id, items, open_items, overdue, territory_names),
     )
 
 
@@ -562,6 +563,7 @@ def public_request_status(protocol: str):
 
 
 def _territorial_dashboard(
+    tenant_id: uuid.UUID,
     items: list[ServiceRequest],
     open_items: list[ServiceRequest],
     overdue: list[ServiceRequest],
@@ -622,13 +624,94 @@ def _territorial_dashboard(
         key=lambda item: (item["abertas"], item["atrasadas"], item["total"]),
         reverse=True,
     )
+    postgis = _postgis_heatmap(tenant_id)
     return {
+        "metodo": "POSTGIS" if postgis is not None else "LOCAL_APROXIMADO",
         "coberturaPercentual": coverage,
         "geocodificadas": len(geocoded),
         "semCoordenadas": max(len(items) - len(geocoded), 0),
         "pontos": points[:200],
         "hotspots": hotspots[:8],
+        "heatmap": postgis if postgis is not None else _local_heatmap(points),
     }
+
+
+def _postgis_heatmap(tenant_id: uuid.UUID) -> list[dict] | None:
+    if db.engine.dialect.name != "postgresql":
+        return None
+    try:
+        enabled = db.session.execute(
+            text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')")
+        ).scalar()
+        if not enabled:
+            return None
+        rows = db.session.execute(
+            text(
+                """
+                SELECT
+                    COALESCE(t.name, 'Sem território') AS territorio,
+                    ROUND(
+                        ST_Y(ST_Centroid(ST_Collect(sr.location_geography::geometry)))::numeric,
+                        6
+                    ) AS latitude,
+                    ROUND(
+                        ST_X(ST_Centroid(ST_Collect(sr.location_geography::geometry)))::numeric,
+                        6
+                    ) AS longitude,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (
+                        WHERE sr.status::text NOT IN ('RESOLVIDA', 'ENCERRADA', 'CANCELADA')
+                    )::int AS abertas
+                FROM service_requests sr
+                LEFT JOIN territories t ON t.id = sr.territory_id
+                WHERE sr.tenant_id = CAST(:tenant_id AS uuid)
+                  AND sr.location_geography IS NOT NULL
+                GROUP BY territorio, ST_SnapToGrid(sr.location_geography::geometry, 0.01)
+                ORDER BY total DESC, abertas DESC
+                LIMIT 20
+                """
+            ),
+            {"tenant_id": str(tenant_id)},
+        ).mappings()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return None
+
+    return [
+        {
+            "territorio": row["territorio"],
+            "latitude": float(row["latitude"]),
+            "longitude": float(row["longitude"]),
+            "total": row["total"],
+            "abertas": row["abertas"],
+            "raioMetros": 1000,
+        }
+        for row in rows
+    ]
+
+
+def _local_heatmap(points: list[dict]) -> list[dict]:
+    cells: dict[tuple[str, float, float], dict] = {}
+    for point in points:
+        latitude = round(float(point["latitude"]), 2)
+        longitude = round(float(point["longitude"]), 2)
+        key = (point["territorio"], latitude, longitude)
+        cell = cells.setdefault(
+            key,
+            {
+                "territorio": point["territorio"],
+                "latitude": latitude,
+                "longitude": longitude,
+                "total": 0,
+                "abertas": 0,
+                "raioMetros": 1000,
+            },
+        )
+        cell["total"] += 1
+        cell["abertas"] += int(point["status"] not in {status.value for status in CLOSED_STATUSES})
+    return sorted(cells.values(), key=lambda item: (item["total"], item["abertas"]), reverse=True)[
+        :20
+    ]
 
 
 def _operational_metrics(items: list[ServiceRequest]) -> dict:
