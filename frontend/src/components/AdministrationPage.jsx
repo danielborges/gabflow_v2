@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
 
 const sections = [
+  ["jurisdiction", "Jurisdição"],
   ["categories", "Categorias"],
   ["territories", "Territórios"],
   ["agencies", "Órgãos"],
@@ -26,22 +27,25 @@ export function AdministrationPage() {
     territories: [],
     agencies: [],
     templates: [],
+    jurisdiction: null,
   });
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [categories, territories, agencies, templates] = await Promise.all([
+    const [categories, territories, agencies, templates, jurisdiction] = await Promise.all([
       apiRequest("/api/v1/admin/categorias"),
       apiRequest("/api/v1/admin/territorios"),
       apiRequest("/api/v1/admin/orgaos"),
       apiRequest("/api/v1/admin/templates-resposta"),
+      apiRequest("/api/v1/admin/jurisdicao"),
     ]);
     setData({
       categories: categories.content,
       territories: territories.content,
       agencies: agencies.content,
       templates: templates.content,
+      jurisdiction,
     });
   }, []);
 
@@ -81,6 +85,7 @@ export function AdministrationPage() {
     territories: ["Novo território", "Organize as demandas por bairro ou região.", MapPinned],
     agencies: ["Novo órgão", "Cadastre os destinatários dos encaminhamentos.", Building2],
     templates: ["Novo template", "Use somente as variáveis seguras indicadas.", FileText],
+    jurisdiction: ["Jurisdição territorial", "Defina a área institucional do gabinete.", MapPinned],
   };
   const [title, description, Icon] = labels[active];
 
@@ -90,6 +95,7 @@ export function AdministrationPage() {
       {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => setActive(id)}>{label}</button>)}
     </section>
     <section className="admin-layout">
+      {active === "jurisdiction" ? <JurisdictionSettings data={data.jurisdiction} onSaved={load} /> : <>
       <form className="settings-form" onSubmit={submit}>
         <div className="settings-title"><Settings2 size={21} /><div><strong>{title}</strong><small>{description}</small></div></div>
         <label>Nome<input required value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} /></label>
@@ -110,6 +116,113 @@ export function AdministrationPage() {
       <div className="category-list">
         {data[active].map((item) => <article key={item.id}><span className="entity-icon"><Icon size={19} /></span><div><strong>{item.nome}</strong><small>{active === "templates" ? `${item.canal} · ${item.categoria || "Todas as categorias"} · v${item.versao}` : item.emailContato || (item.ativa ? "Ativo" : "Inativo")}</small></div>{active === "categories" && <span>{item.slaHoras}h</span>}</article>)}
       </div>
+      </>}
     </section>
   </>;
+}
+
+function JurisdictionSettings({ data, onSaved }) {
+  const [form, setForm] = useState(() => jurisdictionForm(data));
+  const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    setForm(jurisdictionForm(data));
+  }, [data]);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await apiRequest("/api/v1/admin/jurisdicao", {
+        method: "PATCH",
+        body: JSON.stringify({
+          tipoCasa: form.tipoCasa,
+          nome: form.nome,
+          municipio: form.municipio,
+          uf: form.uf,
+          codigoIbge: form.codigoIbge,
+          centro: {
+            latitude: form.latitude ? Number(form.latitude) : null,
+            longitude: form.longitude ? Number(form.longitude) : null,
+          },
+          limites: {
+            minLatitude: Number(form.minLatitude),
+            maxLatitude: Number(form.maxLatitude),
+            minLongitude: Number(form.minLongitude),
+            maxLongitude: Number(form.maxLongitude),
+          },
+        }),
+      });
+      await onSaved();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function importFromIbge() {
+    setError("");
+    setImporting(true);
+    try {
+      await apiRequest("/api/v1/admin/jurisdicao/ibge", {
+        method: "POST",
+        body: JSON.stringify({
+          tipoCasa: form.tipoCasa,
+          codigoIbge: form.codigoIbge,
+          nome: form.nome,
+        }),
+      });
+      await onSaved();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <form className="settings-form jurisdiction-form" onSubmit={submit}>
+      <div className="settings-title"><MapPinned size={21} /><div><strong>Jurisdição territorial</strong><small>Escopo usado pelo mapa de calor e alertas territoriais.</small></div></div>
+      <div className="form-grid">
+        <label>Tipo<select value={form.tipoCasa} onChange={(event) => setForm((current) => ({ ...current, tipoCasa: event.target.value }))}><option value="CAMARA_MUNICIPAL">Câmara Municipal</option><option value="ASSEMBLEIA_LEGISLATIVA">Assembleia Legislativa</option></select></label>
+        <label>UF<input required maxLength="2" value={form.uf} onChange={(event) => setForm((current) => ({ ...current, uf: event.target.value.toUpperCase() }))} /></label>
+      </div>
+      <label>Nome da jurisdição<input value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} placeholder="Ex.: Juiz de Fora/MG" /></label>
+      <label>Município<input value={form.municipio} onChange={(event) => setForm((current) => ({ ...current, municipio: event.target.value }))} placeholder="Obrigatório para Câmara Municipal" /></label>
+      <div className="form-grid">
+        <label>Código IBGE<input value={form.codigoIbge} onChange={(event) => setForm((current) => ({ ...current, codigoIbge: event.target.value.replace(/\D/g, "") }))} placeholder="Ex.: 3136702" /></label>
+        <button type="button" className="secondary-button jurisdiction-import-button" disabled={importing || !form.codigoIbge} onClick={importFromIbge}>{importing ? "Carregando malha..." : "Carregar malha do IBGE"}</button>
+      </div>
+      <div className="form-grid">
+        <label>Latitude central<input type="number" step="0.000001" value={form.latitude} onChange={(event) => setForm((current) => ({ ...current, latitude: event.target.value }))} /></label>
+        <label>Longitude central<input type="number" step="0.000001" value={form.longitude} onChange={(event) => setForm((current) => ({ ...current, longitude: event.target.value }))} /></label>
+      </div>
+      <div className="form-grid">
+        <label>Latitude mínima<input required type="number" step="0.000001" value={form.minLatitude} onChange={(event) => setForm((current) => ({ ...current, minLatitude: event.target.value }))} /></label>
+        <label>Latitude máxima<input required type="number" step="0.000001" value={form.maxLatitude} onChange={(event) => setForm((current) => ({ ...current, maxLatitude: event.target.value }))} /></label>
+        <label>Longitude mínima<input required type="number" step="0.000001" value={form.minLongitude} onChange={(event) => setForm((current) => ({ ...current, minLongitude: event.target.value }))} /></label>
+        <label>Longitude máxima<input required type="number" step="0.000001" value={form.maxLongitude} onChange={(event) => setForm((current) => ({ ...current, maxLongitude: event.target.value }))} /></label>
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      {data?.geojson && <p className="form-success">Malha oficial carregada para o mapa territorial.</p>}
+      <button className="primary-button compact">Salvar jurisdição</button>
+    </form>
+  );
+}
+
+function jurisdictionForm(data) {
+  const bounds = data?.limites || {};
+  return {
+    tipoCasa: data?.tipoCasa || "CAMARA_MUNICIPAL",
+    nome: data?.nome || "",
+    municipio: data?.municipio || "",
+    uf: data?.uf || "",
+    codigoIbge: data?.codigoIbge || "",
+    latitude: data?.centro?.latitude ?? "",
+    longitude: data?.centro?.longitude ?? "",
+    minLatitude: bounds.minLatitude ?? "",
+    maxLatitude: bounds.maxLatitude ?? "",
+    minLongitude: bounds.minLongitude ?? "",
+    maxLongitude: bounds.maxLongitude ?? "",
+  };
 }

@@ -1,3 +1,7 @@
+import gzip
+import json
+import urllib.error
+import urllib.request
 import uuid
 
 from flask import Blueprint, jsonify, request
@@ -7,9 +11,15 @@ from sqlalchemy import select
 from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.extensions import db
-from app.models import ExternalAgency, RequestCategory, Territory
+from app.models import ExternalAgency, RequestCategory, Tenant, Territory
 
 admin_bp = Blueprint("admin", __name__)
+
+CHAMBER_TYPES = {"CAMARA_MUNICIPAL", "ASSEMBLEIA_LEGISLATIVA"}
+IBGE_MALHAS_URL = (
+    "https://servicodados.ibge.gov.br/api/v3/malhas/"
+    "{scope}/{code}?formato=application/vnd.geo+json&qualidade=minima"
+)
 
 
 def _context() -> tuple[uuid.UUID, uuid.UUID]:
@@ -31,6 +41,279 @@ def _simple_data(item) -> dict:
     if isinstance(item, ExternalAgency):
         data["emailContato"] = item.contact_email
     return data
+
+
+def _jurisdiction_data(item: Tenant) -> dict:
+    return {
+        "tipoCasa": item.chamber_type,
+        "nome": item.jurisdiction_name,
+        "municipio": item.jurisdiction_city,
+        "uf": item.jurisdiction_state,
+        "codigoIbge": item.jurisdiction_ibge_code,
+        "centro": {
+            "latitude": item.jurisdiction_center_latitude,
+            "longitude": item.jurisdiction_center_longitude,
+        }
+        if item.jurisdiction_center_latitude is not None
+        and item.jurisdiction_center_longitude is not None
+        else None,
+        "limites": item.jurisdiction_bounds,
+        "geojson": item.jurisdiction_geojson,
+    }
+
+
+@admin_bp.get("/jurisdicao")
+@roles_required("admin", "manager", "staff")
+def get_jurisdiction():
+    tenant_id, _ = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    return jsonify(_jurisdiction_data(tenant))
+
+
+@admin_bp.patch("/jurisdicao")
+@roles_required("admin", "manager")
+def update_jurisdiction():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    payload = request.get_json(silent=True) or {}
+    before = _jurisdiction_data(tenant)
+
+    chamber_type = str(payload.get("tipoCasa", tenant.chamber_type or "")).strip().upper()
+    if chamber_type and chamber_type not in CHAMBER_TYPES:
+        return jsonify(error="validation_error", message="Tipo de casa legislativa inválido."), 422
+
+    state = str(payload.get("uf", tenant.jurisdiction_state or "")).strip().upper() or None
+    if state and (len(state) != 2 or not state.isalpha()):
+        return jsonify(error="validation_error", message="UF deve conter 2 letras."), 422
+
+    city = str(payload.get("municipio", tenant.jurisdiction_city or "")).strip() or None
+    name = str(payload.get("nome", tenant.jurisdiction_name or "")).strip() or None
+    ibge_code = str(payload.get("codigoIbge", tenant.jurisdiction_ibge_code or "")).strip() or None
+    center = payload.get("centro") or {}
+    bounds = payload.get("limites")
+    geojson = payload.get("geojson", tenant.jurisdiction_geojson)
+    try:
+        latitude = _optional_coordinate(center.get("latitude"), "Latitude", -90, 90)
+        longitude = _optional_coordinate(center.get("longitude"), "Longitude", -180, 180)
+        bounds = _validate_bounds(bounds)
+        geojson = _validate_geojson(geojson)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+
+    tenant.chamber_type = chamber_type or None
+    tenant.jurisdiction_state = state
+    tenant.jurisdiction_city = city
+    tenant.jurisdiction_name = name or _default_jurisdiction_name(chamber_type, city, state)
+    tenant.jurisdiction_ibge_code = ibge_code
+    tenant.jurisdiction_center_latitude = latitude
+    tenant.jurisdiction_center_longitude = longitude
+    tenant.jurisdiction_bounds = bounds
+    tenant.jurisdiction_geojson = geojson
+
+    after = _jurisdiction_data(tenant)
+    add_audit(
+        tenant_id,
+        user_id,
+        "tenant.jurisdiction.updated",
+        "tenant",
+        tenant.id,
+        before,
+        after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@admin_bp.post("/jurisdicao/ibge")
+@roles_required("admin", "manager")
+def import_ibge_jurisdiction():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    payload = request.get_json(silent=True) or {}
+    before = _jurisdiction_data(tenant)
+    chamber_type = str(payload.get("tipoCasa", tenant.chamber_type or "")).strip().upper()
+    if chamber_type and chamber_type not in CHAMBER_TYPES:
+        return jsonify(error="validation_error", message="Tipo de casa legislativa invÃ¡lido."), 422
+    ibge_code = str(payload.get("codigoIbge", tenant.jurisdiction_ibge_code or "")).strip()
+    if not ibge_code.isdigit():
+        return jsonify(error="validation_error", message="Informe um cÃ³digo IBGE numÃ©rico."), 422
+
+    scope = "estados" if chamber_type == "ASSEMBLEIA_LEGISLATIVA" else "municipios"
+    try:
+        geojson = _fetch_ibge_geojson(scope, ibge_code)
+        bounds, center = _geojson_bounds_and_center(geojson)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+
+    tenant.chamber_type = chamber_type or tenant.chamber_type
+    tenant.jurisdiction_ibge_code = ibge_code
+    tenant.jurisdiction_geojson = geojson
+    tenant.jurisdiction_bounds = bounds
+    tenant.jurisdiction_center_latitude = center["latitude"]
+    tenant.jurisdiction_center_longitude = center["longitude"]
+    if payload.get("nome"):
+        tenant.jurisdiction_name = str(payload["nome"]).strip()
+    elif tenant.jurisdiction_name is None:
+        tenant.jurisdiction_name = _default_jurisdiction_name(
+            tenant.chamber_type or "", tenant.jurisdiction_city, tenant.jurisdiction_state
+        )
+
+    after = _jurisdiction_data(tenant)
+    add_audit(
+        tenant_id,
+        user_id,
+        "tenant.jurisdiction.ibge_imported",
+        "tenant",
+        tenant.id,
+        before,
+        after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+def _optional_coordinate(value, label: str, minimum: float, maximum: float) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        coordinate = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} inválida.") from error
+    if not minimum <= coordinate <= maximum:
+        raise ValueError(f"{label} fora do intervalo permitido.")
+    return coordinate
+
+
+def _validate_bounds(value) -> dict | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("Limites territoriais inválidos.")
+    required = {
+        "minLatitude": (-90, 90),
+        "maxLatitude": (-90, 90),
+        "minLongitude": (-180, 180),
+        "maxLongitude": (-180, 180),
+    }
+    parsed = {
+        key: _optional_coordinate(value.get(key), key, minimum, maximum)
+        for key, (minimum, maximum) in required.items()
+    }
+    if any(item is None for item in parsed.values()):
+        raise ValueError("Informe todos os limites territoriais.")
+    if parsed["minLatitude"] >= parsed["maxLatitude"]:
+        raise ValueError("Latitude mínima deve ser menor que a máxima.")
+    if parsed["minLongitude"] >= parsed["maxLongitude"]:
+        raise ValueError("Longitude mínima deve ser menor que a máxima.")
+    return parsed
+
+
+def _fetch_ibge_geojson(scope: str, code: str) -> dict:
+    url = IBGE_MALHAS_URL.format(scope=scope, code=code)
+    try:
+        with urllib.request.urlopen(url, timeout=20) as response:  # noqa: S310
+            raw = response.read()
+            if response.headers.get("Content-Encoding") == "gzip" or raw.startswith(b"\x1f\x8b"):
+                raw = gzip.decompress(raw)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            raise ValueError("CÃ³digo IBGE nÃ£o encontrado na malha territorial.") from error
+        raise ValueError("NÃ£o foi possÃ­vel consultar a malha territorial no IBGE.") from error
+    except urllib.error.URLError as error:
+        raise ValueError("IBGE indisponÃ­vel no momento. Tente novamente mais tarde.") from error
+    try:
+        return _validate_geojson(json.loads(raw.decode("utf-8")))
+    except json.JSONDecodeError as error:
+        raise ValueError("IBGE retornou uma malha territorial invÃ¡lida.") from error
+
+
+def _validate_geojson(value) -> dict | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("GeoJSON da jurisdiÃ§Ã£o invÃ¡lido.")
+    if value.get("type") == "FeatureCollection":
+        features = value.get("features")
+        if not isinstance(features, list) or not features:
+            raise ValueError("GeoJSON da jurisdiÃ§Ã£o nÃ£o possui feiÃ§Ãµes.")
+        for feature in features:
+            _validate_geojson_feature(feature)
+        return value
+    if value.get("type") == "Feature":
+        _validate_geojson_feature(value)
+        return {"type": "FeatureCollection", "features": [value]}
+    raise ValueError("GeoJSON deve ser Feature ou FeatureCollection.")
+
+
+def _validate_geojson_feature(feature: dict) -> None:
+    if not isinstance(feature, dict) or feature.get("type") != "Feature":
+        raise ValueError("FeiÃ§Ã£o GeoJSON invÃ¡lida.")
+    geometry = feature.get("geometry") or {}
+    if geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+        raise ValueError("A jurisdiÃ§Ã£o deve ser Polygon ou MultiPolygon.")
+    coordinates = list(_iter_geojson_coordinates(geometry))
+    if len(coordinates) < 3:
+        raise ValueError("PolÃ­gono da jurisdiÃ§Ã£o nÃ£o possui coordenadas suficientes.")
+
+
+def _geojson_bounds_and_center(geojson: dict) -> tuple[dict, dict]:
+    coordinates = [
+        coordinate
+        for feature in geojson.get("features", [])
+        for coordinate in _iter_geojson_coordinates(feature.get("geometry") or {})
+    ]
+    if not coordinates:
+        raise ValueError("GeoJSON da jurisdiÃ§Ã£o nÃ£o possui coordenadas.")
+    longitudes = [item[0] for item in coordinates]
+    latitudes = [item[1] for item in coordinates]
+    bounds = {
+        "minLatitude": min(latitudes),
+        "maxLatitude": max(latitudes),
+        "minLongitude": min(longitudes),
+        "maxLongitude": max(longitudes),
+    }
+    center = {
+        "latitude": (bounds["minLatitude"] + bounds["maxLatitude"]) / 2,
+        "longitude": (bounds["minLongitude"] + bounds["maxLongitude"]) / 2,
+    }
+    return bounds, center
+
+
+def _iter_geojson_coordinates(geometry: dict):
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates")
+    if geometry_type == "Polygon":
+        polygons = [coordinates]
+    elif geometry_type == "MultiPolygon":
+        polygons = coordinates
+    else:
+        return
+    if not isinstance(polygons, list):
+        return
+    for polygon in polygons:
+        if not isinstance(polygon, list):
+            continue
+        for ring in polygon:
+            if not isinstance(ring, list):
+                continue
+            for coordinate in ring:
+                if (
+                    isinstance(coordinate, list | tuple)
+                    and len(coordinate) >= 2
+                    and isinstance(coordinate[0], int | float)
+                    and isinstance(coordinate[1], int | float)
+                ):
+                    yield (float(coordinate[0]), float(coordinate[1]))
+
+
+def _default_jurisdiction_name(
+    chamber_type: str, city: str | None, state: str | None
+) -> str | None:
+    if chamber_type == "CAMARA_MUNICIPAL" and city and state:
+        return f"{city}/{state}"
+    if chamber_type == "ASSEMBLEIA_LEGISLATIVA" and state:
+        return state
+    return None
 
 
 @admin_bp.get("/categorias")

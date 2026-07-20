@@ -184,8 +184,11 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             )
             inspector = inspect(connection)
             rolled_back_tables = set(inspector.get_table_names())
-            rolled_back_columns = {
+            rolled_back_service_columns = {
                 column["name"] for column in inspector.get_columns("service_requests")
+            }
+            rolled_back_tenant_columns = {
+                column["name"] for column in inspector.get_columns("tenants")
             }
 
         assert rolled_back_heads == {previous_head}
@@ -196,7 +199,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_document_versions" in rolled_back_tables
         assert "rag_chunks" in rolled_back_tables
         assert "rag_assistant_queries" in rolled_back_tables
-        assert "location_geography" not in rolled_back_columns
+        assert "location_geography" in rolled_back_service_columns
+        assert "jurisdiction_name" in rolled_back_tenant_columns
+        assert "jurisdiction_geojson" not in rolled_back_tenant_columns
 
         upgrade(directory="migrations")
 
@@ -204,8 +209,11 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             reapplied_heads = set(MigrationContext.configure(connection).get_current_heads())
             inspector = inspect(connection)
             reapplied_tables = set(inspector.get_table_names())
-            reapplied_columns = {
+            reapplied_service_columns = {
                 column["name"] for column in inspector.get_columns("service_requests")
+            }
+            reapplied_tenant_columns = {
+                column["name"] for column in inspector.get_columns("tenants")
             }
 
         assert reapplied_heads == {expected_head}
@@ -216,14 +224,38 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_document_versions" in reapplied_tables
         assert "rag_chunks" in reapplied_tables
         assert "rag_assistant_queries" in reapplied_tables
-        assert "location_geography" in reapplied_columns
+        assert "location_geography" in reapplied_service_columns
+        assert "jurisdiction_name" in reapplied_tenant_columns
+        assert "jurisdiction_geojson" in reapplied_tenant_columns
 
 
 def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres_app):
     aware_timestamp = datetime(2026, 7, 16, 18, 30, tzinfo=UTC)
 
     with postgres_app.app_context():
-        tenant = Tenant(name="Gabinete PostgreSQL", slug="gabinete-postgresql")
+        tenant = Tenant(
+            name="Gabinete PostgreSQL",
+            slug="gabinete-postgresql",
+            chamber_type="CAMARA_MUNICIPAL",
+            jurisdiction_name="Brasília/DF",
+            jurisdiction_city="Brasília",
+            jurisdiction_state="DF",
+            jurisdiction_ibge_code="5300108",
+            jurisdiction_center_latitude=-15.7939,
+            jurisdiction_center_longitude=-47.8828,
+            jurisdiction_bounds={
+                "minLatitude": -16.1,
+                "maxLatitude": -15.5,
+                "minLongitude": -48.2,
+                "maxLongitude": -47.5,
+            },
+            jurisdiction_geojson={
+                "type": "FeatureCollection",
+                "features": [
+                    {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": []}}
+                ],
+            },
+        )
         db.session.add(tenant)
         db.session.flush()
 
@@ -252,6 +284,10 @@ def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres
 
         assert stored_user.created_at == aware_timestamp
         assert stored_user.created_at.utcoffset() is not None
+        assert stored_user.tenant.jurisdiction_name == "Brasília/DF"
+        assert stored_user.tenant.jurisdiction_bounds["minLatitude"] == -16.1
+        assert stored_user.tenant.jurisdiction_ibge_code == "5300108"
+        assert stored_user.tenant.jurisdiction_geojson["type"] == "FeatureCollection"
         assert stored_citizen.contacts[0]["valor"] == "cidada@postgresql.test"
         assert stored_citizen.addresses == [{"cidade": "Brasília", "uf": "DF"}]
 

@@ -250,6 +250,15 @@ class Tenant(db.Model):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     timezone: Mapped[str] = mapped_column(String(50), default="America/Sao_Paulo")
+    chamber_type: Mapped[str | None] = mapped_column(String(40))
+    jurisdiction_name: Mapped[str | None] = mapped_column(String(160))
+    jurisdiction_city: Mapped[str | None] = mapped_column(String(120))
+    jurisdiction_state: Mapped[str | None] = mapped_column(String(2))
+    jurisdiction_ibge_code: Mapped[str | None] = mapped_column(String(20))
+    jurisdiction_center_latitude: Mapped[float | None] = mapped_column(Float)
+    jurisdiction_center_longitude: Mapped[float | None] = mapped_column(Float)
+    jurisdiction_bounds: Mapped[dict | None] = mapped_column(JSON)
+    jurisdiction_geojson: Mapped[dict | None] = mapped_column(JSON)
     status: Mapped[TenantStatus] = mapped_column(
         Enum(TenantStatus, name="tenant_status"), default=TenantStatus.ACTIVE
     )

@@ -100,7 +100,15 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     dashboard = client.get("/api/v1/painel/operacional")
     assert dashboard.status_code == 200
     assert dashboard.json["indicadores"]["total"] == 1
-    assert dashboard.json["porTerritorio"][0] == {"nome": "Centro", "total": 1}
+    assert dashboard.json["porTerritorio"] == []
+    assert dashboard.json["porCategoria"] == []
+    assert dashboard.json["porCanal"] == []
+    assert dashboard.json["porOrgao"] == []
+    assert dashboard.json["porPeriodo"] == []
+    assert dashboard.json["privacidadeAgregacao"]["minimoPorGrupo"] == 3
+    assert dashboard.json["privacidadeAgregacao"]["gruposSuprimidos"] >= 1
+    assert dashboard.json["filtros"]["opcoes"]["categorias"] == ["Infraestrutura"]
+    assert dashboard.json["filtros"]["opcoes"]["orgaos"][0]["nome"] == "Secretaria de Obras"
     assert dashboard.json["territorial"]["geocodificadas"] == 0
     assert dashboard.json["territorial"]["semCoordenadas"] == 1
     metrics = dashboard.json["metricasOperacionais"]
@@ -108,6 +116,43 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert metrics["encaminhamentosRegistrados"] == 1
     assert metrics["tempoMedioPrimeiraRespostaHoras"] is not None
     assert metrics["tempoMedioPrimeiroEncaminhamentoHoras"] is not None
+    report = client.get(
+        "/api/v1/painel/relatorio-mensal",
+        query_string={"ano": datetime.now(UTC).year, "mes": datetime.now(UTC).month},
+    )
+    assert report.status_code == 200
+    assert report.json["periodo"]["rotulo"] == datetime.now(UTC).strftime("%m/%Y")
+    assert report.json["resumo"]["solicitacoesRecebidas"] == 1
+    assert report.json["resumo"]["encaminhadas"] == 1
+    assert report.json["privacidadeAgregacao"]["minimoPorGrupo"] == 3
+    assert report.json["indicadores"]["porCategoria"] == []
+    assert report.json["evidencias"][0]["protocolo"] == created.json["protocolo"]
+    assert {event["tipo"] for event in report.json["evidencias"][0]["eventos"]} >= {
+        "encaminhamento",
+        "resposta_orgao",
+        "comunicacao_cidadao",
+    }
+
+    filtered = client.get(
+        "/api/v1/painel/operacional",
+        query_string={
+            "categoria": "Infraestrutura",
+            "canal": "WHATSAPP",
+            "territorioId": territory.json["id"],
+            "orgaoId": agency.json["id"],
+            "granularidade": "mes",
+        },
+    )
+    assert filtered.status_code == 200
+    assert filtered.json["indicadores"]["total"] == 1
+    assert filtered.json["filtros"]["selecionados"]["granularidade"] == "mes"
+    assert filtered.json["porPeriodo"] == []
+
+    empty = client.get(
+        "/api/v1/painel/operacional",
+        query_string={"canal": "EMAIL"},
+    )
+    assert empty.json["indicadores"]["total"] == 0
 
     geocoded = post(client, "/api/v1/painel/territorial/geocodificar", csrf, {})
     assert geocoded.status_code == 200
@@ -117,17 +162,133 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     territorial = client.get("/api/v1/painel/operacional").json["territorial"]
     assert territorial["geocodificadas"] == 1
     assert territorial["coberturaPercentual"] == 100
-    assert territorial["pontos"][0]["protocolo"] == created.json["protocolo"]
-    assert territorial["pontos"][0]["territorio"] == "Centro"
-    assert territorial["hotspots"][0]["nome"] == "Centro"
+    assert territorial["pontos"] == []
+    assert territorial["hotspots"] == []
+    assert territorial["privacidade"]["pontosSuprimidos"] == 1
     assert territorial["metodo"] == "LOCAL_APROXIMADO"
-    assert territorial["heatmap"][0]["territorio"] == "Centro"
+    assert territorial["heatmap"] == []
 
     with app.app_context():
         item = db.session.execute(select(ServiceRequest)).scalar_one()
         assert item.latitude is not None
         assert item.longitude is not None
         assert item.impact == "ALTO"
+
+
+def test_dashboard_detects_recurrent_and_anomalous_demands(client):
+    _, csrf = login(client)
+    territory = post(client, "/api/v1/admin/territorios", csrf, {"nome": "Benfica"})
+    category = post(
+        client,
+        "/api/v1/admin/categorias",
+        csrf,
+        {"nome": "Mobilidade urbana", "slaHoras": 72},
+    )
+
+    for index in range(3):
+        created = post(
+            client,
+            "/api/v1/solicitacoes",
+            csrf,
+            {
+                "origem": "WHATSAPP",
+                "titulo": f"Falta de ônibus recorrente {index + 1}",
+                "descricao": "Moradores relatam falta de ônibus no bairro.",
+                "categoriaId": category.json["id"],
+                "territorioId": territory.json["id"],
+                "latitude": -21.762,
+                "longitude": -43.315,
+            },
+        )
+        assert created.status_code == 201
+
+    dashboard = client.get("/api/v1/painel/operacional")
+    assert dashboard.json["porCategoria"][0] == {"nome": "Mobilidade urbana", "total": 3}
+    assert dashboard.json["porCanal"][0] == {"nome": "WHATSAPP", "total": 3}
+    assert dashboard.json["porTerritorio"][0] == {"nome": "Benfica", "total": 3}
+    alerts = dashboard.json["alertasDemanda"]
+
+    recurrence = alerts["reincidencias"][0]
+    assert recurrence["categoria"] == "Mobilidade urbana"
+    assert recurrence["territorio"] == "Benfica"
+    assert recurrence["total"] == 3
+    assert recurrence["abertas"] == 3
+    assert "30 dias" in recurrence["regra"]
+    assert len(recurrence["exemplos"]) == 3
+
+    anomaly = alerts["crescimentosAnormais"][0]
+    assert anomaly["categoria"] == "Mobilidade urbana"
+    assert anomaly["territorio"] == "Benfica"
+    assert anomaly["atual"] == 3
+    assert anomaly["baseSemanal"] == 0
+    assert anomaly["fatorCrescimento"] is None
+    assert alerts["regras"]["reincidencia"]["minimoDemandas"] == 3
+
+
+def test_tenant_jurisdiction_can_be_configured_and_feeds_dashboard(app, client, monkeypatch):
+    _, csrf = login(client)
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [-43.68, -21.82],
+                        [-43.18, -21.82],
+                        [-43.18, -21.52],
+                        [-43.68, -21.52],
+                        [-43.68, -21.82],
+                    ]],
+                },
+                "properties": {"codarea": "3136702"},
+            }
+        ],
+    }
+    payload = {
+        "tipoCasa": "CAMARA_MUNICIPAL",
+        "nome": "Juiz de Fora/MG",
+        "municipio": "Juiz de Fora",
+        "uf": "MG",
+        "codigoIbge": "3136702",
+        "centro": {"latitude": -21.7619, "longitude": -43.3496},
+        "limites": {
+            "minLatitude": -21.92,
+            "maxLatitude": -21.58,
+            "minLongitude": -43.58,
+            "maxLongitude": -43.17,
+        },
+    }
+
+    updated = patch(client, "/api/v1/admin/jurisdicao", csrf, payload)
+    assert updated.status_code == 200
+    assert updated.json["nome"] == "Juiz de Fora/MG"
+    assert updated.json["uf"] == "MG"
+    assert updated.json["codigoIbge"] == "3136702"
+    assert updated.json["limites"]["minLatitude"] == -21.92
+
+    monkeypatch.setattr("app.admin.routes._fetch_ibge_geojson", lambda scope, code: geojson)
+    imported = post(
+        client,
+        "/api/v1/admin/jurisdicao/ibge",
+        csrf,
+        {"tipoCasa": "CAMARA_MUNICIPAL", "codigoIbge": "3136702"},
+    )
+    assert imported.status_code == 200
+    assert imported.json["geojson"]["features"][0]["properties"]["codarea"] == "3136702"
+    assert imported.json["limites"]["minLongitude"] == -43.68
+
+    dashboard = client.get("/api/v1/painel/operacional")
+    jurisdiction = dashboard.json["territorial"]["jurisdicao"]
+    assert jurisdiction["nome"] == "Juiz de Fora/MG"
+    assert jurisdiction["tipoCasa"] == "CAMARA_MUNICIPAL"
+    assert jurisdiction["geojson"]["features"][0]["geometry"]["type"] == "Polygon"
+
+    with app.app_context():
+        actions = db.session.execute(select(AuditLog.action)).scalars().all()
+        assert "tenant.jurisdiction.updated" in actions
+        assert "tenant.jurisdiction.ibge_imported" in actions
 
 
 def test_public_lookup_reopen_and_key_rotation_are_safe(app, client):

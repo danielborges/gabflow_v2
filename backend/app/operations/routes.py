@@ -1,8 +1,9 @@
 import hashlib
 import secrets
 import uuid
+from calendar import monthrange
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from math import cos, pi, sin
 
 from flask import Blueprint, jsonify, request
@@ -29,6 +30,7 @@ from app.models import (
     ScheduledReturnStatus,
     ServiceRequest,
     TaskStatus,
+    Tenant,
     Territory,
 )
 
@@ -40,6 +42,13 @@ CLOSED_STATUSES = {
     RequestStatus.ENCERRADA,
     RequestStatus.CANCELADA,
 }
+RECURRENCE_WINDOW_DAYS = 30
+RECURRENCE_MIN_REQUESTS = 3
+ANOMALY_CURRENT_WINDOW_DAYS = 7
+ANOMALY_BASELINE_WINDOW_DAYS = 28
+ANOMALY_MIN_CURRENT_REQUESTS = 3
+ANOMALY_GROWTH_FACTOR = 2.0
+MIN_ANALYTICS_GROUP_SIZE = 3
 
 
 def _context() -> tuple[uuid.UUID, uuid.UUID]:
@@ -371,13 +380,15 @@ def operational_dashboard():
 
     if generate_return_reminders(tenant_id, user_id):
         db.session.commit()
-    items = list(
+    all_items = list(
         db.session.execute(
             select(ServiceRequest)
             .where(ServiceRequest.tenant_id == tenant_id)
             .order_by(ServiceRequest.created_at.desc())
         ).scalars()
     )
+    filters = _dashboard_filters(request.args)
+    items = _apply_dashboard_filters(all_items, filters)
     open_items = [item for item in items if item.status not in CLOSED_STATUSES]
     overdue = [item for item in open_items if item.due_at and _utc(item.due_at) < now]
     near_due = [
@@ -392,12 +403,24 @@ def operational_dashboard():
             select(Territory).where(Territory.tenant_id == tenant_id)
         ).scalars()
     }
-    pending_tasks = db.session.execute(
+    agency_names = {
+        item.id: item.name
+        for item in db.session.execute(
+            select(ExternalAgency).where(ExternalAgency.tenant_id == tenant_id)
+        ).scalars()
+    }
+    tenant = db.session.get(Tenant, tenant_id)
+    filtered_request_ids = {item.id for item in items}
+    pending_tasks = list(db.session.execute(
         select(RequestTask).where(
             RequestTask.tenant_id == tenant_id,
             RequestTask.status.in_([TaskStatus.PENDENTE, TaskStatus.EM_ANDAMENTO]),
         )
-    ).scalars()
+    ).scalars())
+    if filtered_request_ids:
+        pending_tasks = [item for item in pending_tasks if item.request_id in filtered_request_ids]
+    elif items == []:
+        pending_tasks = []
     active_returns = list(
         db.session.execute(
             select(ScheduledReturn)
@@ -408,6 +431,12 @@ def operational_dashboard():
             .order_by(ScheduledReturn.scheduled_at)
         ).scalars()
     )
+    if filtered_request_ids:
+        active_returns = [
+            item for item in active_returns if item.request_id in filtered_request_ids
+        ]
+    elif items == []:
+        active_returns = []
     overdue_returns = [
         item for item in active_returns if _utc(item.scheduled_at) < now
     ]
@@ -423,6 +452,20 @@ def operational_dashboard():
             _utc(item.due_at) if item.due_at else datetime.max.replace(tzinfo=UTC),
         ),
     )[:10]
+    analytics = {
+        "porStatus": _private_counter(item.status.value for item in items),
+        "porCategoria": _private_counter(item.category or "Sem categoria" for item in items),
+        "porCanal": _private_counter(item.source.value for item in items),
+        "porOrigem": _private_counter(item.source.value for item in items),
+        "porOrgao": _private_counter(
+            agency_names.get(item.agency_id, "Sem órgão") for item in items
+        ),
+        "porTerritorio": _private_counter(
+            territory_names.get(item.territory_id, "Sem território") for item in items
+        ),
+        "porPeriodo": _private_period_counter(items, filters["granularidade"]),
+    }
+    privacy_summary = _privacy_summary(analytics)
     return jsonify(
         indicadores={
             "total": len(items),
@@ -439,12 +482,17 @@ def operational_dashboard():
             "tempoMedioResolucaoHoras": operational_metrics["tempoMedioResolucaoHoras"],
         },
         metricasOperacionais=operational_metrics,
-        porStatus=_counter(item.status.value for item in items),
-        porCategoria=_counter(item.category or "Sem categoria" for item in items),
-        porOrigem=_counter(item.source.value for item in items),
+        filtros=_dashboard_filter_payload(all_items, filters, territory_names, agency_names),
+        privacidadeAgregacao=privacy_summary,
+        porStatus=analytics["porStatus"]["items"],
+        porCategoria=analytics["porCategoria"]["items"],
+        porCanal=analytics["porCanal"]["items"],
+        porOrigem=analytics["porOrigem"]["items"],
+        porOrgao=_counter(agency_names.get(item.agency_id, "Sem órgão") for item in items),
         porTerritorio=_counter(
             territory_names.get(item.territory_id, "Sem território") for item in items
         ),
+        porPeriodo=_period_counter(items, filters["granularidade"]),
         filaPrioritaria=[
             {
                 "id": str(item.id),
@@ -465,7 +513,105 @@ def operational_dashboard():
             }
             for item in active_returns[:10]
         ],
-        territorial=_territorial_dashboard(tenant_id, items, open_items, overdue, territory_names),
+        territorial=_territorial_dashboard(
+            tenant_id, tenant, items, open_items, overdue, territory_names
+        ),
+        alertasDemanda=_demand_alerts(items, now, overdue, territory_names),
+    )
+
+
+@operations_bp.get("/painel/relatorio-mensal")
+@jwt_required()
+def monthly_mandate_report():
+    tenant_id, _ = _context()
+    try:
+        starts_at, ends_at = _monthly_report_period(request.args)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+
+    all_items = list(
+        db.session.execute(
+            select(ServiceRequest)
+            .where(ServiceRequest.tenant_id == tenant_id)
+            .order_by(ServiceRequest.created_at.desc())
+        ).scalars()
+    )
+    created_items = [
+        item for item in all_items if starts_at <= _utc(item.created_at) < ends_at
+    ]
+    closed_items = [
+        item
+        for item in all_items
+        if item.closed_at and starts_at <= _utc(item.closed_at) < ends_at
+    ]
+    forwarded_items = [
+        item
+        for item in all_items
+        if any(
+            starts_at <= _utc(forwarding.created_at) < ends_at
+            for forwarding in item.forwardings
+        )
+    ]
+    touched_items = _unique_requests([*created_items, *closed_items, *forwarded_items])
+    territory_names = {
+        item.id: item.name
+        for item in db.session.execute(
+            select(Territory).where(Territory.tenant_id == tenant_id)
+        ).scalars()
+    }
+    agency_names = {
+        item.id: item.name
+        for item in db.session.execute(
+            select(ExternalAgency).where(ExternalAgency.tenant_id == tenant_id)
+        ).scalars()
+    }
+    analytics = {
+        "porStatus": _private_counter(item.status.value for item in touched_items),
+        "porCategoria": _private_counter(
+            item.category or "Sem categoria" for item in touched_items
+        ),
+        "porCanal": _private_counter(item.source.value for item in touched_items),
+        "porOrgao": _private_counter(
+            agency_names.get(item.agency_id, "Sem órgão") for item in touched_items
+        ),
+        "porTerritorio": _private_counter(
+            territory_names.get(item.territory_id, "Sem território") for item in touched_items
+        ),
+    }
+    overdue = [
+        item
+        for item in touched_items
+        if item.status not in CLOSED_STATUSES and item.due_at and _utc(item.due_at) < ends_at
+    ]
+    return jsonify(
+        periodo={
+            "ano": starts_at.year,
+            "mes": starts_at.month,
+            "inicio": starts_at.date().isoformat(),
+            "fim": (ends_at - timedelta(days=1)).date().isoformat(),
+            "rotulo": _month_label(starts_at),
+        },
+        resumo={
+            "solicitacoesRecebidas": len(created_items),
+            "solicitacoesMovimentadas": len(touched_items),
+            "encaminhadas": len(forwarded_items),
+            "resolvidasOuEncerradas": len(closed_items),
+            "emAbertoAoFimDoMes": sum(item.status not in CLOSED_STATUSES for item in touched_items),
+            "atrasadasAoFimDoMes": len(overdue),
+        },
+        indicadores={
+            "porStatus": analytics["porStatus"]["items"],
+            "porCategoria": analytics["porCategoria"]["items"],
+            "porCanal": analytics["porCanal"]["items"],
+            "porOrgao": analytics["porOrgao"]["items"],
+            "porTerritorio": analytics["porTerritorio"]["items"],
+        },
+        privacidadeAgregacao=_privacy_summary(analytics),
+        destaques=_monthly_highlights(touched_items, territory_names, agency_names),
+        evidencias=_monthly_evidence(
+            touched_items, starts_at, ends_at, territory_names, agency_names
+        ),
+        alertas=_demand_alerts(touched_items, ends_at, overdue, territory_names),
     )
 
 
@@ -564,6 +710,7 @@ def public_request_status(protocol: str):
 
 def _territorial_dashboard(
     tenant_id: uuid.UUID,
+    tenant: Tenant | None,
     items: list[ServiceRequest],
     open_items: list[ServiceRequest],
     overdue: list[ServiceRequest],
@@ -624,15 +771,47 @@ def _territorial_dashboard(
         key=lambda item: (item["abertas"], item["atrasadas"], item["total"]),
         reverse=True,
     )
+    private_points = _privacy_points(points, territory_metrics)
+    private_hotspots = [
+        item for item in hotspots if item["total"] >= MIN_ANALYTICS_GROUP_SIZE
+    ]
     postgis = _postgis_heatmap(tenant_id)
+    heatmap = postgis if postgis is not None else _local_heatmap(private_points)
     return {
         "metodo": "POSTGIS" if postgis is not None else "LOCAL_APROXIMADO",
+        "jurisdicao": _jurisdiction_data(tenant),
         "coberturaPercentual": coverage,
         "geocodificadas": len(geocoded),
         "semCoordenadas": max(len(items) - len(geocoded), 0),
-        "pontos": points[:200],
-        "hotspots": hotspots[:8],
-        "heatmap": postgis if postgis is not None else _local_heatmap(points),
+        "privacidade": {
+            "minimoPorGrupo": MIN_ANALYTICS_GROUP_SIZE,
+            "pontosSuprimidos": max(len(points) - len(private_points), 0),
+            "hotspotsSuprimidos": max(len(hotspots) - len(private_hotspots), 0),
+        },
+        "pontos": private_points[:200],
+        "hotspots": private_hotspots[:8],
+        "heatmap": heatmap,
+    }
+
+
+def _jurisdiction_data(tenant: Tenant | None) -> dict | None:
+    if tenant is None or not tenant.jurisdiction_name:
+        return None
+    return {
+        "tipoCasa": tenant.chamber_type,
+        "nome": tenant.jurisdiction_name,
+        "municipio": tenant.jurisdiction_city,
+        "uf": tenant.jurisdiction_state,
+        "codigoIbge": tenant.jurisdiction_ibge_code,
+        "centro": {
+            "latitude": tenant.jurisdiction_center_latitude,
+            "longitude": tenant.jurisdiction_center_longitude,
+        }
+        if tenant.jurisdiction_center_latitude is not None
+        and tenant.jurisdiction_center_longitude is not None
+        else None,
+        "limites": tenant.jurisdiction_bounds,
+        "geojson": tenant.jurisdiction_geojson,
     }
 
 
@@ -667,11 +846,12 @@ def _postgis_heatmap(tenant_id: uuid.UUID) -> list[dict] | None:
                 WHERE sr.tenant_id = CAST(:tenant_id AS uuid)
                   AND sr.location_geography IS NOT NULL
                 GROUP BY territorio, ST_SnapToGrid(sr.location_geography::geometry, 0.01)
+                HAVING COUNT(*) >= :min_group_size
                 ORDER BY total DESC, abertas DESC
                 LIMIT 20
                 """
             ),
-            {"tenant_id": str(tenant_id)},
+            {"tenant_id": str(tenant_id), "min_group_size": MIN_ANALYTICS_GROUP_SIZE},
         ).mappings()
     except SQLAlchemyError:
         db.session.rollback()
@@ -709,9 +889,173 @@ def _local_heatmap(points: list[dict]) -> list[dict]:
         )
         cell["total"] += 1
         cell["abertas"] += int(point["status"] not in {status.value for status in CLOSED_STATUSES})
-    return sorted(cells.values(), key=lambda item: (item["total"], item["abertas"]), reverse=True)[
-        :20
+    private_cells = [
+        item for item in cells.values() if item["total"] >= MIN_ANALYTICS_GROUP_SIZE
     ]
+    return sorted(
+        private_cells, key=lambda item: (item["total"], item["abertas"]), reverse=True
+    )[:20]
+
+
+def _privacy_points(points: list[dict], territory_metrics: dict[str, dict]) -> list[dict]:
+    return [
+        point
+        for point in points
+        if territory_metrics.get(point["territorio"], {}).get("total", 0)
+        >= MIN_ANALYTICS_GROUP_SIZE
+    ]
+
+
+def _demand_alerts(
+    items: list[ServiceRequest],
+    now: datetime,
+    overdue: list[ServiceRequest],
+    territory_names: dict,
+) -> dict:
+    overdue_ids = {item.id for item in overdue}
+    return {
+        "reincidencias": _recurrent_demands(items, now, overdue_ids, territory_names),
+        "crescimentosAnormais": _anomalous_growth(items, now, territory_names),
+        "regras": {
+            "reincidencia": {
+                "janelaDias": RECURRENCE_WINDOW_DAYS,
+                "minimoDemandas": RECURRENCE_MIN_REQUESTS,
+                "agrupamento": "categoria, território e célula geográfica aproximada de 1 km",
+            },
+            "crescimentoAnormal": {
+                "janelaAtualDias": ANOMALY_CURRENT_WINDOW_DAYS,
+                "janelaBaseDias": ANOMALY_BASELINE_WINDOW_DAYS,
+                "minimoDemandasAtuais": ANOMALY_MIN_CURRENT_REQUESTS,
+                "fatorMinimoCrescimento": ANOMALY_GROWTH_FACTOR,
+            },
+        },
+    }
+
+
+def _recurrent_demands(
+    items: list[ServiceRequest],
+    now: datetime,
+    overdue_ids: set,
+    territory_names: dict,
+) -> list[dict]:
+    starts_at = now - timedelta(days=RECURRENCE_WINDOW_DAYS)
+    groups: dict[tuple[str, str, str], list[ServiceRequest]] = {}
+    for item in items:
+        if _utc(item.created_at) < starts_at:
+            continue
+        key = (
+            _category_name(item),
+            _territory_name(item, territory_names),
+            _geo_cell(item),
+        )
+        groups.setdefault(key, []).append(item)
+
+    alerts = []
+    for (category, territory, cell), group in groups.items():
+        if len(group) < RECURRENCE_MIN_REQUESTS:
+            continue
+        sorted_group = sorted(group, key=lambda item: _utc(item.created_at), reverse=True)
+        alerts.append(
+            {
+                "categoria": category,
+                "territorio": territory,
+                "celula": cell,
+                "total": len(group),
+                "abertas": sum(item.status not in CLOSED_STATUSES for item in group),
+                "atrasadas": sum(item.id in overdue_ids for item in group),
+                "primeiraOcorrencia": min(_utc(item.created_at) for item in group).isoformat(),
+                "ultimaOcorrencia": max(_utc(item.created_at) for item in group).isoformat(),
+                "exemplos": [
+                    {
+                        "id": str(item.id),
+                        "protocolo": item.protocol,
+                        "titulo": item.title or "Sem título",
+                    }
+                    for item in sorted_group[:3]
+                ],
+                "regra": (
+                    f"{len(group)} demandas em {RECURRENCE_WINDOW_DAYS} dias no mesmo recorte"
+                ),
+            }
+        )
+
+    return sorted(
+        alerts,
+        key=lambda item: (item["total"], item["abertas"], item["atrasadas"]),
+        reverse=True,
+    )[:8]
+
+
+def _anomalous_growth(
+    items: list[ServiceRequest],
+    now: datetime,
+    territory_names: dict,
+) -> list[dict]:
+    current_start = now - timedelta(days=ANOMALY_CURRENT_WINDOW_DAYS)
+    baseline_start = current_start - timedelta(days=ANOMALY_BASELINE_WINDOW_DAYS)
+    groups: dict[tuple[str, str], dict[str, int]] = {}
+
+    for item in items:
+        created_at = _utc(item.created_at)
+        if created_at < baseline_start:
+            continue
+        key = (_category_name(item), _territory_name(item, territory_names))
+        metric = groups.setdefault(key, {"atual": 0, "base": 0})
+        if created_at >= current_start:
+            metric["atual"] += 1
+        elif created_at >= baseline_start:
+            metric["base"] += 1
+
+    alerts = []
+    baseline_weeks = ANOMALY_BASELINE_WINDOW_DAYS / ANOMALY_CURRENT_WINDOW_DAYS
+    for (category, territory), metric in groups.items():
+        current_total = metric["atual"]
+        baseline_weekly = metric["base"] / baseline_weeks if baseline_weeks else 0
+        if current_total < ANOMALY_MIN_CURRENT_REQUESTS:
+            continue
+        if baseline_weekly == 0:
+            growth_factor = None
+            is_anomalous = True
+        else:
+            growth_factor = current_total / baseline_weekly
+            is_anomalous = growth_factor >= ANOMALY_GROWTH_FACTOR
+        if not is_anomalous:
+            continue
+        alerts.append(
+            {
+                "categoria": category,
+                "territorio": territory,
+                "atual": current_total,
+                "baseSemanal": round(baseline_weekly, 1),
+                "fatorCrescimento": round(growth_factor, 1) if growth_factor else None,
+                "regra": (
+                    f"{current_total} demandas nos últimos {ANOMALY_CURRENT_WINDOW_DAYS} dias"
+                ),
+            }
+        )
+
+    return sorted(
+        alerts,
+        key=lambda item: (
+            item["fatorCrescimento"] if item["fatorCrescimento"] is not None else 999,
+            item["atual"],
+        ),
+        reverse=True,
+    )[:8]
+
+
+def _category_name(item: ServiceRequest) -> str:
+    return item.category or "Sem categoria"
+
+
+def _territory_name(item: ServiceRequest, territory_names: dict) -> str:
+    return territory_names.get(item.territory_id, "Sem território")
+
+
+def _geo_cell(item: ServiceRequest) -> str:
+    if item.latitude is None or item.longitude is None:
+        return "sem-coordenadas"
+    return f"{round(float(item.latitude), 2)},{round(float(item.longitude), 2)}"
 
 
 def _operational_metrics(items: list[ServiceRequest]) -> dict:
@@ -828,7 +1172,321 @@ def _local_coordinates(reference: str) -> tuple[float, float]:
 
 
 def _counter(values) -> list[dict]:
-    return [{"nome": name, "total": total} for name, total in Counter(values).most_common()]
+    return _private_counter(values)["items"]
+
+
+def _private_counter(values) -> dict:
+    counter = Counter(values)
+    items = [
+        {"nome": name, "total": total}
+        for name, total in counter.most_common()
+        if total >= MIN_ANALYTICS_GROUP_SIZE
+    ]
+    suppressed = [
+        {"nome": name, "total": total}
+        for name, total in counter.items()
+        if total < MIN_ANALYTICS_GROUP_SIZE
+    ]
+    return {
+        "items": items,
+        "suprimidos": {
+            "grupos": len(suppressed),
+            "registros": sum(item["total"] for item in suppressed),
+        },
+    }
+
+
+def _dashboard_filters(args) -> dict:
+    start = _parse_dashboard_date(args.get("inicio"))
+    end = _parse_dashboard_date(args.get("fim"))
+    if start and end and start > end:
+        start, end = end, start
+    granularity = str(args.get("granularidade") or "dia").lower()
+    if granularity not in {"dia", "mes"}:
+        granularity = "dia"
+    return {
+        "inicio": start,
+        "fim": end,
+        "categoria": str(args.get("categoria") or "").strip() or None,
+        "canal": str(args.get("canal") or "").strip().upper() or None,
+        "territorioId": _optional_uuid(args.get("territorioId")),
+        "orgaoId": _optional_uuid(args.get("orgaoId")),
+        "granularidade": granularity,
+    }
+
+
+def _parse_dashboard_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except ValueError:
+        return None
+
+
+def _optional_uuid(value) -> uuid.UUID | None:
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+def _apply_dashboard_filters(items: list[ServiceRequest], filters: dict) -> list[ServiceRequest]:
+    filtered = items
+    if filters["inicio"]:
+        filtered = [item for item in filtered if _utc(item.created_at).date() >= filters["inicio"]]
+    if filters["fim"]:
+        filtered = [item for item in filtered if _utc(item.created_at).date() <= filters["fim"]]
+    if filters["categoria"]:
+        filtered = [item for item in filtered if (item.category or "") == filters["categoria"]]
+    if filters["canal"]:
+        filtered = [item for item in filtered if item.source.value == filters["canal"]]
+    if filters["territorioId"]:
+        filtered = [item for item in filtered if item.territory_id == filters["territorioId"]]
+    if filters["orgaoId"]:
+        filtered = [item for item in filtered if item.agency_id == filters["orgaoId"]]
+    return filtered
+
+
+def _dashboard_filter_payload(
+    items: list[ServiceRequest],
+    filters: dict,
+    territory_names: dict,
+    agency_names: dict,
+) -> dict:
+    return {
+        "selecionados": {
+            "inicio": filters["inicio"].isoformat() if filters["inicio"] else "",
+            "fim": filters["fim"].isoformat() if filters["fim"] else "",
+            "categoria": filters["categoria"] or "",
+            "canal": filters["canal"] or "",
+            "territorioId": str(filters["territorioId"]) if filters["territorioId"] else "",
+            "orgaoId": str(filters["orgaoId"]) if filters["orgaoId"] else "",
+            "granularidade": filters["granularidade"],
+        },
+        "opcoes": {
+            "categorias": sorted({item.category for item in items if item.category}),
+            "canais": sorted({item.source.value for item in items}),
+            "territorios": _unique_options(
+                {
+                    "id": str(item.territory_id),
+                    "nome": territory_names.get(item.territory_id),
+                }
+                for item in items
+                if item.territory_id and territory_names.get(item.territory_id)
+            ),
+            "orgaos": _unique_options(
+                {"id": str(item.agency_id), "nome": agency_names.get(item.agency_id)}
+                for item in items
+                if item.agency_id and agency_names.get(item.agency_id)
+            ),
+        },
+    }
+
+
+def _unique_options(items) -> list[dict]:
+    unique = {}
+    for item in items:
+        unique[item["id"]] = item
+    return sorted(unique.values(), key=lambda item: item["nome"])
+
+
+def _period_counter(items: list[ServiceRequest], granularity: str) -> list[dict]:
+    return _private_period_counter(items, granularity)["items"]
+
+
+def _private_period_counter(items: list[ServiceRequest], granularity: str) -> dict:
+    date_format = "%Y-%m" if granularity == "mes" else "%Y-%m-%d"
+    counter = Counter(_utc(item.created_at).strftime(date_format) for item in items)
+    items = [
+        {"nome": key, "total": counter[key]}
+        for key in sorted(counter)
+        if counter[key] >= MIN_ANALYTICS_GROUP_SIZE
+    ]
+    suppressed = [total for total in counter.values() if total < MIN_ANALYTICS_GROUP_SIZE]
+    return {
+        "items": items,
+        "suprimidos": {"grupos": len(suppressed), "registros": sum(suppressed)},
+    }
+
+
+def _privacy_summary(analytics: dict) -> dict:
+    dimensions = {
+        key: value["suprimidos"]
+        for key, value in analytics.items()
+        if value["suprimidos"]["grupos"] > 0
+    }
+    return {
+        "minimoPorGrupo": MIN_ANALYTICS_GROUP_SIZE,
+        "dimensoes": dimensions,
+        "gruposSuprimidos": sum(item["grupos"] for item in dimensions.values()),
+        "registrosSuprimidos": sum(item["registros"] for item in dimensions.values()),
+    }
+
+
+def _monthly_report_period(args) -> tuple[datetime, datetime]:
+    now = datetime.now(UTC)
+    try:
+        year = int(args.get("ano") or now.year)
+        month = int(args.get("mes") or now.month)
+        starts_at = datetime(year, month, 1, tzinfo=UTC)
+    except ValueError as error:
+        raise ValueError("Informe ano e mês válidos para o relatório.") from error
+    if year < 2000 or year > now.year + 1 or month < 1 or month > 12:
+        raise ValueError("Informe ano e mês válidos para o relatório.")
+    days = monthrange(year, month)[1]
+    return starts_at, starts_at + timedelta(days=days)
+
+
+def _month_label(starts_at: datetime) -> str:
+    return starts_at.strftime("%m/%Y")
+
+
+def _unique_requests(items: list[ServiceRequest]) -> list[ServiceRequest]:
+    unique = {}
+    for item in items:
+        unique[item.id] = item
+    return sorted(unique.values(), key=lambda item: _utc(item.created_at), reverse=True)
+
+
+def _monthly_highlights(
+    items: list[ServiceRequest],
+    territory_names: dict,
+    agency_names: dict,
+) -> list[dict]:
+    categories = _private_counter(item.category or "Sem categoria" for item in items)["items"]
+    territories = _private_counter(
+        territory_names.get(item.territory_id, "Sem território") for item in items
+    )["items"]
+    agencies = _private_counter(
+        agency_names.get(item.agency_id, "Sem órgão") for item in items
+    )["items"]
+    highlights = []
+    if categories:
+        highlights.append(
+            {
+                "tipo": "categoria",
+                "titulo": "Tema mais recorrente",
+                "descricao": (
+                    f"{categories[0]['nome']} concentrou "
+                    f"{categories[0]['total']} solicitações."
+                ),
+            }
+        )
+    if territories:
+        highlights.append(
+            {
+                "tipo": "territorio",
+                "titulo": "Território com maior volume",
+                "descricao": (
+                    f"{territories[0]['nome']} concentrou "
+                    f"{territories[0]['total']} solicitações."
+                ),
+            }
+        )
+    if agencies:
+        highlights.append(
+            {
+                "tipo": "orgao",
+                "titulo": "Órgão mais acionado",
+                "descricao": (
+                    f"{agencies[0]['nome']} aparece em "
+                    f"{agencies[0]['total']} solicitações."
+                ),
+            }
+        )
+    return highlights
+
+
+def _monthly_evidence(
+    items: list[ServiceRequest],
+    starts_at: datetime,
+    ends_at: datetime,
+    territory_names: dict,
+    agency_names: dict,
+) -> list[dict]:
+    evidence = []
+    for item in items:
+        events = _monthly_evidence_events(item, starts_at, ends_at, agency_names)
+        if not events:
+            continue
+        evidence.append(
+            {
+                "protocolo": item.protocol,
+                "titulo": item.title or "Sem título",
+                "status": item.status.value,
+                "categoria": item.category or "Sem categoria",
+                "territorio": territory_names.get(item.territory_id, "Sem território"),
+                "orgao": agency_names.get(item.agency_id, "Sem órgão"),
+                "eventos": events,
+            }
+        )
+    return evidence[:10]
+
+
+def _monthly_evidence_events(
+    item: ServiceRequest,
+    starts_at: datetime,
+    ends_at: datetime,
+    agency_names: dict,
+) -> list[dict]:
+    events = []
+    if item.closed_at and starts_at <= _utc(item.closed_at) < ends_at:
+        events.append(
+            {
+                "tipo": "encerramento",
+                "data": _utc(item.closed_at).isoformat(),
+                "descricao": (
+                    item.closing_evidence
+                    or item.closing_reason
+                    or "Encerramento registrado."
+                ),
+            }
+        )
+    for forwarding in item.forwardings:
+        if starts_at <= _utc(forwarding.created_at) < ends_at:
+            events.append(
+                {
+                    "tipo": "encaminhamento",
+                    "data": _utc(forwarding.created_at).isoformat(),
+                    "descricao": (
+                        "Encaminhado para "
+                        f"{agency_names.get(forwarding.agency_id, 'órgão externo')}"
+                    ),
+                    "protocoloExterno": forwarding.external_protocol,
+                }
+            )
+        if forwarding.response_at and starts_at <= _utc(forwarding.response_at) < ends_at:
+            events.append(
+                {
+                    "tipo": "resposta_orgao",
+                    "data": _utc(forwarding.response_at).isoformat(),
+                    "descricao": forwarding.response or "Resposta do órgão registrada.",
+                    "protocoloExterno": forwarding.external_protocol,
+                }
+            )
+    for interaction in item.interactions:
+        if interaction.direction != InteractionDirection.SAIDA:
+            continue
+        if starts_at <= _utc(interaction.created_at) < ends_at:
+            events.append(
+                {
+                    "tipo": "comunicacao_cidadao",
+                    "data": _utc(interaction.created_at).isoformat(),
+                    "descricao": _truncate(interaction.content, 180),
+                    "canal": interaction.channel,
+                }
+            )
+    return sorted(events, key=lambda event: event["data"])[:5]
+
+
+def _truncate(value: str, limit: int) -> str:
+    clean = " ".join(str(value or "").split())
+    if len(clean) <= limit:
+        return clean
+    return f"{clean[: limit - 1].rstrip()}…"
 
 
 def _utc(value: datetime) -> datetime:

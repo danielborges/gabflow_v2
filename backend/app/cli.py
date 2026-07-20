@@ -32,6 +32,20 @@ def register_commands(app: Flask) -> None:
             existing = Tenant(name="Gabinete Demonstração", slug=tenant)
             db.session.add(existing)
             db.session.flush()
+        if existing.jurisdiction_name is None:
+            existing.chamber_type = "CAMARA_MUNICIPAL"
+            existing.jurisdiction_name = "Juiz de Fora/MG"
+            existing.jurisdiction_city = "Juiz de Fora"
+            existing.jurisdiction_state = "MG"
+            existing.jurisdiction_ibge_code = "3136702"
+            existing.jurisdiction_center_latitude = -21.7619
+            existing.jurisdiction_center_longitude = -43.3496
+            existing.jurisdiction_bounds = {
+                "minLatitude": -21.92,
+                "maxLatitude": -21.58,
+                "minLongitude": -43.58,
+                "maxLongitude": -43.17,
+            }
 
         user = db.session.execute(
             select(User).where(User.tenant_id == existing.id, User.email == email.lower())
