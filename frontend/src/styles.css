@@ -360,6 +360,21 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .breakdown { display: grid; gap: 12px; padding: 16px; }
 .breakdown > div { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 8px; padding-bottom: 7px; font-size: 0.75rem; }
 .breakdown > div i { position: absolute; bottom: 0; left: 0; height: 3px; border-radius: 2px; background: var(--cyan-500); }
+.territorial-panel { display: grid; gap: 13px; }
+.territorial-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.territorial-panel header p { margin: 4px 0 0; color: var(--muted); font-size: .66rem; line-height: 1.4; }
+.territorial-coverage { display: grid !important; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr) !important; align-items: center; gap: 9px !important; padding: 10px !important; border: 1px solid #cce3e7; border-radius: 6px; color: #176074; background: #f4fbfc; }
+.territorial-coverage span { display: grid; gap: 2px; }
+.territorial-coverage strong { color: #0f7282; font-size: .9rem; }
+.territorial-coverage small { color: #527084; font-size: .62rem; }
+.territorial-hotspots, .territorial-points { display: grid; gap: 7px; }
+.territorial-hotspots h3, .territorial-points h3 { margin: 0; color: #29425f; font-size: .7rem; text-transform: uppercase; }
+.territorial-hotspots div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid #edf2f7; }
+.territorial-hotspots span, .territorial-hotspots strong { font-size: .68rem; }
+.territorial-points article { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid #e3eaf1; border-radius: 5px; color: #29425f; background: #fbfdff; }
+.territorial-points article span { display: grid; gap: 2px; }
+.territorial-points article strong { font-size: .7rem; }
+.territorial-points article small { color: var(--muted); font-size: .61rem; }
 .dashboard-loading { margin: 36px; }
 .dashboard-error { margin: 36px; }
 .classification-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }

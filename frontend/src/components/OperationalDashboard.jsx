@@ -5,6 +5,9 @@ import {
   CheckCircle2,
   Clock3,
   ListTodo,
+  MapPin,
+  MapPinned,
+  Navigation,
   UserMinus,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -24,6 +27,7 @@ const statusLabels = {
 export function OperationalDashboard({ onOpenRequests }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [geocoding, setGeocoding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -36,6 +40,19 @@ export function OperationalDashboard({ onOpenRequests }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function geocodePending() {
+    setGeocoding(true);
+    setError("");
+    try {
+      await apiRequest("/api/v1/painel/territorial/geocodificar", { method: "POST" });
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setGeocoding(false);
+    }
+  }
 
   if (error) return <p className="form-error dashboard-error">{error}</p>;
   if (!data) return <div className="table-message dashboard-loading">Carregando painel...</div>;
@@ -57,7 +74,7 @@ export function OperationalDashboard({ onOpenRequests }) {
         <div>
           <p className="eyebrow">Operação do gabinete</p>
           <h1>Painel operacional</h1>
-          <p>Prioridades, prazos e distribuição das demandas em um único lugar.</p>
+          <p>Prioridades, prazos e distribuição territorial das demandas em um único lugar.</p>
         </div>
         <button className="secondary-button" onClick={load}>Atualizar</button>
       </section>
@@ -100,9 +117,51 @@ export function OperationalDashboard({ onOpenRequests }) {
           <Breakdown title="Por status" items={data.porStatus} labelFormatter={statusLabel} />
           <Breakdown title="Por categoria" items={data.porCategoria} />
           <Breakdown title="Por território" items={data.porTerritorio} />
+          <TerritorialPanel data={data.territorial} busy={geocoding} onGeocode={geocodePending} />
         </div>
       </section>
     </>
+  );
+}
+
+function TerritorialPanel({ data, busy, onGeocode }) {
+  const points = data?.pontos || [];
+  const hotspots = data?.hotspots || [];
+  return (
+    <section className="breakdown territorial-panel">
+      <header>
+        <div>
+          <h2>Inteligência territorial</h2>
+          <p>Geocodificação local e concentração por território.</p>
+        </div>
+        <button className="secondary-button compact" disabled={busy || !data?.semCoordenadas} onClick={onGeocode}>
+          <MapPinned size={15} /> {busy ? "Geocodificando..." : "Geocodificar"}
+        </button>
+      </header>
+      <div className="territorial-coverage">
+        <MapPin size={18} />
+        <span><strong>{formatPercent(data?.coberturaPercentual)}</strong><small>cobertura geográfica</small></span>
+        <span><strong>{data?.semCoordenadas || 0}</strong><small>sem coordenadas</small></span>
+      </div>
+      <div className="territorial-hotspots">
+        <h3>Hotspots</h3>
+        {hotspots.length ? hotspots.slice(0, 4).map((item) => (
+          <div key={item.nome}>
+            <span>{item.nome}</span>
+            <strong>{item.abertas} abertas</strong>
+          </div>
+        )) : <p className="muted-copy">Sem agrupamentos territoriais.</p>}
+      </div>
+      <div className="territorial-points">
+        <h3>Pontos geocodificados</h3>
+        {points.length ? points.slice(0, 4).map((item) => (
+          <article key={item.id}>
+            <Navigation size={14} />
+            <span><strong>{item.protocolo}</strong><small>{item.territorio} · {coordinateLabel(item)}</small></span>
+          </article>
+        )) : <p className="muted-copy">Nenhuma solicitação com coordenadas.</p>}
+      </div>
+    </section>
   );
 }
 
@@ -117,4 +176,12 @@ function statusLabel(value) {
 
 function formatDate(value) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(new Date(value));
+}
+
+function formatPercent(value) {
+  return `${Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
+}
+
+function coordinateLabel(item) {
+  return `${Number(item.latitude).toFixed(4)}, ${Number(item.longitude).toFixed(4)}`;
 }

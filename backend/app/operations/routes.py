@@ -3,6 +3,7 @@ import secrets
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
+from math import cos, pi, sin
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
@@ -470,6 +471,68 @@ def operational_dashboard():
             }
             for item in active_returns[:10]
         ],
+        territorial=_territorial_dashboard(items, open_items, overdue, territory_names),
+    )
+
+
+@operations_bp.post("/painel/territorial/geocodificar")
+@jwt_required()
+def geocode_pending_requests():
+    tenant_id, user_id = _context()
+    territory_names = {
+        item.id: item.name
+        for item in db.session.execute(
+            select(Territory).where(Territory.tenant_id == tenant_id)
+        ).scalars()
+    }
+    items = list(
+        db.session.execute(
+            select(ServiceRequest).where(
+                ServiceRequest.tenant_id == tenant_id,
+                ServiceRequest.latitude.is_(None),
+                ServiceRequest.longitude.is_(None),
+            )
+        ).scalars()
+    )
+    updated = []
+    for item in items:
+        reference = _geocode_reference(item, territory_names)
+        if not reference:
+            continue
+        latitude, longitude = _local_coordinates(reference)
+        item.latitude = latitude
+        item.longitude = longitude
+        item.history.append(
+            RequestHistory(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                action="request.geocoded",
+                changes={
+                    "latitude": {"antes": None, "depois": latitude},
+                    "longitude": {"antes": None, "depois": longitude},
+                    "metodo": {"antes": None, "depois": "LOCAL_APROXIMADO"},
+                },
+            )
+        )
+        updated.append(item)
+    if updated:
+        add_audit(
+            tenant_id,
+            user_id,
+            "territorial.geocoding.completed",
+            "service_request",
+            None,
+            after={
+                "quantidade": len(updated),
+                "metodo": "LOCAL_APROXIMADO",
+                "solicitacoes": [str(item.id) for item in updated],
+            },
+        )
+        db.session.commit()
+    return jsonify(
+        geocodificadas=len(updated),
+        pendentes=max(len(items) - len(updated), 0),
+        metodo="LOCAL_APROXIMADO",
     )
 
 
@@ -503,6 +566,100 @@ def public_request_status(protocol: str):
         atualizadaEm=item.updated_at.isoformat(),
         interacoes=public_interactions,
     )
+
+
+def _territorial_dashboard(
+    items: list[ServiceRequest],
+    open_items: list[ServiceRequest],
+    overdue: list[ServiceRequest],
+    territory_names: dict,
+) -> dict:
+    geocoded = [
+        item for item in items if item.latitude is not None and item.longitude is not None
+    ]
+    coverage = round((len(geocoded) / len(items)) * 100, 1) if items else 0
+    overdue_ids = {item.id for item in overdue}
+    open_ids = {item.id for item in open_items}
+    territory_metrics: dict[str, dict] = {}
+    for item in items:
+        name = territory_names.get(item.territory_id, "Sem território")
+        metric = territory_metrics.setdefault(
+            name,
+            {
+                "nome": name,
+                "total": 0,
+                "abertas": 0,
+                "atrasadas": 0,
+                "geocodificadas": 0,
+                "latitude": None,
+                "longitude": None,
+            },
+        )
+        metric["total"] += 1
+        metric["abertas"] += int(item.id in open_ids)
+        metric["atrasadas"] += int(item.id in overdue_ids)
+        if item.latitude is not None and item.longitude is not None:
+            metric["geocodificadas"] += 1
+            metric["latitude"] = (
+                item.latitude
+                if metric["latitude"] is None
+                else round((metric["latitude"] + item.latitude) / 2, 6)
+            )
+            metric["longitude"] = (
+                item.longitude
+                if metric["longitude"] is None
+                else round((metric["longitude"] + item.longitude) / 2, 6)
+            )
+    points = [
+        {
+            "id": str(item.id),
+            "protocolo": item.protocol,
+            "titulo": item.title,
+            "status": item.status.value,
+            "categoria": item.category,
+            "territorio": territory_names.get(item.territory_id, "Sem território"),
+            "latitude": item.latitude,
+            "longitude": item.longitude,
+            "atrasada": item.id in overdue_ids,
+        }
+        for item in geocoded
+    ]
+    hotspots = sorted(
+        territory_metrics.values(),
+        key=lambda item: (item["abertas"], item["atrasadas"], item["total"]),
+        reverse=True,
+    )
+    return {
+        "coberturaPercentual": coverage,
+        "geocodificadas": len(geocoded),
+        "semCoordenadas": max(len(items) - len(geocoded), 0),
+        "pontos": points[:200],
+        "hotspots": hotspots[:8],
+    }
+
+
+def _geocode_reference(item: ServiceRequest, territory_names: dict) -> str | None:
+    values = [
+        item.address,
+        territory_names.get(item.territory_id),
+        item.title,
+        item.description[:120] if item.description else None,
+    ]
+    reference = " | ".join(
+        str(value).strip() for value in values if value and str(value).strip()
+    )
+    return reference or None
+
+
+def _local_coordinates(reference: str) -> tuple[float, float]:
+    digest = hashlib.sha256(reference.encode("utf-8")).hexdigest()
+    seed_a = int(digest[:8], 16) / 0xFFFFFFFF
+    seed_b = int(digest[8:16], 16) / 0xFFFFFFFF
+    angle = seed_a * 2 * pi
+    radius = 0.012 + seed_b * 0.038
+    latitude = -21.7619 + sin(angle) * radius
+    longitude = -43.3496 + cos(angle) * radius
+    return round(latitude, 6), round(longitude, 6)
 
 
 def _counter(values) -> list[dict]:

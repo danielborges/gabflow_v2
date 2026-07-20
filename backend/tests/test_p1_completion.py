@@ -88,9 +88,25 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert dashboard.status_code == 200
     assert dashboard.json["indicadores"]["total"] == 1
     assert dashboard.json["porTerritorio"][0] == {"nome": "Centro", "total": 1}
+    assert dashboard.json["territorial"]["geocodificadas"] == 0
+    assert dashboard.json["territorial"]["semCoordenadas"] == 1
+
+    geocoded = post(client, "/api/v1/painel/territorial/geocodificar", csrf, {})
+    assert geocoded.status_code == 200
+    assert geocoded.json["geocodificadas"] == 1
+    assert geocoded.json["metodo"] == "LOCAL_APROXIMADO"
+
+    territorial = client.get("/api/v1/painel/operacional").json["territorial"]
+    assert territorial["geocodificadas"] == 1
+    assert territorial["coberturaPercentual"] == 100
+    assert territorial["pontos"][0]["protocolo"] == created.json["protocolo"]
+    assert territorial["pontos"][0]["territorio"] == "Centro"
+    assert territorial["hotspots"][0]["nome"] == "Centro"
 
     with app.app_context():
         item = db.session.execute(select(ServiceRequest)).scalar_one()
+        assert item.latitude is not None
+        assert item.longitude is not None
         assert item.impact == "ALTO"
 
 
