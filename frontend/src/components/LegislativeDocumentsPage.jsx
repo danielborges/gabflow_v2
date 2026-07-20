@@ -37,6 +37,12 @@ const TYPES = [
   ["PROJETO_LEI", "Projeto de lei"],
 ];
 const STATUS_LABELS = { RASCUNHO: "Rascunho", EM_REVISAO: "Em revisão", APROVADA: "Aprovada", REJEITADA: "Rejeitada" };
+const STATUS_DOT_CLASSES = {
+  RASCUNHO: "draft-status-rascunho",
+  EM_REVISAO: "draft-status-em-revisao",
+  APROVADA: "draft-status-aprovada",
+  REJEITADA: "draft-status-rejeitada",
+};
 const TRAMITATION_STATUS_LABELS = {
   PROTOCOLADA: "Protocolada",
   DISTRIBUIDA: "Distribuída",
@@ -127,7 +133,7 @@ export function LegislativeDocumentsPage({ user }) {
     {error && <p className="form-error">{error}</p>}
     {activeSection === "drafts" && creating && <DraftCreationForm templates={templates} busy={busy} onCancel={() => setCreating(false)} onSubmit={createDraft} />}
     {activeSection === "drafts" && <section className="legislative-workspace">
-      <aside className="legislative-list"><div className="legislative-search"><Search size={17} /><input aria-label="Pesquisar minutas" placeholder="Título ou protocolo" value={query} onChange={(event) => setQuery(event.target.value)} /><button className="icon-button" onClick={load} title="Atualizar"><RefreshCw size={17} /></button></div><div className="legislative-items">{items.map((item) => <button key={item.id} className={selectedId === item.id ? "legislative-item active" : "legislative-item"} onClick={() => setSelectedId(item.id)}><FileText size={18} /><span><strong>{item.titulo}</strong><small>{typeLabel(item.tipo)} · {STATUS_LABELS[item.status] || item.status}</small></span><StatusDot generation={item.statusGeracao} /></button>)}{!items.length && <p className="table-message">Nenhuma minuta cadastrada.</p>}</div></aside>
+      <aside className="legislative-list"><div className="legislative-search"><Search size={17} /><input aria-label="Pesquisar minutas" placeholder="Título ou protocolo" value={query} onChange={(event) => setQuery(event.target.value)} /><button className="icon-button" onClick={load} title="Atualizar"><RefreshCw size={17} /></button></div><div className="legislative-items">{items.map((item) => <button key={item.id} className={selectedId === item.id ? "legislative-item active" : "legislative-item"} onClick={() => setSelectedId(item.id)}><FileText size={18} /><span><strong>{item.titulo}</strong><small>{typeLabel(item.tipo)} · {STATUS_LABELS[item.status] || item.status}</small></span><StatusDot status={item.status} /></button>)}{!items.length && <p className="table-message">Nenhuma minuta cadastrada.</p>}</div></aside>
       <div className="legislative-editor-area">{draft ? <DraftEditor draft={draft} user={user} busy={busy} onReview={review} onChange={setDraft} onReload={() => loadDetail(draft.id)} onOpenDraft={setSelectedId} /> : <div className="legislative-empty"><FileText size={34} /><h2>Selecione uma minuta</h2><p>O conteúdo, fontes, versões e decisões aparecerão aqui.</p></div>}</div>
     </section>}
     {activeSection === "precedents" && <PrecedentSearch onOpenDraft={(id) => { setSelectedId(id); setActiveSection("drafts"); }} />}
@@ -684,6 +690,10 @@ function TramitationPanel({ draft, manager, onReload }) {
   </section>;
 }
 
-function StatusDot({ generation }) { return <span className={`generation-dot generation-${generation.toLowerCase()}`} title={generation} />; }
+function StatusDot({ status }) {
+  const label = STATUS_LABELS[status] || status;
+  const className = STATUS_DOT_CLASSES[status] || "draft-status-desconhecido";
+  return <span className={`draft-status-dot ${className}`} title={`Status da minuta: ${label}`} aria-label={`Status da minuta: ${label}`} />;
+}
 function typeLabel(value) { return TYPES.find(([type]) => type === value)?.[1] || value; }
 function formatDateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : ""; }

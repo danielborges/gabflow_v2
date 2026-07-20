@@ -40,3 +40,10 @@ Funcionalidade: Assistente RAG
     Quando a fonte for recuperada
     Então o texto deve ser tratado apenas como conteúdo
     E a instrução contida na fonte deve ser ignorada
+    E o trecho retornado deve sinalizar o risco e omitir a instrução maliciosa
+
+  Cenário: Avaliar e corrigir resposta do assistente
+    Dado que o assistente registrou uma consulta RAG
+    Quando o usuário avaliar a resposta como positiva, negativa ou corrigida
+    Então o sistema deve preservar a avaliação, comentário e resposta corrigida
+    E deve registrar quem revisou e quando a revisão ocorreu

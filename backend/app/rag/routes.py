@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import date
 from urllib.parse import urlsplit
@@ -11,12 +12,16 @@ from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.extensions import db
 from app.models import (
+    RagAssistantQuery,
     RagDocument,
     RagDocumentAccess,
     RagDocumentLifecycle,
     RagDocumentVersion,
     RagIngestionStatus,
+    RagQueryFeedbackRating,
+    utc_now,
 )
+from app.rag.retrieval import answer_query, query_audit_payload
 from app.rag.service import enqueue_ingestion, requeue_ingestion
 from app.rag.storage import RagStorageError, rag_document_path, store_rag_document
 
@@ -245,6 +250,99 @@ def download_version(document_id: uuid.UUID, version_id: uuid.UUID):
     )
 
 
+@rag_bp.post("/assistente/consultas")
+@jwt_required()
+def create_assistant_query():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        answer = answer_query(
+            tenant_id,
+            get_jwt().get("role"),
+            str(payload.get("consulta", "")),
+            payload.get("limite"),
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    query = RagAssistantQuery(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        query_text=answer["consulta"],
+        query_hash=hashlib.sha256(answer["consulta"].encode("utf-8")).hexdigest(),
+        response=answer["resposta"],
+        sources=answer["fontes"],
+        safety_flags=answer["seguranca"],
+        grounded=answer["fundamentada"],
+        refused=answer["recusaConclusiva"],
+        evidence_threshold=answer["limiarEvidencia"],
+        embedding_model=answer["modeloEmbedding"],
+        fallback_used=answer["fallbackUtilizado"],
+    )
+    db.session.add(query)
+    db.session.flush()
+    answer["id"] = str(query.id)
+    answer["avaliacao"] = None
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_assistant.queried",
+        "rag_assistant_query",
+        query.id,
+        after=query_audit_payload(answer),
+    )
+    db.session.commit()
+    return jsonify(answer)
+
+
+@rag_bp.patch("/assistente/consultas/<uuid:query_id>/avaliacao")
+@jwt_required()
+def review_assistant_query(query_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _assistant_query(tenant_id, query_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Consulta RAG não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        rating = RagQueryFeedbackRating(str(payload.get("avaliacao", "")).upper())
+        comment = _optional_text(payload.get("comentario"), 2000, "Comentário")
+        corrected_response = _optional_text(
+            payload.get("respostaCorrigida"), 10000, "Resposta corrigida"
+        )
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    if rating == RagQueryFeedbackRating.CORRIGIDA and not corrected_response:
+        return jsonify(
+            error="validation_error",
+            message="Informe a resposta corrigida para uma avaliação corrigida.",
+        ), 422
+    before = {
+        "avaliacao": item.feedback_rating.value if item.feedback_rating else None,
+        "comentario": item.feedback_comment,
+        "possuiCorrecao": bool(item.corrected_response),
+    }
+    item.feedback_rating = rating
+    item.feedback_comment = comment
+    item.corrected_response = corrected_response
+    item.reviewed_by_id = user_id
+    item.reviewed_at = utc_now()
+    after = {
+        "avaliacao": item.feedback_rating.value,
+        "comentario": item.feedback_comment,
+        "possuiCorrecao": bool(item.corrected_response),
+    }
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_assistant.feedback_recorded",
+        "rag_assistant_query",
+        item.id,
+        before=before,
+        after=after,
+    )
+    db.session.commit()
+    return jsonify(assistant_query_data(item))
+
+
 def document_data(item: RagDocument, include_versions: bool) -> dict:
     versions = sorted(item.versions, key=lambda value: value.version_number, reverse=True)
     data = {
@@ -357,4 +455,44 @@ def _can_access(item: RagDocument) -> bool:
     return item.access_level == RagDocumentAccess.INTERNO or get_jwt().get("role") in {
         "admin",
         "manager",
+    }
+
+
+def _assistant_query(tenant_id: uuid.UUID, query_id: uuid.UUID) -> RagAssistantQuery | None:
+    return db.session.execute(
+        select(RagAssistantQuery).where(
+            RagAssistantQuery.id == query_id,
+            RagAssistantQuery.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _optional_text(value: object, max_length: int, label: str) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) > max_length:
+        raise ValueError(f"{label} deve ter no máximo {max_length} caracteres.")
+    return text
+
+
+def assistant_query_data(item: RagAssistantQuery) -> dict:
+    return {
+        "id": str(item.id),
+        "consulta": item.query_text,
+        "resposta": item.response,
+        "fontes": item.sources,
+        "seguranca": item.safety_flags,
+        "fundamentada": item.grounded,
+        "recusaConclusiva": item.refused,
+        "limiarEvidencia": item.evidence_threshold,
+        "modeloEmbedding": item.embedding_model,
+        "fallbackUtilizado": item.fallback_used,
+        "avaliacao": item.feedback_rating.value if item.feedback_rating else None,
+        "comentario": item.feedback_comment,
+        "respostaCorrigida": item.corrected_response,
+        "revisadaEm": item.reviewed_at.isoformat() if item.reviewed_at else None,
+        "criadaEm": item.created_at.isoformat(),
     }

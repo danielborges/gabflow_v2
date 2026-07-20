@@ -592,9 +592,11 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .legislative-item span { display: grid; gap: 5px; min-width: 0; }
 .legislative-item strong { overflow: hidden; font-size: .79rem; text-overflow: ellipsis; white-space: nowrap; }
 .legislative-item small { color: var(--muted); font-size: .68rem; }
-.generation-dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #94a3b8; }
-.generation-concluida { background: #059669; }
-.generation-falhou { background: #dc2626; }
+.draft-status-dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #94a3b8; box-shadow: 0 0 0 3px #94a3b826; }
+.draft-status-rascunho { background: #d97706; box-shadow: 0 0 0 3px #d9770626; }
+.draft-status-em-revisao { background: #2563eb; box-shadow: 0 0 0 3px #2563eb24; }
+.draft-status-aprovada { background: #059669; box-shadow: 0 0 0 3px #05966924; }
+.draft-status-rejeitada { background: #dc2626; box-shadow: 0 0 0 3px #dc262624; }
 .generation-pendente, .generation-processando { background: #d97706; }
 .legislative-editor-area { min-width: 0; overflow: auto; background: white; }
 .legislative-empty, .legislative-processing { min-height: 420px; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 30px; color: var(--muted); text-align: center; }

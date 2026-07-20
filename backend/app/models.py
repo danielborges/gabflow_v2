@@ -140,6 +140,12 @@ class RagIngestionStatus(str, enum.Enum):
     FALHOU = "FALHOU"
 
 
+class RagQueryFeedbackRating(str, enum.Enum):
+    POSITIVA = "POSITIVA"
+    NEGATIVA = "NEGATIVA"
+    CORRIGIDA = "CORRIGIDA"
+
+
 class NotificationType(str, enum.Enum):
     ATRIBUICAO = "ATRIBUICAO"
     TAREFA = "TAREFA"
@@ -1170,6 +1176,40 @@ class RagChunk(db.Model):
     )
 
     version: Mapped[RagDocumentVersion] = relationship(back_populates="chunks")
+
+
+class RagAssistantQuery(db.Model):
+    __tablename__ = "rag_assistant_queries"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    query_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    response: Mapped[str] = mapped_column(Text, nullable=False)
+    sources: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    safety_flags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    grounded: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    refused: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    evidence_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    feedback_rating: Mapped[RagQueryFeedbackRating | None] = mapped_column(
+        Enum(RagQueryFeedbackRating, name="rag_query_feedback_rating"), index=True
+    )
+    feedback_comment: Mapped[str | None] = mapped_column(Text)
+    corrected_response: Mapped[str | None] = mapped_column(Text)
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
 
 
 class LegislativeDraft(db.Model):

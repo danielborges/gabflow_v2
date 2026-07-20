@@ -45,6 +45,53 @@ it("apresenta minuta, fundamentação pendente e protocolo somente manual", asyn
   ));
 });
 
+it("usa cores diferentes para o indicador de status da minuta na lista", async () => {
+  const approved = {
+    id: "draft-approved",
+    tipo: "REQUERIMENTO",
+    status: "APROVADA",
+    statusGeracao: "CONCLUIDA",
+    titulo: "Requerimento aprovado",
+    versaoAtual: 1,
+    protocolo: null,
+    conteudo: "Conteúdo aprovado.",
+    justificativa: "Justificativa.",
+    trechosSemFundamentacao: [],
+    fontes: [],
+    proposicoesSemelhantes: [],
+  };
+  const draft = {
+    id: "draft-draft",
+    tipo: "INDICACAO",
+    status: "RASCUNHO",
+    statusGeracao: "CONCLUIDA",
+    titulo: "Indicação em rascunho",
+    versaoAtual: 1,
+    protocolo: null,
+    conteudo: "Conteúdo em edição.",
+    justificativa: "Justificativa.",
+    trechosSemFundamentacao: [],
+    fontes: [],
+    proposicoesSemelhantes: [],
+  };
+  vi.spyOn(global, "fetch").mockImplementation(async (url) => {
+    const path = String(url);
+    const body = path.includes("/templates")
+      ? { content: [] }
+      : path.endsWith("/draft-approved")
+        ? approved
+        : path.endsWith("/draft-draft")
+          ? draft
+          : { content: [approved, draft] };
+    return { ok: true, json: async () => body };
+  });
+
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} />);
+
+  expect(await screen.findByLabelText("Status da minuta: Aprovada")).toHaveClass("draft-status-aprovada");
+  expect(screen.getByLabelText("Status da minuta: Rascunho")).toHaveClass("draft-status-rascunho");
+});
+
 it("apresenta a timeline e registra um novo andamento legislativo", async () => {
   let draft = {
     id: "draft-2",
@@ -297,7 +344,9 @@ it("compara e restaura versões preservando o histórico", async () => {
   fireEvent.click(await screen.findByText("Iluminação revisada"));
 
   expect(await screen.findByText("Histórico de versões")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Comparar" }));
+  const compareButton = screen.getByRole("button", { name: "Comparar" });
+  await waitFor(() => expect(compareButton).toBeEnabled());
+  fireEvent.click(compareButton);
   expect(await screen.findByText("Versão 1 → versão 2")).toBeInTheDocument();
   expect(screen.getByText("+ Solicita a troca das luminárias.")).toBeInTheDocument();
 

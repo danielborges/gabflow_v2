@@ -1134,6 +1134,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RagAnswer"
+  /assistente/consultas/{consultaId}/avaliacao:
+    patch:
+      summary: Registra avaliação ou correção humana de uma resposta RAG
+      parameters:
+        - in: path
+          name: consultaId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagQueryFeedbackRequest"
+      responses:
+        "200":
+          description: Avaliação registrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagAnswer"
+        "404":
+          description: Consulta não encontrada
+        "422":
+          description: Avaliação inválida
   /insights:
     get:
       summary: Lista insights disponíveis
@@ -1829,46 +1856,152 @@ components:
         registradaEm: { type: string, format: date-time }
     RagQueryRequest:
       type: object
-      required: [pergunta]
+      required: [consulta]
       properties:
-        pergunta:
+        consulta:
           type: string
-        colecoes:
-          type: array
-          items:
-            type: string
-        filtros:
-          type: object
-          additionalProperties: true
+          minLength: 3
+          maxLength: 2000
+        limite:
+          type: integer
+          minimum: 1
+          maximum: 10
+    RagQueryFeedbackRequest:
+      type: object
+      required: [avaliacao]
+      properties:
+        avaliacao:
+          type: string
+          enum: [POSITIVA, NEGATIVA, CORRIGIDA]
+        comentario:
+          type: string
+          maxLength: 2000
+        respostaCorrigida:
+          type: string
+          maxLength: 10000
     RagAnswer:
       type: object
-      required: [resposta, fontes, grounded]
+      required: [id, consulta, resposta, fontes, fundamentada, recusaConclusiva]
       properties:
+        id:
+          type: string
+          format: uuid
+        consulta:
+          type: string
         resposta:
           type: string
-        grounded:
+        fundamentada:
           type: boolean
-        confianca:
+        recusaConclusiva:
+          type: boolean
+        conteudoTratadoComoDado:
+          type: boolean
+        limiarEvidencia:
           type: number
-          minimum: 0
-          maximum: 1
+        modeloEmbedding:
+          type: string
+        fallbackUtilizado:
+          type: boolean
+        erroFallback:
+          type: string
+          nullable: true
+        avaliacao:
+          type: string
+          nullable: true
+          enum: [POSITIVA, NEGATIVA, CORRIGIDA]
+        comentario:
+          type: string
+          nullable: true
+        respostaCorrigida:
+          type: string
+          nullable: true
+        seguranca:
+          type: object
+          required: [promptInjectionDetectado, fontesComRisco, politica]
+          properties:
+            promptInjectionDetectado:
+              type: boolean
+            fontesComRisco:
+              type: array
+              items:
+                type: object
+                properties:
+                  documentoId: { type: string, format: uuid }
+                  versaoId: { type: string, format: uuid }
+            politica:
+              type: string
         fontes:
           type: array
           items:
             type: object
-            required: [documentoId, titulo, trecho]
+            required: [documentoId, versaoId, titulo, trecho, pontuacao]
             properties:
               documentoId:
                 type: string
                 format: uuid
+              versaoId:
+                type: string
+                format: uuid
               titulo:
                 type: string
+              tipo:
+                type: string
+              orgao:
+                type: string
+                nullable: true
+              nivelAcesso:
+                type: string
+                enum: [INTERNO, RESTRITO]
               trecho:
                 type: string
-              pagina:
+              paginaInicio:
                 type: integer
+                nullable: true
+              paginaFim:
+                type: integer
+                nullable: true
+              secao:
+                type: string
+                nullable: true
               versao:
                 type: string
+              estado:
+                type: string
+              vigenteDesde:
+                type: string
+                format: date
+                nullable: true
+              vigenteAte:
+                type: string
+                format: date
+                nullable: true
+              urlFonte:
+                type: string
+                nullable: true
+              pontuacao:
+                type: number
+              similaridadeSemantica:
+                type: number
+              similaridadeLexical:
+                type: number
+              justificativas:
+                type: array
+                items:
+                  type: string
+              checksum:
+                type: string
+              checksumDocumento:
+                type: string
+              modeloEmbedding:
+                type: string
+              riscoPromptInjection:
+                type: boolean
+              conteudoSanitizado:
+                type: boolean
+              instrucoesIgnoradas:
+                type: array
+                items:
+                  type: string
     Insight:
       type: object
       properties:
