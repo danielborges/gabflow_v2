@@ -10,7 +10,7 @@
 | RF-053 | Registro de ata, fotos, participantes e pendencias de visitas e compromissos |
 | RF-054 | Criacao de solicitacao a partir de visita realizada, com origem `VISITA` |
 | Release 6 - WhatsApp | Caixa de entrada tenant-safe para mensagens WhatsApp, webhook governado por integracao ativa e conversao humana em solicitacao |
-| Release 6 - E-mail | Caixa de entrada tenant-safe para mensagens de e-mail e resposta por e-mail ja integrada ao outbox/Resend quando configurado |
+| Release 6 - E-mail | Caixa de entrada tenant-safe para mensagens de e-mail, inbound real via webhook Resend assinado com Svix e resposta por e-mail ja integrada ao outbox/Resend quando configurado |
 | Release 6 - Formulario publico | Formulario publico por slug do tenant, controlado por integracao ativa e com criacao direta de solicitacao |
 | Release 6 - Redes sociais | Caixa de entrada tenant-safe para mensagens de redes sociais e conversao humana em solicitacao |
 | RF-070 | Cadastro de acao de fiscalizacao |
@@ -29,7 +29,7 @@
 5. O usuario registra uma fiscalizacao com achados, responsaveis, fotos e providencias.
 6. A fiscalizacao pode ser atualizada ate conclusao e seu relatorio fica disponivel para consulta.
 7. Gestores configuram integracoes como WhatsApp, e-mail, formulario publico, redes sociais, sistemas legislativos e protocolos externos.
-8. Mensagens de WhatsApp, e-mail e redes sociais entram na caixa de canais por registro manual ou webhook.
+8. Mensagens de WhatsApp, e-mail e redes sociais entram na caixa de canais por registro manual ou webhook; e-mails Resend entram por endpoint dedicado com validacao de assinatura.
 9. O usuario revisa cada mensagem recebida e decide se ela deve virar solicitacao.
 10. O formulario publico cria solicitacoes diretamente quando a integracao `FORMULARIO_PUBLICO` esta ativa.
 
@@ -54,7 +54,7 @@
 
 ## Limites desta entrega
 
-- Integracoes ficam configuraveis e auditadas, mas os conectores externos de envio/recebimento ainda dependem de provedores especificos.
-- Webhooks multicanal recebem payloads normalizados; validacao de assinatura por provedor deve ser adicionada junto a cada conector real.
-- WhatsApp, e-mail e redes sociais estao operacionais como inbox governada; automacoes especificas de cada provedor ficam para incrementos de integracao.
+- Integracoes ficam configuraveis e auditadas; envio de e-mail e inbound Resend ja possuem conector especifico quando credenciais e webhook secret estao configurados.
+- Webhooks multicanal recebem payloads normalizados; WhatsApp e redes sociais ainda aguardam validacao de assinatura especifica por provedor.
+- WhatsApp e redes sociais estao operacionais como inbox governada; automacoes especificas de cada provedor ficam para incrementos de integracao.
 - Fotos em agenda e fiscalizacao sao metadados estruturados; upload binario dedicado pode reutilizar o subsistema de anexos em uma proxima fatia.

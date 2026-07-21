@@ -1,15 +1,21 @@
 import uuid
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.audit import add_audit
 from app.auth.permissions import roles_required
-from app.communications.email import email_idempotency_key
+from app.communications.email import (
+    WebhookVerificationError,
+    email_idempotency_key,
+    retrieve_received_email,
+    verify_resend_webhook,
+)
 from app.communications.service import (
     ALLOWED_CHANNELS,
     CommunicationValidationError,
@@ -231,6 +237,107 @@ def receive_channel_webhook(tenant_slug: str, channel: str):
     return jsonify(id=str(item.id), status=item.status.value), 202
 
 
+@communications_bp.post("/canais/webhooks/<tenant_slug>/email/resend")
+@limiter.limit("30 per minute")
+def receive_resend_inbound_email(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant nÃ£o encontrado."), 404
+    integration = db.session.execute(
+        select(IntegrationSetting).where(
+            IntegrationSetting.tenant_id == tenant.id,
+            IntegrationSetting.integration_type == IntegrationType.EMAIL,
+            IntegrationSetting.status == IntegrationStatus.ATIVA,
+        )
+    ).scalar_one_or_none()
+    if integration is None:
+        return jsonify(error="validation_error", message="IntegraÃ§Ã£o de e-mail inativa."), 422
+
+    secret = current_app.config.get("RESEND_WEBHOOK_SECRET")
+    if not secret:
+        return jsonify(error="validation_error", message="Webhook Resend nÃ£o configurado."), 422
+
+    try:
+        event = verify_resend_webhook(
+            request.get_data(cache=True),
+            request.headers,
+            secret,
+            tolerance_seconds=current_app.config["RESEND_WEBHOOK_TOLERANCE_SECONDS"],
+        )
+    except WebhookVerificationError as error:
+        return jsonify(error="invalid_signature", message=str(error)), 400
+
+    if event.get("type") != "email.received":
+        return jsonify(status="ignored", eventType=event.get("type")), 202
+
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    email_id = str(data.get("email_id") or data.get("id") or "").strip()
+    if not email_id:
+        return jsonify(error="validation_error", message="Evento sem identificador de e-mail."), 422
+
+    existing = db.session.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.tenant_id == tenant.id,
+            ChannelMessage.channel == RequestSource.EMAIL,
+            ChannelMessage.external_id == email_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return (
+            jsonify(id=str(existing.id), status=existing.status.value, duplicado=True),
+            200,
+        )
+
+    received_email = retrieve_received_email(email_id) or {}
+    subject = str(received_email.get("subject") or data.get("subject") or "").strip() or None
+    sender = _first_email_value(received_email.get("from") or data.get("from"))
+    content = _resend_email_content(received_email, data)
+    metadata = {
+        "provider": "resend",
+        "eventType": event.get("type"),
+        "emailId": email_id,
+        "messageId": data.get("message_id") or received_email.get("message_id"),
+        "to": received_email.get("to") or data.get("to"),
+        "cc": received_email.get("cc") or data.get("cc"),
+        "bcc": received_email.get("bcc") or data.get("bcc"),
+        "attachments": [
+            {
+                "id": attachment.get("id"),
+                "filename": attachment.get("filename"),
+                "contentType": attachment.get("content_type"),
+                "size": attachment.get("size"),
+            }
+            for attachment in received_email.get("attachments", [])
+            if isinstance(attachment, dict)
+        ],
+    }
+    item = ChannelMessage(
+        tenant_id=tenant.id,
+        channel=RequestSource.EMAIL,
+        status=ChannelMessageStatus.RECEBIDA,
+        sender_name=sender,
+        sender_contact=sender,
+        subject=subject,
+        content=content,
+        external_id=email_id,
+        metadata_data={key: value for key, value in metadata.items() if value},
+    )
+    db.session.add(item)
+    db.session.flush()
+    add_audit(
+        tenant.id,
+        None,
+        "channel.email.resend.received",
+        "channel_message",
+        item.id,
+        after={"canal": RequestSource.EMAIL.value, "idExterno": item.external_id},
+    )
+    db.session.commit()
+    return jsonify(id=str(item.id), status=item.status.value), 202
+
+
 @communications_bp.post("/canais/mensagens/<uuid:message_id>/solicitacao")
 @jwt_required()
 def convert_channel_message(message_id: uuid.UUID):
@@ -439,6 +546,46 @@ def _create_channel_message(
     db.session.add(item)
     db.session.flush()
     return item, None
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if text:
+            self.parts.append(text)
+
+    def text(self) -> str:
+        return " ".join(self.parts)
+
+
+def _html_to_text(value) -> str:
+    if not value:
+        return ""
+    parser = _HTMLTextExtractor()
+    parser.feed(str(value))
+    return parser.text()
+
+
+def _first_email_value(value) -> str | None:
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return str(value or "").strip() or None
+
+
+def _resend_email_content(received_email: dict, data: dict) -> str:
+    content = (
+        received_email.get("text")
+        or data.get("text")
+        or _html_to_text(received_email.get("html") or data.get("html"))
+        or received_email.get("subject")
+        or data.get("subject")
+        or "E-mail recebido sem corpo disponÃ­vel."
+    )
+    return str(content).strip()
 
 
 @communications_bp.get("/admin/templates-resposta")

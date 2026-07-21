@@ -46,6 +46,8 @@ class Config:
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL")
     RESEND_TIMEOUT_SECONDS = int(os.getenv("RESEND_TIMEOUT_SECONDS", "10"))
+    RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET")
+    RESEND_WEBHOOK_TOLERANCE_SECONDS = int(os.getenv("RESEND_WEBHOOK_TOLERANCE_SECONDS", "300"))
     WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
     WORKER_BATCH_SIZE = int(os.getenv("WORKER_BATCH_SIZE", "20"))
     WORKER_MAX_ATTEMPTS = int(os.getenv("WORKER_MAX_ATTEMPTS", "5"))
@@ -146,6 +148,7 @@ class TestConfig(Config):
     SENTRY_DSN = None
     RESEND_API_KEY = None
     RESEND_FROM_EMAIL = None
+    RESEND_WEBHOOK_SECRET = None
     AI_TRIAGE_PROVIDER = "local"
     AI_TRIAGE_MODEL = "gabflow-triage-rules-v1"
     AI_TRIAGE_FALLBACK_MODEL = "gabflow-triage-rules-v1"

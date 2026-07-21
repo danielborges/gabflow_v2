@@ -1,3 +1,8 @@
+import base64
+import hashlib
+import hmac
+import json
+import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -228,3 +233,85 @@ def test_channel_inbox_webhook_conversion_and_public_form(app, client):
         messages = db.session.execute(select(ChannelMessage)).scalars().all()
         assert {item.channel.value for item in messages} == {"WHATSAPP", "FORMULARIO"}
         assert any(item.request_id for item in messages)
+
+
+def test_resend_inbound_webhook_verifies_signature_and_deduplicates(app, client):
+    secret = "whsec_" + base64.b64encode(b"test-resend-secret").decode("utf-8").rstrip("=")
+    app.config["RESEND_WEBHOOK_SECRET"] = secret
+    auth = login(client)
+    email_integration = post(
+        client,
+        "/api/v1/admin/integracoes",
+        auth["csrf"],
+        {
+            "tipo": "EMAIL",
+            "status": "ATIVA",
+            "nome": "Resend inbound",
+            "configuracao": {"provedor": "resend"},
+        },
+    )
+    assert email_integration.status_code == 201
+
+    payload = {
+        "type": "email.received",
+        "data": {
+            "email_id": "email_inbound_123",
+            "message_id": "<message-123@example.org>",
+            "from": "Maria <maria@example.org>",
+            "to": ["gabinete@gabflow.local"],
+            "subject": "Buraco na rua",
+            "text": "Relato recebido por e-mail com detalhes suficientes.",
+        },
+    }
+    raw_body, headers = _svix_headers(secret, payload)
+    received = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/email/resend",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert received.status_code == 202
+
+    duplicate = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/email/resend",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json["duplicado"] is True
+
+    bad_signature = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/email/resend",
+        data=raw_body,
+        headers={**headers, "svix-signature": "v1,invalida"},
+        content_type="application/json",
+    )
+    assert bad_signature.status_code == 400
+
+    with app.app_context():
+        messages = db.session.execute(select(ChannelMessage)).scalars().all()
+        assert len(messages) == 1
+        assert messages[0].channel.value == "EMAIL"
+        assert messages[0].external_id == "email_inbound_123"
+        assert messages[0].content == "Relato recebido por e-mail com detalhes suficientes."
+        assert messages[0].metadata_data["provider"] == "resend"
+
+
+def _svix_headers(secret: str, payload: dict):
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    message_id = "msg_test"
+    timestamp = str(int(time.time()))
+    secret_value = secret.removeprefix("whsec_")
+    key = base64.b64decode(secret_value + "=" * (-len(secret_value) % 4))
+    signed_content = b".".join(
+        [message_id.encode("utf-8"), timestamp.encode("utf-8"), raw_body]
+    )
+    signature = base64.b64encode(
+        hmac.new(key, signed_content, hashlib.sha256).digest()
+    ).decode("utf-8")
+    return raw_body, {
+        "svix-id": message_id,
+        "svix-timestamp": timestamp,
+        "svix-signature": f"v1,{signature}",
+    }
