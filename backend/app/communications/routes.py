@@ -24,6 +24,11 @@ from app.communications.service import (
     template_data,
     validate_template_body,
 )
+from app.communications.whatsapp import (
+    WhatsAppWebhookError,
+    extract_whatsapp_messages,
+    verify_meta_signature,
+)
 from app.extensions import db, limiter
 from app.models import (
     ChannelMessage,
@@ -338,6 +343,107 @@ def receive_resend_inbound_email(tenant_slug: str):
     return jsonify(id=str(item.id), status=item.status.value), 202
 
 
+@communications_bp.get("/canais/webhooks/<tenant_slug>/whatsapp/meta")
+@limiter.limit("30 per minute")
+def verify_whatsapp_webhook(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant nÃ£o encontrado."), 404
+    integration = _active_integration(tenant.id, IntegrationType.WHATSAPP)
+    if integration is None:
+        return jsonify(error="validation_error", message="IntegraÃ§Ã£o WhatsApp inativa."), 422
+
+    verify_token = current_app.config.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+    mode = request.args.get("hub.mode")
+    challenge = request.args.get("hub.challenge")
+    if not verify_token:
+        return jsonify(error="validation_error", message="Webhook WhatsApp nÃ£o configurado."), 422
+    if mode == "subscribe" and request.args.get("hub.verify_token") == verify_token and challenge:
+        return challenge, 200, {"Content-Type": "text/plain"}
+    return jsonify(error="invalid_token", message="Token de verificaÃ§Ã£o invÃ¡lido."), 403
+
+
+@communications_bp.post("/canais/webhooks/<tenant_slug>/whatsapp/meta")
+@limiter.limit("30 per minute")
+def receive_whatsapp_business_webhook(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant nÃ£o encontrado."), 404
+    integration = _active_integration(tenant.id, IntegrationType.WHATSAPP)
+    if integration is None:
+        return jsonify(error="validation_error", message="IntegraÃ§Ã£o WhatsApp inativa."), 422
+
+    app_secret = current_app.config.get("META_APP_SECRET")
+    if not app_secret:
+        return jsonify(error="validation_error", message="Webhook WhatsApp nÃ£o configurado."), 422
+
+    raw_body = request.get_data(cache=True)
+    try:
+        verify_meta_signature(raw_body, request.headers.get("X-Hub-Signature-256"), app_secret)
+    except WhatsAppWebhookError as error:
+        return jsonify(error="invalid_signature", message=str(error)), 400
+
+    payload = request.get_json(silent=True) or {}
+    expected_phone_number_id = str(integration.config.get("phoneNumberId") or "").strip()
+    items = []
+    duplicated = 0
+    for message in extract_whatsapp_messages(payload):
+        if (
+            expected_phone_number_id
+            and str(message.get("phoneNumberId") or "") != expected_phone_number_id
+        ):
+            continue
+        existing = db.session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.tenant_id == tenant.id,
+                ChannelMessage.channel == RequestSource.WHATSAPP,
+                ChannelMessage.external_id == message["id"],
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            duplicated += 1
+            continue
+        item = ChannelMessage(
+            tenant_id=tenant.id,
+            channel=RequestSource.WHATSAPP,
+            status=ChannelMessageStatus.RECEBIDA,
+            sender_name=message.get("senderName"),
+            sender_contact=message.get("from"),
+            subject="WhatsApp Business",
+            content=message["content"],
+            external_id=message["id"],
+            metadata_data={
+                "provider": "meta_whatsapp_cloud_api",
+                "messageType": message.get("type"),
+                "phoneNumberId": message.get("phoneNumberId"),
+                "displayPhoneNumber": message.get("displayPhoneNumber"),
+                "timestamp": message.get("timestamp"),
+                "raw": message.get("raw"),
+            },
+        )
+        db.session.add(item)
+        db.session.flush()
+        add_audit(
+            tenant.id,
+            None,
+            "channel.whatsapp.meta.received",
+            "channel_message",
+            item.id,
+            after={"canal": RequestSource.WHATSAPP.value, "idExterno": item.external_id},
+        )
+        items.append(item)
+
+    if items:
+        db.session.commit()
+    else:
+        db.session.rollback()
+    return jsonify(recebidas=len(items), duplicadas=duplicated), 202
+
+
 @communications_bp.post("/canais/mensagens/<uuid:message_id>/solicitacao")
 @jwt_required()
 def convert_channel_message(message_id: uuid.UUID):
@@ -516,6 +622,16 @@ def _tenant_receiver_user_id(tenant_id: uuid.UUID) -> uuid.UUID:
     if user is None:
         raise CommunicationValidationError("Tenant não possui usuário ativo para receber demandas.")
     return user.id
+
+
+def _active_integration(tenant_id: uuid.UUID, integration_type: IntegrationType):
+    return db.session.execute(
+        select(IntegrationSetting).where(
+            IntegrationSetting.tenant_id == tenant_id,
+            IntegrationSetting.integration_type == integration_type,
+            IntegrationSetting.status == IntegrationStatus.ATIVA,
+        )
+    ).scalar_one_or_none()
 
 
 def _create_channel_message(

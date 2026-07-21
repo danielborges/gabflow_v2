@@ -298,6 +298,111 @@ def test_resend_inbound_webhook_verifies_signature_and_deduplicates(app, client)
         assert messages[0].metadata_data["provider"] == "resend"
 
 
+def test_whatsapp_business_webhook_verifies_meta_signature_and_deduplicates(app, client):
+    app_secret = "meta-" + "app-secret"
+    verify_token = "verify-" + "token"
+    app.config["META_APP_SECRET"] = app_secret
+    app.config["WHATSAPP_WEBHOOK_VERIFY_TOKEN"] = verify_token
+    auth = login(client)
+    whatsapp = post(
+        client,
+        "/api/v1/admin/integracoes",
+        auth["csrf"],
+        {
+            "tipo": "WHATSAPP",
+            "status": "ATIVA",
+            "nome": "WhatsApp Business Cloud API",
+            "configuracao": {
+                "phoneNumberId": "123456789",
+                "displayPhoneNumber": "+5532999999999",
+                "accessToken": "segredo",
+            },
+        },
+    )
+    assert whatsapp.status_code == 201
+    assert whatsapp.json["segredosConfigurados"] is True
+
+    verification = client.get(
+        "/api/v1/canais/webhooks/gabinete-a/whatsapp/meta",
+        query_string={
+            "hub.mode": "subscribe",
+            "hub.verify_token": verify_token,
+            "hub.challenge": "challenge-123",
+        },
+    )
+    assert verification.status_code == 200
+    assert verification.text == "challenge-123"
+
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "waba-1",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {
+                                "display_phone_number": "5532999999999",
+                                "phone_number_id": "123456789",
+                            },
+                            "contacts": [
+                                {"profile": {"name": "Joao Silva"}, "wa_id": "553288888888"}
+                            ],
+                            "messages": [
+                                {
+                                    "from": "553288888888",
+                                    "id": "wamid.HBgMNTUzMgAB",
+                                    "timestamp": "1710000000",
+                                    "text": {"body": "Preciso avisar sobre uma arvore caída."},
+                                    "type": "text",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    raw_body, headers = _meta_headers(app_secret, payload)
+    received = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/whatsapp/meta",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert received.status_code == 202
+    assert received.json == {"duplicadas": 0, "recebidas": 1}
+
+    duplicate = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/whatsapp/meta",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert duplicate.status_code == 202
+    assert duplicate.json == {"duplicadas": 1, "recebidas": 0}
+
+    bad_signature = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/whatsapp/meta",
+        data=raw_body,
+        headers={"X-Hub-Signature-256": "sha256=invalida"},
+        content_type="application/json",
+    )
+    assert bad_signature.status_code == 400
+
+    with app.app_context():
+        messages = db.session.execute(select(ChannelMessage)).scalars().all()
+        assert len(messages) == 1
+        assert messages[0].channel.value == "WHATSAPP"
+        assert messages[0].sender_name == "Joao Silva"
+        assert messages[0].sender_contact == "553288888888"
+        assert messages[0].external_id == "wamid.HBgMNTUzMgAB"
+        assert messages[0].content == "Preciso avisar sobre uma arvore caída."
+        assert messages[0].metadata_data["provider"] == "meta_whatsapp_cloud_api"
+
+
 def _svix_headers(secret: str, payload: dict):
     raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     message_id = "msg_test"
@@ -315,3 +420,9 @@ def _svix_headers(secret: str, payload: dict):
         "svix-timestamp": timestamp,
         "svix-signature": f"v1,{signature}",
     }
+
+
+def _meta_headers(app_secret: str, payload: dict):
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    signature = hmac.new(app_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return raw_body, {"X-Hub-Signature-256": f"sha256={signature}"}

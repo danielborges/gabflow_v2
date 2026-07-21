@@ -257,7 +257,17 @@ def upsert_integration():
 
 
 def _sanitize_integration_config(config: dict) -> tuple[dict, bool]:
-    secret_names = {"token", "secret", "senha", "password", "apiKey", "api_key", "clientSecret"}
+    secret_names = {
+        "token",
+        "secret",
+        "senha",
+        "password",
+        "apiKey",
+        "api_key",
+        "accessToken",
+        "access_token",
+        "clientSecret",
+    }
     public_config = {}
     has_secret = False
     for key, value in config.items():
