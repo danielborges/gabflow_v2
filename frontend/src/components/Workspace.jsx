@@ -10,7 +10,6 @@ import {
   LogOut,
   MessagesSquare,
   Menu,
-  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -22,6 +21,7 @@ import { AgendaPage } from "./AgendaPage";
 import { AIQualityPage } from "./AIQualityPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { DirectoryPage } from "./DirectoryPage";
+import { GlobalSearch } from "./GlobalSearch";
 import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
 import { OperationalDashboard } from "./OperationalDashboard";
@@ -47,6 +47,15 @@ const navigation = [
 export function Workspace({ user, onLogout }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState("requests");
+  const [requestSearch, setRequestSearch] = useState("");
+
+  function openSearchResult(item) {
+    if (item.view === "requests" && item.pesquisa) {
+      setRequestSearch(item.pesquisa);
+    }
+    setActiveView(item.view || "requests");
+    setMenuOpen(false);
+  }
 
   return (
     <div className="workspace">
@@ -107,10 +116,7 @@ export function Workspace({ user, onLogout }) {
           <button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Abrir menu">
             <Menu size={21} />
           </button>
-          <div className="search-box">
-            <Search size={18} aria-hidden="true" />
-            <input aria-label="Pesquisar" placeholder="Pesquisar no GabFlow" disabled />
-          </div>
+          <GlobalSearch onOpen={openSearchResult} />
           <div className="user-summary">
             <span className="avatar">{user.name.slice(0, 2).toUpperCase()}</span>
             <span><strong>{user.name}</strong><small>{user.tenant.name}</small></span>
@@ -121,7 +127,7 @@ export function Workspace({ user, onLogout }) {
           </button>
         </header>
 
-        {activeView === "requests" && <RequestsPage user={user} />}
+        {activeView === "requests" && <RequestsPage user={user} initialSearch={requestSearch} />}
         {activeView === "agenda" && <AgendaPage />}
         {activeView === "oversight" && <OversightPage />}
         {activeView === "channels" && <ChannelsPage />}

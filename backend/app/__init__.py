@@ -35,6 +35,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.rag.routes import rag_bp
     from app.requests.operations import request_ops_bp
     from app.requests.routes import requests_bp
+    from app.search.routes import search_bp
 
     register_commands(app)
     app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
@@ -52,6 +53,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(rag_bp, url_prefix="/api/v1")
     app.register_blueprint(agenda_bp, url_prefix="/api/v1")
     app.register_blueprint(oversight_bp, url_prefix="/api/v1")
+    app.register_blueprint(search_bp, url_prefix="/api/v1")
     app.register_blueprint(public_bp, url_prefix="/api/v1")
 
     @app.errorhandler(404)

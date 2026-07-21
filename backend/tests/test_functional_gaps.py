@@ -531,6 +531,29 @@ def test_meta_social_webhook_receives_facebook_and_instagram_events(app, client)
         }
 
 
+def test_global_search_returns_tenant_scoped_results(app, client):
+    auth = login(client)
+    create_service_request(client, auth["csrf"], titulo="Iluminacao da Praca Azul")
+    created = post(
+        client,
+        "/api/v1/fiscalizacoes",
+        auth["csrf"],
+        {
+            "titulo": "Vistoria da Praca Azul",
+            "local": "Praca Azul",
+            "achados": ["Lampadas queimadas"],
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.get("/api/v1/busca?q=Praca%20Azul")
+    assert response.status_code == 200
+    result_types = {item["tipo"] for item in response.json["content"]}
+    assert "SOLICITACAO" in result_types
+    assert "FISCALIZACAO" in result_types
+    assert all(item["view"] in {"requests", "oversight"} for item in response.json["content"])
+
+
 def _svix_headers(secret: str, payload: dict):
     raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     message_id = "msg_test"

@@ -100,8 +100,18 @@ button:disabled { cursor: not-allowed; }
 .security-note { display: flex; align-items: center; gap: 10px; padding: 14px; border-top: 1px solid #ffffff1f; color: #9fcdbf; font-size: 0.8rem; }
 .content { min-width: 0; }
 .topbar { height: 70px; display: flex; align-items: center; gap: 14px; padding: 0 28px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.global-search { position: relative; max-width: 520px; flex: 1; }
 .search-box { max-width: 460px; flex: 1; display: flex; align-items: center; gap: 10px; color: #7a879b; }
 .search-box input { width: 100%; border: 0; outline: 0; background: transparent; }
+.global-search .search-box { max-width: none; }
+.global-search-results { position: absolute; z-index: 30; top: 46px; right: 0; left: 0; max-height: min(460px, calc(100vh - 90px)); overflow-y: auto; border: 1px solid #c9d7e5; border-radius: 7px; background: white; box-shadow: 0 18px 48px #061a4230; }
+.global-search-results button { width: 100%; display: grid; grid-template-columns: 94px minmax(0, 1fr); gap: 3px 10px; padding: 11px 13px; border: 0; border-bottom: 1px solid #eef2f6; color: #263e59; background: white; text-align: left; cursor: pointer; }
+.global-search-results button:last-child { border-bottom: 0; }
+.global-search-results button:hover, .global-search-results button:focus-visible { background: #eef7ff; outline: 0; }
+.global-search-results span { grid-row: span 2; align-self: center; color: var(--blue-600); font-size: .66rem; font-weight: 850; text-transform: uppercase; }
+.global-search-results strong { overflow: hidden; color: var(--ink); font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+.global-search-results small { overflow: hidden; color: var(--muted); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+.global-search-results p { margin: 0; padding: 15px; color: var(--muted); font-size: .78rem; text-align: center; }
 .user-summary { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .user-summary > span:last-child { display: grid; }
 .user-summary strong { font-size: 0.85rem; }

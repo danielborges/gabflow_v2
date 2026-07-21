@@ -71,7 +71,7 @@ const attachmentMimeTypes = [
 ];
 const maximumAttachmentBytes = 15 * 1024 * 1024;
 
-export function RequestsPage() {
+export function RequestsPage({ initialSearch = "" }) {
   const [items, setItems] = useState([]);
   const [references, setReferences] = useState(emptyReferences);
   const [loading, setLoading] = useState(true);
@@ -80,6 +80,10 @@ export function RequestsPage() {
   const [status, setStatus] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    if (initialSearch) setSearch(initialSearch);
+  }, [initialSearch]);
 
   const load = useCallback(async () => {
     setLoading(true);
