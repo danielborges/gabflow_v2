@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 
 const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 let googleMapsPromise;
+let googleMapsCallbackId = 0;
 
 export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
   const inputRef = useRef(null);
   const onChangeRef = useRef(onChange);
-  const [enabled, setEnabled] = useState(false);
+  const [status, setStatus] = useState(googleMapsApiKey ? "loading" : "disabled");
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -30,10 +31,10 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
           const nextValue = place.formatted_address || place.name || inputRef.current.value;
           onChangeRef.current(nextValue);
         });
-        setEnabled(true);
+        setStatus("ready");
       })
       .catch(() => {
-        setEnabled(false);
+        setStatus("error");
       });
 
     return () => {
@@ -51,9 +52,7 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
         onChange={(event) => onChangeRef.current(event.target.value)}
         placeholder={placeholder}
       />
-      {googleMapsApiKey && (
-        <small>{enabled ? "Sugestões do Google Maps ativas" : "Carregando Google Maps..."}</small>
-      )}
+      {googleMapsApiKey && <small>{statusLabel(status)}</small>}
     </span>
   );
 }
@@ -63,19 +62,46 @@ function loadGoogleMapsPlaces(apiKey) {
   if (googleMapsPromise) return googleMapsPromise;
 
   googleMapsPromise = new Promise((resolve, reject) => {
+    const callbackName = `__gabflowGoogleMapsReady${++googleMapsCallbackId}`;
     const script = document.createElement("script");
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Google Maps load timeout"));
+    }, 12000);
+    window[callbackName] = () => {
+      cleanup();
+      if (window.google?.maps?.places) {
+        resolve();
+      } else {
+        reject(new Error("Google Places library unavailable"));
+      }
+    };
     const params = new URLSearchParams({
       key: apiKey,
       libraries: "places",
       language: "pt-BR",
       region: "BR",
-      loading: "async",
+      callback: callbackName,
     });
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
     script.async = true;
-    script.onerror = () => reject(new Error("Google Maps failed to load"));
-    script.onload = () => resolve();
+    script.defer = true;
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Google Maps failed to load"));
+    };
     document.head.appendChild(script);
+
+    function cleanup() {
+      window.clearTimeout(timeout);
+      delete window[callbackName];
+    }
   });
   return googleMapsPromise;
+}
+
+function statusLabel(status) {
+  if (status === "ready") return "Sugestões do Google Maps ativas";
+  if (status === "error") return "Google Maps indisponível; use texto livre";
+  return "Carregando Google Maps...";
 }
