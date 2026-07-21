@@ -1,4 +1,4 @@
-import { Building2, Clock3, FileText, MapPinned, Plus, Settings2 } from "lucide-react";
+import { Building2, Clock3, FileText, MapPinned, PlugZap, Plus, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
 
@@ -8,6 +8,7 @@ const sections = [
   ["territories", "Territórios"],
   ["agencies", "Órgãos"],
   ["templates", "Templates"],
+  ["integrations", "Integracoes"],
 ];
 
 const initialForm = {
@@ -18,6 +19,10 @@ const initialForm = {
   categoriaId: "",
   assunto: "",
   conteudo: "",
+  tipoIntegracao: "WHATSAPP",
+  statusIntegracao: "RASCUNHO",
+  configuracao: "",
+  segredo: "",
 };
 
 export function AdministrationPage() {
@@ -27,24 +32,31 @@ export function AdministrationPage() {
     territories: [],
     agencies: [],
     templates: [],
+    integrations: [],
     jurisdiction: null,
   });
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [categories, territories, agencies, templates, jurisdiction] = await Promise.all([
+    const [categories, territories, agencies, templates, jurisdiction, integrations] = await Promise.all([
       apiRequest("/api/v1/admin/categorias"),
       apiRequest("/api/v1/admin/territorios"),
       apiRequest("/api/v1/admin/orgaos"),
       apiRequest("/api/v1/admin/templates-resposta"),
       apiRequest("/api/v1/admin/jurisdicao"),
+      apiRequest("/api/v1/admin/integracoes"),
     ]);
     setData({
       categories: categories.content,
       territories: territories.content,
       agencies: agencies.content,
       templates: templates.content,
+      integrations: integrations.content.map((item) => ({
+        ...item,
+        emailContato: `${item.tipo} · ${item.status} · ${item.segredosConfigurados ? "segredo configurado" : "sem segredo"}`,
+        ativa: item.status === "ATIVA",
+      })),
       jurisdiction,
     });
   }, []);
@@ -59,6 +71,7 @@ export function AdministrationPage() {
       territories: "/api/v1/admin/territorios",
       agencies: "/api/v1/admin/orgaos",
       templates: "/api/v1/admin/templates-resposta",
+      integrations: "/api/v1/admin/integracoes",
     };
     const payload = { nome: form.nome };
     if (active === "categories") payload.slaHoras = Number(form.slaHoras);
@@ -69,6 +82,13 @@ export function AdministrationPage() {
         categoriaId: form.categoriaId || null,
         assunto: form.assunto || null,
         conteudo: form.conteudo,
+      });
+    }
+    if (active === "integrations") {
+      Object.assign(payload, {
+        tipo: form.tipoIntegracao,
+        status: form.statusIntegracao,
+        configuracao: integrationConfig(form.configuracao, form.segredo),
       });
     }
     try {
@@ -87,6 +107,7 @@ export function AdministrationPage() {
     templates: ["Novo template", "Use somente as variáveis seguras indicadas.", FileText],
     jurisdiction: ["Jurisdição territorial", "Defina a área institucional do gabinete.", MapPinned],
   };
+  labels.integrations = ["Nova integracao", "Configure canais e sistemas externos por tenant.", PlugZap];
   const [title, description, Icon] = labels[active];
 
   return <>
@@ -110,6 +131,25 @@ export function AdministrationPage() {
           <label>Conteúdo<textarea required rows="7" value={form.conteudo} onChange={(event) => setForm((current) => ({ ...current, conteudo: event.target.value }))} placeholder="Olá, {{cidadao}}. A solicitação {{protocolo}} está com status {{status}}." /></label>
           <small className="template-help">Variáveis permitidas: {"{{cidadao}}"}, {"{{protocolo}}"} e {"{{status}}"}</small>
         </>}
+        {active === "integrations" && <>
+          <div className="form-grid">
+            <label>Tipo<select value={form.tipoIntegracao} onChange={(event) => setForm((current) => ({ ...current, tipoIntegracao: event.target.value }))}>
+              <option value="WHATSAPP">WhatsApp Business</option>
+              <option value="EMAIL">E-mail</option>
+              <option value="FORMULARIO_PUBLICO">Formulario publico</option>
+              <option value="REDE_SOCIAL">Rede social</option>
+              <option value="SISTEMA_LEGISLATIVO">Sistema legislativo</option>
+              <option value="PROTOCOLO_EXTERNO">Protocolo externo</option>
+            </select></label>
+            <label>Status<select value={form.statusIntegracao} onChange={(event) => setForm((current) => ({ ...current, statusIntegracao: event.target.value }))}>
+              <option value="RASCUNHO">Rascunho</option>
+              <option value="ATIVA">Ativa</option>
+              <option value="INATIVA">Inativa</option>
+            </select></label>
+          </div>
+          <label>Configuracao publica<textarea rows="4" value={form.configuracao} onChange={(event) => setForm((current) => ({ ...current, configuracao: event.target.value }))} placeholder="numero=+5532999999999&#10;webhook=https://..." /></label>
+          <label>Token ou segredo<input value={form.segredo} onChange={(event) => setForm((current) => ({ ...current, segredo: event.target.value }))} /></label>
+        </>}
         {error && <p className="form-error">{error}</p>}
         <button className="primary-button compact"><Plus size={18} /> Adicionar</button>
       </form>
@@ -119,6 +159,16 @@ export function AdministrationPage() {
       </>}
     </section>
   </>;
+}
+
+function integrationConfig(value, secret) {
+  const config = {};
+  String(value || "").split("\n").forEach((line) => {
+    const [key, ...rest] = line.split("=");
+    if (key?.trim() && rest.length) config[key.trim()] = rest.join("=").trim();
+  });
+  if (secret) config.token = secret;
+  return config;
 }
 
 function JurisdictionSettings({ data, onSaved }) {

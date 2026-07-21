@@ -1,11 +1,14 @@
 import {
   BrainCircuit,
+  CalendarDays,
   ChevronRight,
+  ClipboardCheck,
   ClipboardList,
   Database,
   FileText,
   LayoutDashboard,
   LogOut,
+  MessagesSquare,
   Menu,
   Search,
   Settings,
@@ -15,11 +18,14 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { AdministrationPage } from "./AdministrationPage";
+import { AgendaPage } from "./AgendaPage";
 import { AIQualityPage } from "./AIQualityPage";
+import { ChannelsPage } from "./ChannelsPage";
 import { DirectoryPage } from "./DirectoryPage";
 import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
 import { OperationalDashboard } from "./OperationalDashboard";
+import { OversightPage } from "./OversightPage";
 import { PrivacyGovernancePage } from "./PrivacyGovernancePage";
 import { RagAssistantPage } from "./RagAssistantPage";
 import { RagKnowledgeBasePage } from "./RagKnowledgeBasePage";
@@ -32,6 +38,9 @@ const navigation = [
   { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true },
   { id: "rag-assistant", label: "Assistente RAG", icon: Sparkles, enabled: true },
   { id: "documents", label: "Documentos", icon: FileText, enabled: true },
+  { id: "agenda", label: "Agenda", icon: CalendarDays, enabled: true },
+  { id: "oversight", label: "Fiscalizacao", icon: ClipboardCheck, enabled: true },
+  { id: "channels", label: "Canais", icon: MessagesSquare, enabled: true },
   { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true },
 ];
 
@@ -113,6 +122,9 @@ export function Workspace({ user, onLogout }) {
         </header>
 
         {activeView === "requests" && <RequestsPage user={user} />}
+        {activeView === "agenda" && <AgendaPage />}
+        {activeView === "oversight" && <OversightPage />}
+        {activeView === "channels" && <ChannelsPage />}
         {activeView === "citizens" && <DirectoryPage />}
         {activeView === "ai-quality" && <AIQualityPage />}
         {activeView === "rag-assistant" && <RagAssistantPage />}

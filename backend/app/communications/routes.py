@@ -18,15 +18,21 @@ from app.communications.service import (
     template_data,
     validate_template_body,
 )
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models import (
+    ChannelMessage,
+    ChannelMessageStatus,
     Citizen,
+    IntegrationSetting,
+    IntegrationStatus,
+    IntegrationType,
     InteractionDirection,
     InteractionVisibility,
     OutboxEvent,
     RequestCategory,
     RequestHistory,
     RequestInteraction,
+    RequestSource,
     ResponseTemplate,
     ScheduledReturn,
     ScheduledReturnStatus,
@@ -36,6 +42,7 @@ from app.models import (
     UserStatus,
 )
 from app.outbox.handlers import EMAIL_RESPONSE_EVENT
+from app.requests.service import creation_event, next_protocol
 
 communications_bp = Blueprint("communications", __name__)
 
@@ -97,6 +104,341 @@ def _template_payload(payload: dict, tenant_id: uuid.UUID) -> dict:
         "category_id": category_uuid,
         "active": payload.get("ativa", True) is not False,
     }
+
+
+def _channel_message_data(item: ChannelMessage) -> dict:
+    return {
+        "id": str(item.id),
+        "canal": item.channel.value,
+        "status": item.status.value,
+        "remetenteNome": item.sender_name,
+        "remetenteContato": item.sender_contact,
+        "assunto": item.subject,
+        "conteudo": item.content,
+        "idExterno": item.external_id,
+        "metadados": item.metadata_data,
+        "solicitacaoId": str(item.request_id) if item.request_id else None,
+        "recebidaEm": item.received_at.isoformat(),
+        "revisadaEm": item.reviewed_at.isoformat() if item.reviewed_at else None,
+    }
+
+
+def _channel_from_payload(value) -> RequestSource:
+    try:
+        channel = RequestSource(str(value or "").upper())
+    except ValueError:
+        raise CommunicationValidationError("Canal inválido.") from None
+    if channel not in {RequestSource.WHATSAPP, RequestSource.EMAIL, RequestSource.REDE_SOCIAL}:
+        raise CommunicationValidationError("Canal não suportado pela caixa de entrada.")
+    return channel
+
+
+@communications_bp.get("/canais/mensagens")
+@jwt_required()
+def list_channel_messages():
+    tenant_id, _ = _context()
+    filters = [ChannelMessage.tenant_id == tenant_id]
+    status = request.args.get("status")
+    channel = request.args.get("canal")
+    if status:
+        try:
+            filters.append(ChannelMessage.status == ChannelMessageStatus(status.upper()))
+        except ValueError:
+            return jsonify(error="validation_error", message="Status inválido."), 422
+    if channel:
+        try:
+            filters.append(ChannelMessage.channel == _channel_from_payload(channel))
+        except CommunicationValidationError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
+    items = db.session.execute(
+        select(ChannelMessage).where(*filters).order_by(ChannelMessage.received_at.desc())
+    ).scalars()
+    return jsonify(content=[_channel_message_data(item) for item in items])
+
+
+@communications_bp.post("/canais/mensagens")
+@roles_required("admin", "manager", "staff")
+def create_channel_message():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        channel = _channel_from_payload(payload.get("canal"))
+    except CommunicationValidationError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    item, error_response = _create_channel_message(
+        tenant_id,
+        channel,
+        payload,
+        reviewed_by_id=user_id,
+    )
+    if error_response:
+        return error_response
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.message.received",
+        "channel_message",
+        item.id,
+        after=_channel_message_data(item),
+    )
+    db.session.commit()
+    return jsonify(_channel_message_data(item)), 201
+
+
+@communications_bp.post("/canais/webhooks/<tenant_slug>/<channel>")
+@limiter.limit("30 per minute")
+def receive_channel_webhook(tenant_slug: str, channel: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant não encontrado."), 404
+    try:
+        source = _channel_from_payload(channel)
+    except CommunicationValidationError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    integration_type = {
+        RequestSource.WHATSAPP: IntegrationType.WHATSAPP,
+        RequestSource.EMAIL: IntegrationType.EMAIL,
+        RequestSource.REDE_SOCIAL: IntegrationType.REDE_SOCIAL,
+    }[source]
+    integration = db.session.execute(
+        select(IntegrationSetting).where(
+            IntegrationSetting.tenant_id == tenant.id,
+            IntegrationSetting.integration_type == integration_type,
+            IntegrationSetting.status == IntegrationStatus.ATIVA,
+        )
+    ).scalar_one_or_none()
+    if integration is None:
+        return jsonify(error="validation_error", message="Integração inativa."), 422
+    item, error_response = _create_channel_message(
+        tenant.id,
+        source,
+        request.get_json(silent=True) or {},
+        reviewed_by_id=None,
+    )
+    if error_response:
+        return error_response
+    add_audit(
+        tenant.id,
+        None,
+        "channel.webhook.received",
+        "channel_message",
+        item.id,
+        after={"canal": source.value, "idExterno": item.external_id},
+    )
+    db.session.commit()
+    return jsonify(id=str(item.id), status=item.status.value), 202
+
+
+@communications_bp.post("/canais/mensagens/<uuid:message_id>/solicitacao")
+@jwt_required()
+def convert_channel_message(message_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.id == message_id,
+            ChannelMessage.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Mensagem não encontrada."), 404
+    if item.status != ChannelMessageStatus.RECEBIDA:
+        return jsonify(error="validation_error", message="Mensagem já revisada."), 422
+    payload = request.get_json(silent=True) or {}
+    title = str(
+        payload.get("titulo") or item.subject or f"Mensagem via {item.channel.value}"
+    ).strip()
+    description = str(payload.get("descricao") or item.content).strip()
+    if len(title) < 3 or len(description) < 10:
+        return jsonify(error="validation_error", message="Informe título e descrição."), 422
+    service_request = ServiceRequest(
+        tenant_id=tenant_id,
+        created_by_id=user_id,
+        protocol=next_protocol(tenant_id),
+        source=item.channel,
+        title=title,
+        description=description,
+    )
+    db.session.add(service_request)
+    db.session.flush()
+    item.status = ChannelMessageStatus.CONVERTIDA
+    item.request_id = service_request.id
+    item.reviewed_by_id = user_id
+    item.reviewed_at = datetime.now(UTC)
+    db.session.add(creation_event(service_request))
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.message.converted",
+        "channel_message",
+        item.id,
+        after={"solicitacaoId": str(service_request.id), "protocolo": service_request.protocol},
+    )
+    db.session.commit()
+    return jsonify(id=str(service_request.id), protocolo=service_request.protocol), 201
+
+
+@communications_bp.patch("/canais/mensagens/<uuid:message_id>")
+@jwt_required()
+def update_channel_message(message_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.id == message_id,
+            ChannelMessage.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Mensagem não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    before = _channel_message_data(item)
+    if "status" in payload:
+        try:
+            item.status = ChannelMessageStatus(str(payload["status"]).upper())
+        except ValueError:
+            return jsonify(error="validation_error", message="Status inválido."), 422
+        item.reviewed_by_id = user_id
+        item.reviewed_at = datetime.now(UTC)
+    after = _channel_message_data(item)
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.message.updated",
+        "channel_message",
+        item.id,
+        before,
+        after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@communications_bp.get("/publico/formularios/<tenant_slug>")
+@limiter.limit("60 per minute")
+def public_form_config(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant não encontrado."), 404
+    integration = db.session.execute(
+        select(IntegrationSetting).where(
+            IntegrationSetting.tenant_id == tenant.id,
+            IntegrationSetting.integration_type == IntegrationType.FORMULARIO_PUBLICO,
+            IntegrationSetting.status == IntegrationStatus.ATIVA,
+        )
+    ).scalar_one_or_none()
+    return jsonify(
+        tenant=tenant.slug,
+        nome=tenant.name,
+        ativo=integration is not None,
+        campos=["nome", "contato", "titulo", "descricao", "endereco"],
+    )
+
+
+@communications_bp.post("/publico/formularios/<tenant_slug>/solicitacoes")
+@limiter.limit("10 per minute")
+def submit_public_request(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant não encontrado."), 404
+    integration = db.session.execute(
+        select(IntegrationSetting).where(
+            IntegrationSetting.tenant_id == tenant.id,
+            IntegrationSetting.integration_type == IntegrationType.FORMULARIO_PUBLICO,
+            IntegrationSetting.status == IntegrationStatus.ATIVA,
+        )
+    ).scalar_one_or_none()
+    if integration is None:
+        return jsonify(error="validation_error", message="Formulário público inativo."), 422
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("titulo", "")).strip()
+    description = str(payload.get("descricao", "")).strip()
+    if len(title) < 3 or len(description) < 10:
+        return jsonify(error="validation_error", message="Informe título e descrição."), 422
+    try:
+        receiver_user_id = _tenant_receiver_user_id(tenant.id)
+    except CommunicationValidationError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    service_request = ServiceRequest(
+        tenant_id=tenant.id,
+        created_by_id=receiver_user_id,
+        protocol=next_protocol(tenant.id),
+        source=RequestSource.FORMULARIO,
+        title=title,
+        description=description,
+        address=str(payload.get("endereco", "")).strip() or None,
+    )
+    db.session.add(service_request)
+    db.session.flush()
+    db.session.add(creation_event(service_request))
+    message = ChannelMessage(
+        tenant_id=tenant.id,
+        channel=RequestSource.FORMULARIO,
+        status=ChannelMessageStatus.CONVERTIDA,
+        sender_name=str(payload.get("nome", "")).strip() or None,
+        sender_contact=str(payload.get("contato", "")).strip() or None,
+        subject=title,
+        content=description,
+        metadata_data={"origem": "formulario_publico"},
+        request_id=service_request.id,
+        reviewed_at=datetime.now(UTC),
+    )
+    db.session.add(message)
+    add_audit(
+        tenant.id,
+        None,
+        "public_form.request.created",
+        "service_request",
+        service_request.id,
+        after={"protocolo": service_request.protocol, "mensagemId": str(message.id)},
+    )
+    db.session.commit()
+    return jsonify(id=str(service_request.id), protocolo=service_request.protocol), 201
+
+
+def _tenant_receiver_user_id(tenant_id: uuid.UUID) -> uuid.UUID:
+    user = db.session.execute(
+        select(User)
+        .where(User.tenant_id == tenant_id, User.status == UserStatus.ACTIVE)
+        .order_by(User.created_at)
+    ).scalars().first()
+    if user is None:
+        raise CommunicationValidationError("Tenant não possui usuário ativo para receber demandas.")
+    return user.id
+
+
+def _create_channel_message(
+    tenant_id: uuid.UUID,
+    channel: RequestSource,
+    payload: dict,
+    *,
+    reviewed_by_id: uuid.UUID | None,
+) -> tuple[ChannelMessage | None, tuple | None]:
+    content = str(payload.get("conteudo") or payload.get("mensagem") or "").strip()
+    if len(content) < 3:
+        return None, (jsonify(error="validation_error", message="Informe a mensagem."), 422)
+    metadata = payload.get("metadados") or {}
+    if not isinstance(metadata, dict):
+        return None, (jsonify(error="validation_error", message="Metadados inválidos."), 422)
+    item = ChannelMessage(
+        tenant_id=tenant_id,
+        channel=channel,
+        status=ChannelMessageStatus.RECEBIDA,
+        sender_name=str(payload.get("remetenteNome", "")).strip() or None,
+        sender_contact=str(payload.get("remetenteContato", "")).strip() or None,
+        subject=str(payload.get("assunto", "")).strip() or None,
+        content=content,
+        external_id=str(payload.get("idExterno", "")).strip() or None,
+        metadata_data=metadata,
+        reviewed_by_id=reviewed_by_id,
+    )
+    db.session.add(item)
+    db.session.flush()
+    return item, None
 
 
 @communications_bp.get("/admin/templates-resposta")

@@ -18,7 +18,7 @@
 
 ## Solicitações
 
-- **RF-020** Registrar solicitação oriunda de atendimento presencial, telefone, WhatsApp, e-mail, formulário, rede social ou visita.
+- **RF-020** Registrar solicitação oriunda de atendimento presencial, telefone, WhatsApp, e-mail, formulário, rede social ou visita. **Implementado na Release 6 para caixa multicanal, formulário público e visita.**
 - **RF-021** Gerar protocolo único por tenant.
 - **RF-022** Classificar por categoria, subcategoria, tema, território e órgão responsável.
 - **RF-023** Definir prioridade, impacto, urgência e prazo.
@@ -35,21 +35,21 @@
 
 ## Atendimento e comunicação
 
-- **RF-040** Registrar interações de entrada e saída.
+- **RF-040** Registrar interações de entrada e saída. **Implementado no P1 e ampliado na Release 6 com caixa multicanal.**
 - **RF-041** Utilizar templates de resposta. **Implementado no P1.**
 - **RF-042** Agendar retorno. **Implementado no P1.**
 - **RF-043** Enviar notificações configuráveis.
 - **RF-044** Registrar tentativa de contato.
 - **RF-045** Respeitar o canal preferencial do cidadão.
-- **RF-046** Manter trilha das mensagens enviadas.
+- **RF-046** Manter trilha das mensagens enviadas. **Implementado no P1 e ampliado na Release 6 para mensagens recebidas por canal.**
 
 ## Agenda e atuação externa
 
-- **RF-050** Criar compromissos, visitas, reuniões e audiências.
-- **RF-051** Relacionar agenda a cidadãos, organizações, bairros e solicitações.
-- **RF-052** Sugerir roteiros de visita.
-- **RF-053** Registrar ata, fotos, participantes e pendências.
-- **RF-054** Criar solicitações a partir de uma visita.
+- **RF-050** Criar compromissos, visitas, reuniões e audiências. **Implementado na Release 6.**
+- **RF-051** Relacionar agenda a cidadãos, organizações, bairros e solicitações. **Implementado na Release 6.**
+- **RF-052** Sugerir roteiros de visita. **Implementado na Release 6 por concentração de demandas abertas e prioridade.**
+- **RF-053** Registrar ata, fotos, participantes e pendências. **Implementado na Release 6.**
+- **RF-054** Criar solicitações a partir de uma visita. **Implementado na Release 6.**
 
 ## Produção legislativa
 
@@ -65,11 +65,11 @@
 
 ## Fiscalização
 
-- **RF-070** Criar ação de fiscalização.
-- **RF-071** Registrar local, fotos, achados e responsáveis.
-- **RF-072** Gerar relatório.
-- **RF-073** Relacionar fiscalização a contratos, serviços públicos e solicitações.
-- **RF-074** Acompanhar providências decorrentes.
+- **RF-070** Criar ação de fiscalização. **Implementado na Release 6.**
+- **RF-071** Registrar local, fotos, achados e responsáveis. **Implementado na Release 6.**
+- **RF-072** Gerar relatório. **Implementado na Release 6.**
+- **RF-073** Relacionar fiscalização a contratos, serviços públicos e solicitações. **Implementado parcialmente na Release 6 com órgão externo e solicitação.**
+- **RF-074** Acompanhar providências decorrentes. **Implementado na Release 6.**
 
 ## Dashboards e relatórios
 
@@ -86,6 +86,6 @@
 
 - **RF-090** Parametrizar categorias, territórios, status e SLA.
 - **RF-091** Configurar templates. **Implementado no P2.**
-- **RF-092** Configurar integrações.
+- **RF-092** Configurar integrações. **Implementado na Release 6 como cadastro tenant-safe de configurações; conectores externos ficam para incrementos por provedor.**
 - **RF-093** Gerenciar bases documentais RAG. **Implementado na Release 4 com ingestão assíncrona, versionamento e níveis de acesso.**
 - **RF-094** Configurar retenção, anonimização e auditoria. **Implementado no P1.**

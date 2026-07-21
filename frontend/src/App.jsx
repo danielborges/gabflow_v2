@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "./api";
 import { Login } from "./components/Login";
+import { PublicRequestForm } from "./components/PublicRequestForm";
 import { Workspace } from "./components/Workspace";
 
 export default function App() {
+  const publicFormMatch = window.location.pathname.match(/^\/publico\/formularios\/([^/]+)/);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -19,6 +21,10 @@ export default function App() {
     setUser(null);
   }
 
+  if (publicFormMatch) {
+    return <PublicRequestForm tenant={decodeURIComponent(publicFormMatch[1])} />;
+  }
+
   if (loading) {
     return (
       <main className="loading-screen" aria-live="polite">
@@ -30,4 +36,3 @@ export default function App() {
 
   return user ? <Workspace user={user} onLogout={logout} /> : <Login onLogin={setUser} />;
 }
-

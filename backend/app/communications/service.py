@@ -14,7 +14,15 @@ from app.models import (
 )
 from app.notifications.service import notify_user
 
-ALLOWED_CHANNELS = {"WHATSAPP", "TELEFONE", "EMAIL", "PRESENCIAL", "INTERNO"}
+ALLOWED_CHANNELS = {
+    "WHATSAPP",
+    "TELEFONE",
+    "EMAIL",
+    "PRESENCIAL",
+    "INTERNO",
+    "FORMULARIO",
+    "REDE_SOCIAL",
+}
 ALLOWED_VARIABLES = {"cidadao", "protocolo", "status"}
 VARIABLE_PATTERN = re.compile(r"{{\s*([^{}]+?)\s*}}")
 

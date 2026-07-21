@@ -11,7 +11,15 @@ from sqlalchemy import select
 from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.extensions import db
-from app.models import ExternalAgency, RequestCategory, Tenant, Territory
+from app.models import (
+    ExternalAgency,
+    IntegrationSetting,
+    IntegrationStatus,
+    IntegrationType,
+    RequestCategory,
+    Tenant,
+    Territory,
+)
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -59,6 +67,18 @@ def _jurisdiction_data(item: Tenant) -> dict:
         else None,
         "limites": item.jurisdiction_bounds,
         "geojson": item.jurisdiction_geojson,
+    }
+
+
+def _integration_data(item: IntegrationSetting) -> dict:
+    return {
+        "id": str(item.id),
+        "tipo": item.integration_type.value,
+        "status": item.status.value,
+        "nome": item.name,
+        "configuracao": item.config,
+        "segredosConfigurados": item.secrets_configured,
+        "atualizadaEm": item.updated_at.isoformat(),
     }
 
 
@@ -170,6 +190,82 @@ def import_ibge_jurisdiction():
     )
     db.session.commit()
     return jsonify(after)
+
+
+@admin_bp.get("/integracoes")
+@roles_required("admin", "manager", "staff")
+def list_integrations():
+    tenant_id, _ = _context()
+    items = db.session.execute(
+        select(IntegrationSetting)
+        .where(IntegrationSetting.tenant_id == tenant_id)
+        .order_by(IntegrationSetting.integration_type)
+    ).scalars()
+    return jsonify(content=[_integration_data(item) for item in items])
+
+
+@admin_bp.post("/integracoes")
+@roles_required("admin", "manager")
+def upsert_integration():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        integration_type = IntegrationType(str(payload.get("tipo", "")).upper())
+        status = IntegrationStatus(str(payload.get("status", "RASCUNHO")).upper())
+    except ValueError:
+        return (
+            jsonify(error="validation_error", message="Tipo ou status de integração inválido."),
+            422,
+        )
+    name = str(payload.get("nome", "")).strip() or integration_type.value
+    config = payload.get("configuracao") or {}
+    if not isinstance(config, dict):
+        return jsonify(error="validation_error", message="Configuração deve ser um objeto."), 422
+    public_config, has_secret = _sanitize_integration_config(config)
+    item = db.session.execute(
+        select(IntegrationSetting).where(
+            IntegrationSetting.tenant_id == tenant_id,
+            IntegrationSetting.integration_type == integration_type,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        item = IntegrationSetting(
+            tenant_id=tenant_id,
+            integration_type=integration_type,
+            updated_by_id=user_id,
+            name=name,
+            status=status,
+            config=public_config,
+            secrets_configured=has_secret,
+        )
+        db.session.add(item)
+        action = "integration.created"
+        before = None
+    else:
+        before = _integration_data(item)
+        item.name = name
+        item.status = status
+        item.config = public_config
+        item.secrets_configured = item.secrets_configured or has_secret
+        item.updated_by_id = user_id
+        action = "integration.updated"
+    db.session.flush()
+    after = _integration_data(item)
+    add_audit(tenant_id, user_id, action, "integration_setting", item.id, before, after)
+    db.session.commit()
+    return jsonify(after), 201 if before is None else 200
+
+
+def _sanitize_integration_config(config: dict) -> tuple[dict, bool]:
+    secret_names = {"token", "secret", "senha", "password", "apiKey", "api_key", "clientSecret"}
+    public_config = {}
+    has_secret = False
+    for key, value in config.items():
+        if key in secret_names:
+            has_secret = has_secret or bool(value)
+            continue
+        public_config[str(key)] = value
+    return public_config, has_secret
 
 
 def _optional_coordinate(value, label: str, minimum: float, maximum: float) -> float | None:

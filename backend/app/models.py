@@ -243,6 +243,47 @@ class LegislativeTramitationStatus(str, enum.Enum):
     RETIRADA = "RETIRADA"
 
 
+class AgendaEventType(str, enum.Enum):
+    COMPROMISSO = "COMPROMISSO"
+    VISITA = "VISITA"
+    REUNIAO = "REUNIAO"
+    AUDIENCIA = "AUDIENCIA"
+
+
+class AgendaEventStatus(str, enum.Enum):
+    AGENDADO = "AGENDADO"
+    REALIZADO = "REALIZADO"
+    CANCELADO = "CANCELADO"
+
+
+class OversightActionStatus(str, enum.Enum):
+    PLANEJADA = "PLANEJADA"
+    EM_ANDAMENTO = "EM_ANDAMENTO"
+    CONCLUIDA = "CONCLUIDA"
+    CANCELADA = "CANCELADA"
+
+
+class IntegrationType(str, enum.Enum):
+    WHATSAPP = "WHATSAPP"
+    EMAIL = "EMAIL"
+    FORMULARIO_PUBLICO = "FORMULARIO_PUBLICO"
+    REDE_SOCIAL = "REDE_SOCIAL"
+    SISTEMA_LEGISLATIVO = "SISTEMA_LEGISLATIVO"
+    PROTOCOLO_EXTERNO = "PROTOCOLO_EXTERNO"
+
+
+class IntegrationStatus(str, enum.Enum):
+    RASCUNHO = "RASCUNHO"
+    ATIVA = "ATIVA"
+    INATIVA = "INATIVA"
+
+
+class ChannelMessageStatus(str, enum.Enum):
+    RECEBIDA = "RECEBIDA"
+    CONVERTIDA = "CONVERTIDA"
+    IGNORADA = "IGNORADA"
+
+
 class Tenant(db.Model):
     __tablename__ = "tenants"
 
@@ -1364,6 +1405,160 @@ class LegislativeTramitation(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
+
+
+class AgendaEvent(db.Model):
+    __tablename__ = "agenda_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    event_type: Mapped[AgendaEventType] = mapped_column(
+        Enum(AgendaEventType, name="agenda_event_type"), nullable=False, index=True
+    )
+    status: Mapped[AgendaEventStatus] = mapped_column(
+        Enum(AgendaEventStatus, name="agenda_event_status"),
+        default=AgendaEventStatus.AGENDADO,
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(String(500))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    citizen_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("citizens.id", ondelete="SET NULL"), index=True
+    )
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), index=True
+    )
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("territories.id", ondelete="SET NULL"), index=True
+    )
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="SET NULL"), index=True
+    )
+    minutes: Mapped[str | None] = mapped_column(Text)
+    photos: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    participants: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    pending_items: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class OversightAction(db.Model):
+    __tablename__ = "oversight_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    status: Mapped[OversightActionStatus] = mapped_column(
+        Enum(OversightActionStatus, name="oversight_action_status"),
+        default=OversightActionStatus.PLANEJADA,
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(String(500))
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    agency_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("external_agencies.id", ondelete="SET NULL"), index=True
+    )
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="SET NULL"), index=True
+    )
+    findings: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    photos: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    responsible_parties: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    report: Mapped[str | None] = mapped_column(Text)
+    follow_up_actions: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class IntegrationSetting(db.Model):
+    __tablename__ = "integration_settings"
+    __table_args__ = (UniqueConstraint("tenant_id", "integration_type"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    integration_type: Mapped[IntegrationType] = mapped_column(
+        Enum(IntegrationType, name="integration_type"), nullable=False, index=True
+    )
+    status: Mapped[IntegrationStatus] = mapped_column(
+        Enum(IntegrationStatus, name="integration_status"),
+        default=IntegrationStatus.RASCUNHO,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    secrets_configured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updated_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ChannelMessage(db.Model):
+    __tablename__ = "channel_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    channel: Mapped[RequestSource] = mapped_column(
+        Enum(RequestSource, name="request_source", create_type=False),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[ChannelMessageStatus] = mapped_column(
+        Enum(ChannelMessageStatus, name="channel_message_status"),
+        default=ChannelMessageStatus.RECEBIDA,
+        nullable=False,
+        index=True,
+    )
+    sender_name: Mapped[str | None] = mapped_column(String(180))
+    sender_contact: Mapped[str | None] = mapped_column(String(254))
+    subject: Mapped[str | None] = mapped_column(String(180))
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    metadata_data: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="SET NULL"), index=True
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Notification(db.Model):

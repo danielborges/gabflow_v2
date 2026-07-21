@@ -1221,8 +1221,85 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .template-list-pane { max-height: 320px; border-right: 0; border-bottom: 1px solid var(--line); overflow: auto; }
   .template-editor { padding: 20px; }
   .template-editor > header { align-items: flex-start; flex-direction: column; }
-  .template-preview { min-height: 360px; }
+.template-preview { min-height: 360px; }
 }
+
+.agenda-layout { align-items: start; }
+.agenda-list { gap: 10px; }
+.entity-row {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  text-align: left;
+}
+.entity-row.selected { border-color: #16818b; box-shadow: 0 0 0 2px rgba(22, 129, 139, 0.12); }
+.agenda-detail { min-width: 0; }
+.compact-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+.compact-facts span {
+  align-items: center;
+  background: #f4f8fb;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px 9px;
+}
+.button-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.report-preview {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #21313c;
+  font-family: inherit;
+  margin: 0;
+  min-height: 220px;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+.route-suggestion {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+}
+.route-suggestion span, .route-suggestion small { color: var(--muted); }
+.public-form-shell {
+  align-items: center;
+  background: #eef4f7;
+  display: flex;
+  min-height: 100vh;
+  padding: 28px;
+}
+.public-request-form {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 640px;
+  padding: 24px;
+  width: 100%;
+}
+.public-request-form header {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.public-request-form img { height: 44px; width: auto; }
 
 @media (max-width: 560px) {
   .precedent-search-page { padding: 14px 12px 30px; }
