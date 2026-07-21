@@ -33,7 +33,7 @@ from app.modules import AVAILABLE_MODULES, DEFAULT_MODULES, normalize_modules, v
 
 platform_bp = Blueprint("platform", __name__)
 
-PLANS = {"starter", "professional", "enterprise"}
+PLANS = {"starter", "professional", "premium", "enterprise"}
 
 
 def _actor_id() -> uuid.UUID:

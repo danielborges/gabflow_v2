@@ -1,12 +1,13 @@
 import gzip
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 
 from app.audit import add_audit
 from app.auth.permissions import roles_required
@@ -18,6 +19,7 @@ from app.models import (
     IntegrationSetting,
     IntegrationStatus,
     IntegrationType,
+    PoliticalParty,
     RequestCategory,
     Role,
     Tenant,
@@ -76,11 +78,38 @@ def _jurisdiction_data(item: Tenant) -> dict:
 
 
 def _office_profile_data(item: Tenant) -> dict:
+    visual_identity = item.visual_identity or {}
     return {
         "vereador": item.representative_info or {},
         "mandato": item.mandate_info or {},
-        "identidadeVisual": item.visual_identity or {},
+        "dadosInstitucionais": visual_identity.get("dadosInstitucionais") or {},
+        "redesSociais": visual_identity.get("redesSociais") or {},
+        "identidadeVisual": visual_identity,
         "chefeGabineteId": str(item.chief_of_staff_id) if item.chief_of_staff_id else None,
+    }
+
+
+def _parliamentarian_data(item: Tenant) -> dict:
+    data = item.representative_info or {}
+    return {
+        "nomeCompleto": data.get("nomeCompleto") or data.get("nomeCivil") or "",
+        "nomeParlamentar": data.get("nomeParlamentar") or "",
+        "fotografiaUrl": data.get("fotografiaUrl") or "",
+        "partidoId": data.get("partidoId") or "",
+        "partido": data.get("partido") or "",
+        "partidoNome": data.get("partidoNome") or "",
+        "partidoNumero": data.get("partidoNumero") or "",
+        "partidoLogoUrl": data.get("partidoLogoUrl") or "",
+        "partidoFonteUrl": data.get("partidoFonteUrl") or "",
+        "coligacaoFederacao": data.get("coligacaoFederacao") or "",
+        "email": data.get("email") or "",
+        "telefoneInstitucional": data.get("telefoneInstitucional") or "",
+        "biografia": data.get("biografia") or "",
+        "areasPrioritarias": data.get("areasPrioritarias") or [],
+        "redesSociais": data.get("redesSociais") or {},
+        "statusMandato": data.get("statusMandato") or "ATIVO",
+        "mandatos": data.get("mandatos") or [],
+        "insightsOficiais": data.get("insightsOficiais") or {},
     }
 
 
@@ -112,12 +141,144 @@ def _integration_data(item: IntegrationSetting) -> dict:
     }
 
 
+def _party_data(item: PoliticalParty) -> dict:
+    return {
+        "id": str(item.id),
+        "sigla": item.acronym,
+        "nome": item.name,
+        "numero": item.ballot_number,
+        "deferimento": item.registration_date,
+        "presidenteNacional": item.national_president,
+        "logoUrl": item.logo_url,
+        "fonteUrl": item.source_url,
+    }
+
+
 @admin_bp.get("/perfil-gabinete")
 @roles_required("admin")
 def get_office_profile():
     tenant_id, _ = _context()
     tenant = db.session.get(Tenant, tenant_id)
     return jsonify(_office_profile_data(tenant))
+
+
+@admin_bp.get("/partidos")
+@roles_required("admin")
+def admin_list_parties():
+    query = str(request.args.get("q", "")).strip()
+    statement = (
+        select(PoliticalParty)
+        .where(PoliticalParty.active.is_(True))
+        .order_by(PoliticalParty.acronym)
+    )
+    if query:
+        like = f"%{query.lower()}%"
+        statement = statement.where(
+            (func.lower(PoliticalParty.acronym).like(like))
+            | (func.lower(PoliticalParty.name).like(like))
+            | (cast(PoliticalParty.ballot_number, String).like(like))
+        )
+    items = db.session.execute(statement).scalars().all()
+    return jsonify(content=[_party_data(item) for item in items])
+
+
+@admin_bp.get("/parlamentar")
+@roles_required("admin")
+def get_parliamentarian_profile():
+    tenant_id, _ = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    return jsonify(_parliamentarian_data(tenant))
+
+
+@admin_bp.patch("/parlamentar")
+@roles_required("admin")
+def update_parliamentarian_profile():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    payload = request.get_json(silent=True) or {}
+    before = _parliamentarian_data(tenant)
+    try:
+        tenant.representative_info = _clean_parliamentarian(payload, before)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    after = _parliamentarian_data(tenant)
+    add_audit(
+        tenant_id,
+        user_id,
+        "tenant.parliamentarian.updated",
+        "tenant",
+        tenant.id,
+        before,
+        after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@admin_bp.post("/parlamentar/insights-oficiais")
+@roles_required("admin")
+def parliamentarian_official_insights():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    data = _parliamentarian_data(tenant)
+    payload = request.get_json(silent=True) or {}
+    name = str(
+        payload.get("nome") or data["nomeParlamentar"] or data["nomeCompleto"]
+    ).strip()
+    party = str(data.get("partido") or "").strip()
+    query = " ".join(item for item in [name, party] if item).strip() or "parlamentar"
+    encoded = urllib.parse.quote_plus(query)
+    insights = {
+        "consulta": query,
+        "fontes": [
+            {
+                "nome": "TSE - Divulgacao de Candidaturas e Contas",
+                "url": (
+                    "https://divulgacandcontas.tse.jus.br/divulga/#/consulta/"
+                    f"candidatos?query={encoded}"
+                ),
+                "uso": (
+                    "Conferir dados de candidatura, partido, bens declarados "
+                    "e resultado eleitoral quando disponivel."
+                ),
+            },
+            {
+                "nome": "TSE - Partidos registrados",
+                "url": "https://www.tse.jus.br/partidos/partidos-registrados-no-tse",
+                "uso": "Validar sigla, numero de legenda e dados oficiais do partido.",
+            },
+            {
+                "nome": "TRE do estado",
+                "url": f"https://www.google.com/search?q=site%3Atre.jus.br+{encoded}",
+                "uso": (
+                    "Buscar registros regionais, diplomacao, julgamento de contas "
+                    "e comunicados oficiais."
+                ),
+            },
+        ],
+        "insightsSugeridos": [
+            "Validar nome de urna, partido, votacao recebida e situacao da candidatura.",
+            (
+                "Comparar areas prioritarias informadas com propostas, plano de governo "
+                "e historico legislativo."
+            ),
+            (
+                "Registrar fontes oficiais consultadas antes de usar os dados "
+                "em comunicacoes publicas."
+            ),
+        ],
+    }
+    add_audit(
+        tenant_id,
+        user_id,
+        "tenant.parliamentarian.official_insights.requested",
+        "tenant",
+        tenant.id,
+        None,
+        insights,
+    )
+    db.session.commit()
+    return jsonify(insights)
 
 
 @admin_bp.patch("/perfil-gabinete")
@@ -132,9 +293,20 @@ def update_office_profile():
             payload.get("vereador"), tenant.representative_info
         )
         tenant.mandate_info = _clean_dict(payload.get("mandato"), tenant.mandate_info)
-        tenant.visual_identity = _clean_dict(
+        visual_identity = _clean_dict(
             payload.get("identidadeVisual"), tenant.visual_identity
         )
+        if "dadosInstitucionais" in payload:
+            visual_identity["dadosInstitucionais"] = _clean_dict(
+                payload.get("dadosInstitucionais"),
+                visual_identity.get("dadosInstitucionais"),
+            )
+        if "redesSociais" in payload:
+            visual_identity["redesSociais"] = _clean_dict(
+                payload.get("redesSociais"),
+                visual_identity.get("redesSociais"),
+            )
+        tenant.visual_identity = visual_identity
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     chief_id = payload.get("chefeGabineteId", tenant.chief_of_staff_id)
@@ -201,11 +373,9 @@ def admin_create_user():
     )
     if active_users >= tenant.user_limit:
         return jsonify(error="user_limit_reached", message="Limite de usuarios atingido."), 422
-    exists = db.session.execute(
-        select(User.id).where(User.tenant_id == tenant_id, User.email == email)
-    ).scalar_one_or_none()
+    exists = db.session.execute(select(User.id).where(User.email == email)).scalar_one_or_none()
     if exists:
-        return jsonify(error="conflict", message="E-mail ja cadastrado no gabinete."), 409
+        return jsonify(error="conflict", message="E-mail ja cadastrado na plataforma."), 409
     item = User(
         tenant_id=tenant_id,
         name=name,
@@ -233,6 +403,16 @@ def admin_update_user(item_id: uuid.UUID):
     before = _user_data(item)
     if "nome" in payload:
         item.name = str(payload["nome"]).strip() or item.name
+    if "email" in payload:
+        email = str(payload["email"]).strip().lower()
+        if not email:
+            return jsonify(error="validation_error", message="Informe um e-mail valido."), 422
+        exists = db.session.execute(
+            select(User.id).where(User.email == email, User.id != item.id)
+        ).scalar_one_or_none()
+        if exists:
+            return jsonify(error="conflict", message="E-mail ja cadastrado na plataforma."), 409
+        item.email = email
     if "perfil" in payload:
         try:
             role = Role(str(payload["perfil"]).lower())
@@ -503,6 +683,52 @@ def _clean_dict(value, fallback) -> dict:
     if not isinstance(value, dict):
         raise ValueError("Valor estruturado invalido.")
     return {str(key): item for key, item in value.items() if item not in (None, "")}
+
+
+def _clean_parliamentarian(value, fallback) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Valor estruturado invalido.")
+    data = _clean_dict(value, fallback)
+    mandates = data.get("mandatos") or []
+    if not isinstance(mandates, list):
+        raise ValueError("Historico de mandatos invalido.")
+    cleaned_mandates = []
+    active_count = 0
+    for mandate in mandates:
+        if not isinstance(mandate, dict):
+            raise ValueError("Mandato invalido.")
+        cleaned = {
+            str(key): item
+            for key, item in mandate.items()
+            if item not in (None, "")
+        }
+        status = str(cleaned.get("status", "")).upper()
+        if status in {"ATUAL", "ATIVO"}:
+            active_count += 1
+            cleaned["status"] = "ATUAL"
+        elif status:
+            cleaned["status"] = status
+        if cleaned:
+            cleaned_mandates.append(cleaned)
+    if active_count > 1:
+        raise ValueError("Deve existir apenas um mandato atual ativo por gabinete.")
+    areas = data.get("areasPrioritarias") or []
+    if isinstance(areas, str):
+        areas = [item.strip() for item in areas.split(",") if item.strip()]
+    if not isinstance(areas, list):
+        raise ValueError("Areas prioritarias invalidas.")
+    redes = data.get("redesSociais") or {}
+    if not isinstance(redes, dict):
+        raise ValueError("Redes sociais invalidas.")
+    data["areasPrioritarias"] = [str(item).strip() for item in areas if str(item).strip()]
+    data["redesSociais"] = {
+        str(key): str(item).strip()
+        for key, item in redes.items()
+        if item not in (None, "")
+    }
+    data["mandatos"] = cleaned_mandates
+    data["statusMandato"] = str(data.get("statusMandato") or "ATIVO").upper()
+    return data
 
 
 def _tenant_user(tenant_id: uuid.UUID, value) -> User | None:

@@ -26,7 +26,7 @@ const availableModules = [
   "integracoes",
 ];
 
-const plans = ["starter", "professional", "enterprise"];
+const plans = ["starter", "professional", "premium", "enterprise"];
 const settingTypes = [
   "PARAMETER",
   "GLOBAL_TEMPLATE",

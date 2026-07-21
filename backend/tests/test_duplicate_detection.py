@@ -26,11 +26,11 @@ def test_ollama_embedding_provider_rejects_incomplete_vectors(monkeypatch):
 
 
 def _login(client, tenant="gabinete-a", password=PASSWORD):
+    email = "admin-b@teste.local" if tenant == "gabinete-b" else "admin@teste.local"
     client.post(
         "/api/v1/auth/login",
         json={
-            "tenant": tenant,
-            "email": "admin@teste.local",
+            "email": email,
             "password": password,
         },
     )

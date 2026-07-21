@@ -11,11 +11,11 @@ TENANT_B_PASSWORD = "OutraSenha123!"  # noqa: S105
 
 def login(client, tenant="gabinete-a", password=None):
     password = password or TENANT_A_PASSWORD
+    email = "admin-b@teste.local" if tenant == "gabinete-b" else "admin@teste.local"
     response = client.post(
         "/api/v1/auth/login",
         json={
-            "tenant": tenant,
-            "email": "admin@teste.local",
+            "email": email,
             "password": password,
         },
     )

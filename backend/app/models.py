@@ -344,6 +344,23 @@ class Tenant(db.Model):
     )
 
 
+class PoliticalParty(db.Model):
+    __tablename__ = "political_parties"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    acronym: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    ballot_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    registration_date: Mapped[str | None] = mapped_column(String(20))
+    national_president: Mapped[str | None] = mapped_column(String(180))
+    logo_url: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
 class User(db.Model):
     __tablename__ = "users"
     __table_args__ = (UniqueConstraint("tenant_id", "email"),)
@@ -458,6 +475,24 @@ class PlatformContractEvent(db.Model):
     )
 
     tenant: Mapped[Tenant] = relationship()
+
+
+class PublicLead(db.Model):
+    __tablename__ = "public_leads"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    plan: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    organization: Mapped[str] = mapped_column(String(180), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
+    phone: Mapped[str | None] = mapped_column(String(40))
+    city: Mapped[str | None] = mapped_column(String(120))
+    state: Mapped[str | None] = mapped_column(String(2))
+    audience: Mapped[str | None] = mapped_column(String(80))
+    message: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="new", nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(80), default="landing_page", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class Citizen(db.Model):

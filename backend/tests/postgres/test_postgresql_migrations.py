@@ -36,6 +36,7 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "legislative_templates",
         "normative_sources",
         "privacy_requests",
+        "political_parties",
         "rag_chunks",
         "rag_documents",
         "rag_document_versions",
@@ -192,6 +193,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             }
 
         assert rolled_back_heads == {previous_head}
+        assert "political_parties" not in rolled_back_tables
         assert "legislative_drafts" in rolled_back_tables
         assert "legislative_tramitations" in rolled_back_tables
         assert "normative_sources" in rolled_back_tables
@@ -201,7 +203,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_assistant_queries" in rolled_back_tables
         assert "location_geography" in rolled_back_service_columns
         assert "jurisdiction_name" in rolled_back_tenant_columns
-        assert "jurisdiction_geojson" not in rolled_back_tenant_columns
+        assert "jurisdiction_geojson" in rolled_back_tenant_columns
 
         upgrade(directory="migrations")
 
@@ -215,8 +217,15 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             reapplied_tenant_columns = {
                 column["name"] for column in inspector.get_columns("tenants")
             }
+            political_parties_count = connection.execute(
+                text("SELECT count(*) FROM political_parties")
+            ).scalar_one()
+            pt_number = connection.execute(
+                text("SELECT ballot_number FROM political_parties WHERE acronym = 'PT'")
+            ).scalar_one()
 
         assert reapplied_heads == {expected_head}
+        assert "political_parties" in reapplied_tables
         assert "legislative_drafts" in reapplied_tables
         assert "legislative_tramitations" in reapplied_tables
         assert "normative_sources" in reapplied_tables
@@ -227,6 +236,8 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "location_geography" in reapplied_service_columns
         assert "jurisdiction_name" in reapplied_tenant_columns
         assert "jurisdiction_geojson" in reapplied_tenant_columns
+        assert political_parties_count == 30
+        assert pt_number == 13
 
 
 def test_migrated_schema_preserves_json_timezone_and_unique_constraints(postgres_app):

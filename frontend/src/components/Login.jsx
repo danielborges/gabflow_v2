@@ -1,13 +1,11 @@
-import { Eye, EyeOff, LockKeyhole, LogIn, Mail, PanelsTopLeft } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole, LogIn, Mail } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "../api";
 
-export function Login({ onLogin }) {
-  const [tenant, setTenant] = useState("gabinete-demo");
+export function Login({ onLogin, embedded = false }) {
   const [email, setEmail] = useState("admin@gabflow.local");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [platformAccess, setPlatformAccess] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -18,7 +16,7 @@ export function Login({ onLogin }) {
     try {
       const data = await apiRequest("/api/v1/auth/login", {
         method: "POST",
-        body: JSON.stringify({ tenant: platformAccess ? "" : tenant, email, password }),
+        body: JSON.stringify({ email, password }),
       });
       onLogin(data.user);
     } catch (requestError) {
@@ -26,6 +24,70 @@ export function Login({ onLogin }) {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  const loginForm = (
+    <form className="login-form" onSubmit={handleSubmit}>
+      <div className="form-heading">
+        <span className="app-mark"><LockKeyhole size={22} /></span>
+        <div>
+          <p className="eyebrow">Acesso seguro</p>
+          <h2>Entrar no GabFlow</h2>
+        </div>
+      </div>
+
+      <label>
+        E-mail
+        <span className="input-wrap">
+          <Mail size={18} aria-hidden="true" />
+          <input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            autoComplete="username"
+            required
+          />
+        </span>
+      </label>
+
+      <label>
+        Senha
+        <span className="input-wrap">
+          <LockKeyhole size={18} aria-hidden="true" />
+          <input
+            type={showPassword ? "text" : "password"}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            required
+          />
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+            title={showPassword ? "Ocultar senha" : "Mostrar senha"}
+          >
+            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        </span>
+      </label>
+
+      {error && <p className="form-error" role="alert">{error}</p>}
+
+      <button className="primary-button" type="submit" disabled={submitting}>
+        <LogIn size={18} />
+        {submitting ? "Autenticando..." : "Entrar"}
+      </button>
+    </form>
+  );
+
+  if (embedded) {
+    return (
+      <section className="login-panel landing-login-panel" id="acesso">
+        {loginForm}
+      </section>
+    );
   }
 
   return (
@@ -46,82 +108,7 @@ export function Login({ onLogin }) {
       </section>
 
       <section className="login-panel">
-        <form className="login-form" onSubmit={handleSubmit}>
-          <div className="form-heading">
-            <span className="app-mark"><LockKeyhole size={22} /></span>
-            <div>
-              <p className="eyebrow">Acesso seguro</p>
-              <h2>Entrar no GabFlow</h2>
-            </div>
-          </div>
-
-          <label className="checkbox-line">
-            <input
-              type="checkbox"
-              checked={platformAccess}
-              onChange={(event) => setPlatformAccess(event.target.checked)}
-            />
-            Acessar como Administrador Geral
-          </label>
-
-          <label className={platformAccess ? "field-disabled" : ""}>
-            Ambiente
-            <span className="input-wrap">
-              <PanelsTopLeft size={18} aria-hidden="true" />
-              <input
-                value={tenant}
-                onChange={(event) => setTenant(event.target.value)}
-                autoComplete="organization"
-                required={!platformAccess}
-                disabled={platformAccess}
-              />
-            </span>
-          </label>
-
-          <label>
-            E-mail
-            <span className="input-wrap">
-              <Mail size={18} aria-hidden="true" />
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                autoComplete="username"
-                required
-              />
-            </span>
-          </label>
-
-          <label>
-            Senha
-            <span className="input-wrap">
-              <LockKeyhole size={18} aria-hidden="true" />
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete="current-password"
-                required
-              />
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
-                title={showPassword ? "Ocultar senha" : "Mostrar senha"}
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </span>
-          </label>
-
-          {error && <p className="form-error" role="alert">{error}</p>}
-
-          <button className="primary-button" type="submit" disabled={submitting}>
-            <LogIn size={18} />
-            {submitting ? "Autenticando..." : "Entrar"}
-          </button>
-        </form>
+        {loginForm}
       </section>
     </main>
   );

@@ -10,9 +10,10 @@ PASSWORD_B = "OutraSenha123!"  # noqa: S105
 
 
 def login(client, tenant="gabinete-a", password=PASSWORD_A):
+    email = "admin-b@teste.local" if tenant == "gabinete-b" else "admin@teste.local"
     response = client.post(
         "/api/v1/auth/login",
-        json={"tenant": tenant, "email": "admin@teste.local", "password": password},
+        json={"email": email, "password": password},
     )
     return response.json["user"], client.get_cookie("csrf_access_token").value
 

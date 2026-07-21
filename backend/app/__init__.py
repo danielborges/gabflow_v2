@@ -33,6 +33,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.oversight.routes import oversight_bp
     from app.platform.routes import platform_bp
     from app.privacy.routes import privacy_bp
+    from app.public.routes import public_site_bp
     from app.rag.routes import rag_bp
     from app.requests.operations import request_ops_bp
     from app.requests.routes import requests_bp
@@ -57,6 +58,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(platform_bp, url_prefix="/api/v1/platform")
     app.register_blueprint(search_bp, url_prefix="/api/v1")
     app.register_blueprint(public_bp, url_prefix="/api/v1")
+    app.register_blueprint(public_site_bp, url_prefix="/api/v1")
 
     @app.errorhandler(404)
     def not_found(_error):

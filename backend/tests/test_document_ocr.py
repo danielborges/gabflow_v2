@@ -58,9 +58,10 @@ def test_tesseract_provider_reports_normalized_confidence(monkeypatch):
 
 
 def _login(client, tenant="gabinete-a", password=PASSWORD):
+    email = "admin-b@teste.local" if tenant == "gabinete-b" else "admin@teste.local"
     client.post(
         "/api/v1/auth/login",
-        json={"tenant": tenant, "email": "admin@teste.local", "password": password},
+        json={"email": email, "password": password},
     )
     return client.get_cookie("csrf_access_token").value
 

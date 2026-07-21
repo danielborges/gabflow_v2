@@ -9,7 +9,6 @@ def test_login_returns_user_scoped_to_tenant(client):
     response = client.post(
         "/api/v1/auth/login",
         json={
-            "tenant": "gabinete-a",
             "email": "admin@teste.local",
             "password": "SenhaForte123!",
         },
@@ -20,25 +19,23 @@ def test_login_returns_user_scoped_to_tenant(client):
     assert "access_token_cookie=" in response.headers.getlist("Set-Cookie")[0]
 
 
-def test_login_does_not_authenticate_same_email_from_another_tenant(client):
+def test_login_resolves_tenant_from_user_email(client):
     response = client.post(
         "/api/v1/auth/login",
         json={
-            "tenant": "gabinete-b",
-            "email": "admin@teste.local",
-            "password": "SenhaForte123!",
+            "email": "admin-b@teste.local",
+            "password": "OutraSenha123!",
         },
     )
 
-    assert response.status_code == 401
-    assert response.json["error"] == "invalid_credentials"
+    assert response.status_code == 200
+    assert response.json["user"]["tenant"]["slug"] == "gabinete-b"
 
 
 def test_login_creates_audit_record(app, client):
     client.post(
         "/api/v1/auth/login",
         json={
-            "tenant": "gabinete-a",
             "email": "admin@teste.local",
             "password": "SenhaForte123!",
         },

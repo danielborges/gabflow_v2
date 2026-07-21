@@ -55,6 +55,11 @@ def test_only_office_admin_accesses_office_administration(app, client):
 def test_office_admin_updates_profile_users_and_audit(app, client):
     csrf = _login(client)
 
+    parties = client.get("/api/v1/admin/partidos?q=pt")
+    assert parties.status_code == 200
+    party = next(item for item in parties.json["content"] if item["sigla"] == "PT")
+    assert party["numero"] == 13
+
     created = client.post(
         "/api/v1/admin/usuarios",
         headers={"X-CSRF-TOKEN": csrf},
@@ -69,20 +74,114 @@ def test_office_admin_updates_profile_users_and_audit(app, client):
     assert created.status_code == 201
     assert created.json["perfil"] == "manager"
 
+    parliamentarian = client.patch(
+        "/api/v1/admin/parlamentar",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nomeCompleto": "Maria da Silva Teste",
+            "nomeParlamentar": "Vereadora Teste",
+            "fotografiaUrl": "https://camara.test/foto.jpg",
+            "partidoId": party["id"],
+            "partido": party["sigla"],
+            "partidoNome": party["nome"],
+            "partidoNumero": party["numero"],
+            "coligacaoFederacao": "Federacao Teste",
+            "email": "vereadora@camara.test",
+            "telefoneInstitucional": "(32) 3333-0000",
+            "biografia": "Biografia resumida.",
+            "areasPrioritarias": ["Saude", "Educacao"],
+            "redesSociais": {"instagram": "https://instagram.test/vereadora"},
+            "statusMandato": "ATIVO",
+            "mandatos": [
+                {
+                    "legislatura": "2025-2028",
+                    "cargo": "Vereadora",
+                    "inicio": "2025-01-01",
+                    "fim": "2028-12-31",
+                    "votos": 1234,
+                    "status": "ATUAL",
+                },
+                {
+                    "legislatura": "2021-2024",
+                    "cargo": "Vereadora",
+                    "votos": 987,
+                    "status": "HISTORICO",
+                },
+            ],
+        },
+    )
+
+    assert parliamentarian.status_code == 200
+    assert parliamentarian.json["nomeCompleto"] == "Maria da Silva Teste"
+    assert parliamentarian.json["partido"] == "PT"
+    assert parliamentarian.json["partidoNumero"] == 13
+    assert parliamentarian.json["mandatos"][0]["votos"] == 1234
+
+    duplicated_active_mandates = client.patch(
+        "/api/v1/admin/parlamentar",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nomeParlamentar": "Vereadora Teste",
+            "mandatos": [{"status": "ATUAL"}, {"status": "ATIVO"}],
+        },
+    )
+    assert duplicated_active_mandates.status_code == 422
+
+    insights = client.post(
+        "/api/v1/admin/parlamentar/insights-oficiais",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"nome": "Vereadora Teste"},
+    )
+    assert insights.status_code == 200
+    assert any("TSE" in item["nome"] for item in insights.json["fontes"])
+
     profile = client.patch(
         "/api/v1/admin/perfil-gabinete",
         headers={"X-CSRF-TOKEN": csrf},
         json={
-            "vereador": {"nomeParlamentar": "Vereadora Teste", "partido": "ABC"},
-            "mandato": {"legislatura": "2025-2028", "cargo": "Vereadora"},
-            "identidadeVisual": {"corPrimaria": "#2563eb"},
+            "identidadeVisual": {
+                "corPrimaria": "#2563eb",
+                "corSecundaria": "#0f766e",
+                "logoUrl": "https://camara.test/logo.png",
+                "dadosInstitucionais": {
+                    "nomeGabinete": "Gabinete da Vereadora Teste",
+                    "camaraMunicipal": "Camara Municipal de Teste",
+                    "municipio": "Teste",
+                    "estado": "MG",
+                    "enderecoInstitucional": "Rua da Camara, 100",
+                    "telefone": "(32) 3333-1111",
+                    "emailOficial": "gabinete@camara.test",
+                    "horarioAtendimento": "Segunda a sexta, 8h as 17h",
+                    "site": "https://camara.test/gabinete",
+                },
+                "redesSociais": {"instagram": "https://instagram.test/gabinete"},
+            },
             "chefeGabineteId": created.json["id"],
         },
     )
 
     assert profile.status_code == 200
-    assert profile.json["vereador"]["nomeParlamentar"] == "Vereadora Teste"
     assert profile.json["chefeGabineteId"] == created.json["id"]
+    assert profile.json["dadosInstitucionais"]["nomeGabinete"] == (
+        "Gabinete da Vereadora Teste"
+    )
+    assert profile.json["dadosInstitucionais"]["estado"] == "MG"
+    assert profile.json["redesSociais"]["instagram"] == "https://instagram.test/gabinete"
+
+    updated = client.patch(
+        f"/api/v1/admin/usuarios/{created.json['id']}",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nome": "Assessora Formal Atualizada",
+            "email": "assessora.atualizada@teste.local",
+            "perfil": "staff",
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json["nome"] == "Assessora Formal Atualizada"
+    assert updated.json["email"] == "assessora.atualizada@teste.local"
+    assert updated.json["perfil"] == "staff"
 
     blocked = client.patch(
         f"/api/v1/admin/usuarios/{created.json['id']}",
@@ -97,6 +196,8 @@ def test_office_admin_updates_profile_users_and_audit(app, client):
     assert audit.status_code == 200
     actions = {item["acao"] for item in audit.json["content"]}
     assert "tenant.user.created" in actions
+    assert "tenant.parliamentarian.updated" in actions
+    assert "tenant.parliamentarian.official_insights.requested" in actions
     assert "tenant.office_profile.updated" in actions
     paged_audit = client.get("/api/v1/admin/auditoria?page=1&perPage=25")
     assert paged_audit.status_code == 200
@@ -105,7 +206,7 @@ def test_office_admin_updates_profile_users_and_audit(app, client):
 
     with app.app_context():
         user = db.session.execute(
-            select(User).where(User.email == "assessora@teste.local")
+            select(User).where(User.email == "assessora.atualizada@teste.local")
         ).scalar_one()
         assert user.status == UserStatus.BLOCKED
         assert db.session.execute(select(AuditLog)).scalars().first() is not None

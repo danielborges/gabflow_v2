@@ -32,6 +32,14 @@ O perfil pode ser atribuido ao vereador, ao chefe de gabinete ou a outro assesso
 - **RF-159** Atribuir ao Chefe de Gabinete permissoes adicionais de supervisao operacional sem converter automaticamente seu papel para `admin`.
 - **RF-160** Permitir ao Chefe de Gabinete distribuir solicitacoes, atribuir responsaveis, acompanhar prazos, visualizar todos os atendimentos, aprovar encerramentos operacionais, organizar agenda, acompanhar produtividade, supervisionar documentos, autorizar respostas e gerar relatorios conforme modulos habilitados.
 - **RF-161** Permitir que o Chefe de Gabinete supervisione documentos legislativos, incluindo rejeicao de minutas em revisao, registro de protocolo externo e acompanhamento de tramitacao, sem receber automaticamente permissao politica de aprovacao de minutas.
+- **RF-162** Manter catalogo global de partidos politicos registrados no TSE, com sigla, nome, numero de legenda, deferimento, presidente nacional, URL de origem oficial e URL de logo quando disponivel em fonte oficial.
+- **RF-163** Selecionar o partido do vereador/deputado estadual por search-select baseado no catalogo oficial, evitando digitacao livre de siglas e nomes.
+- **RF-164** Manter cadastro do parlamentar em area propria, separada dos dados do gabinete, com nome completo, nome parlamentar, fotografia, partido, coligacao ou federacao, e-mail, telefone institucional, biografia, areas prioritarias, redes sociais e status no mandato.
+- **RF-165** Registrar legislaturas e mandatos do parlamentar como historico, incluindo quantidade de votos recebidos e indicacao do mandato atual quando aplicavel.
+- **RF-166** Permitir apenas um mandato atual ativo no historico do parlamentar por gabinete.
+- **RF-167** Registrar auditoria especifica para alteracoes relevantes no cadastro do parlamentar e solicitacoes de consulta assistida a fontes oficiais.
+- **RF-168** Disponibilizar agente de apoio para consulta a fontes oficiais como TSE, TREs e dados de candidaturas, retornando fontes e sugestoes de conferencia para uso como insight administrativo.
+- **RF-169** Complementar o cadastro do gabinete em area propria com nome do gabinete, Camara Municipal, municipio, estado, endereco institucional, telefone, e-mail oficial, horario de atendimento, site, redes sociais, logotipo e cores institucionais.
 
 ## Restricoes
 
@@ -71,6 +79,7 @@ A area de trabalho do Administrador do Gabinete deve conter:
 - Administrador do Gabinete cria usuarios sem ultrapassar limite contratado.
 - Administrador do Gabinete bloqueia usuario e a alteracao fica registrada em auditoria.
 - Administrador do Gabinete salva dados do vereador, mandato, identidade visual e chefe de gabinete.
+- Administrador do Gabinete salva dados institucionais do gabinete, redes sociais, logotipo e cores institucionais sem misturar essas informacoes com o cadastro do parlamentar.
 - Usuario designado como Chefe de Gabinete permanece com seu papel original e recebe `funcoes=["chefe_gabinete"]` na sessao.
 - Usuario Chefe de Gabinete com papel `staff` recebe 403 no menu administrativo, mas consegue registrar protocolo externo e tramitacao de minuta aprovada.
 - Usuario `staff` nao designado Chefe de Gabinete continua recebendo 403 em acoes de supervisao legislativa restritas.

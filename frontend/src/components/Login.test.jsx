@@ -5,13 +5,14 @@ import { Login } from "./Login";
 vi.mock("../api", () => ({ apiRequest: vi.fn() }));
 
 describe("Login", () => {
-  it("exibe os campos obrigatórios de acesso", () => {
+  it("exibe os campos obrigatorios de acesso", () => {
     render(<Login onLogin={() => {}} />);
     expect(screen.getByRole("img", { name: "GabFlow - Gestão que move resultados" }))
       .toHaveAttribute("src", "/images/logo_01.png");
-    expect(screen.getByLabelText("Ambiente")).toBeRequired();
     expect(screen.getByLabelText("E-mail")).toBeRequired();
     expect(screen.getByLabelText("Senha")).toBeRequired();
+    expect(screen.queryByLabelText("Ambiente")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Acessar como Administrador Geral")).not.toBeInTheDocument();
   });
 
   it("permite alternar a visibilidade da senha", () => {

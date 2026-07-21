@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.auth.security import verify_password
 from app.extensions import db, limiter
-from app.models import AuditLog, Role, Tenant, TenantStatus, User, UserStatus
+from app.models import AuditLog, Role, TenantStatus, User, UserStatus
 from app.modules import BLOCKING_CONTRACT_STATUSES, normalize_modules
 
 auth_bp = Blueprint("auth", __name__)
@@ -61,26 +61,24 @@ def _audit(user: User, action: str) -> None:
     )
 
 
+def _resolve_login_user(email: str) -> User | None:
+    users = db.session.execute(select(User).where(User.email == email)).scalars().all()
+    if len(users) != 1:
+        return None
+    return users[0]
+
+
 @auth_bp.post("/login")
 @limiter.limit("5 per minute")
 def login():
     payload = request.get_json(silent=True) or {}
     email = str(payload.get("email", "")).strip().lower()
     password = str(payload.get("password", ""))
-    tenant_slug = str(payload.get("tenant", "")).strip().lower()
 
     if not email or not password:
         return jsonify(error="validation_error", message="Preencha e-mail e senha."), 400
 
-    if tenant_slug:
-        statement = (
-            select(User)
-            .join(Tenant, User.tenant_id == Tenant.id)
-            .where(User.email == email, Tenant.slug == tenant_slug)
-        )
-    else:
-        statement = select(User).where(User.email == email, User.role == Role.PLATFORM_ADMIN)
-    user = db.session.execute(statement).scalar_one_or_none()
+    user = _resolve_login_user(email)
 
     if (
         user is None
@@ -90,7 +88,6 @@ def login():
             user.tenant is not None
             and user.tenant.contract_status in BLOCKING_CONTRACT_STATUSES
         )
-        or (not tenant_slug and user.role != Role.PLATFORM_ADMIN)
         or not verify_password(user.password_hash, password)
     ):
         return jsonify(error="invalid_credentials", message="Credenciais inválidas."), 401
