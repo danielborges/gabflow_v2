@@ -403,6 +403,134 @@ def test_whatsapp_business_webhook_verifies_meta_signature_and_deduplicates(app,
         assert messages[0].metadata_data["provider"] == "meta_whatsapp_cloud_api"
 
 
+def test_meta_social_webhook_receives_facebook_and_instagram_events(app, client):
+    app_secret = "meta-" + "social-secret"
+    verify_token = "meta-" + "verify-token"
+    app.config["META_APP_SECRET"] = app_secret
+    app.config["META_WEBHOOK_VERIFY_TOKEN"] = verify_token
+    auth = login(client)
+    social = post(
+        client,
+        "/api/v1/admin/integracoes",
+        auth["csrf"],
+        {
+            "tipo": "REDE_SOCIAL",
+            "status": "ATIVA",
+            "nome": "Meta Social",
+            "configuracao": {
+                "plataformas": ["FACEBOOK", "INSTAGRAM"],
+                "pageAccessToken": "segredo",
+            },
+        },
+    )
+    assert social.status_code == 201
+    assert social.json["segredosConfigurados"] is True
+
+    verification = client.get(
+        "/api/v1/canais/webhooks/gabinete-a/redes-sociais/meta",
+        query_string={
+            "hub.mode": "subscribe",
+            "hub.verify_token": verify_token,
+            "hub.challenge": "social-challenge",
+        },
+    )
+    assert verification.status_code == 200
+    assert verification.text == "social-challenge"
+
+    facebook_payload = {
+        "object": "page",
+        "entry": [
+            {
+                "id": "page-1",
+                "time": 1710000010,
+                "messaging": [
+                    {
+                        "sender": {"id": "user-facebook-1"},
+                        "recipient": {"id": "page-1"},
+                        "timestamp": 1710000010,
+                        "message": {
+                            "mid": "mid.facebook.1",
+                            "text": "Mensagem enviada pelo Facebook Messenger.",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    raw_body, headers = _meta_headers(app_secret, facebook_payload)
+    facebook = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/redes-sociais/meta",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert facebook.status_code == 202
+    assert facebook.json == {"duplicadas": 0, "recebidas": 1}
+
+    instagram_payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-1",
+                "time": 1710000020,
+                "changes": [
+                    {
+                        "field": "comments",
+                        "value": {
+                            "comment_id": "ig-comment-1",
+                            "text": "Comentario publico recebido no Instagram.",
+                            "from": {"id": "ig-user-1", "username": "cidadao_ig"},
+                            "media_id": "media-1",
+                            "created_time": 1710000020,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    raw_body, headers = _meta_headers(app_secret, instagram_payload)
+    instagram = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/redes-sociais/meta",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert instagram.status_code == 202
+    assert instagram.json == {"duplicadas": 0, "recebidas": 1}
+
+    duplicate = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/redes-sociais/meta",
+        data=raw_body,
+        headers=headers,
+        content_type="application/json",
+    )
+    assert duplicate.status_code == 202
+    assert duplicate.json == {"duplicadas": 1, "recebidas": 0}
+
+    bad_signature = client.post(
+        "/api/v1/canais/webhooks/gabinete-a/redes-sociais/meta",
+        data=raw_body,
+        headers={"X-Hub-Signature-256": "sha256=invalida"},
+        content_type="application/json",
+    )
+    assert bad_signature.status_code == 400
+
+    with app.app_context():
+        messages = db.session.execute(
+            select(ChannelMessage).order_by(ChannelMessage.subject)
+        ).scalars().all()
+        assert len(messages) == 2
+        assert {item.channel.value for item in messages} == {"REDE_SOCIAL"}
+        assert {item.metadata_data["platform"] for item in messages} == {
+            "FACEBOOK",
+            "INSTAGRAM",
+        }
+        assert {item.external_id for item in messages} == {
+            "meta:facebook:mid.facebook.1",
+            "meta:instagram:ig-comment-1",
+        }
+
+
 def _svix_headers(secret: str, payload: dict):
     raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     message_id = "msg_test"

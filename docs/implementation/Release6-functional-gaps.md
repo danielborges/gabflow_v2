@@ -12,7 +12,7 @@
 | Release 6 - WhatsApp | Caixa de entrada tenant-safe para mensagens WhatsApp, inbound real via WhatsApp Business Cloud API com handshake Meta, assinatura `X-Hub-Signature-256` e conversao humana em solicitacao |
 | Release 6 - E-mail | Caixa de entrada tenant-safe para mensagens de e-mail, inbound real via webhook Resend assinado com Svix e resposta por e-mail ja integrada ao outbox/Resend quando configurado |
 | Release 6 - Formulario publico | Formulario publico por slug do tenant, controlado por integracao ativa e com criacao direta de solicitacao |
-| Release 6 - Redes sociais | Caixa de entrada tenant-safe para mensagens de redes sociais e conversao humana em solicitacao |
+| Release 6 - Redes sociais | Caixa de entrada tenant-safe para Facebook/Instagram via Meta Webhooks, com handshake, assinatura `X-Hub-Signature-256`, deduplicacao e conversao humana em solicitacao |
 | RF-070 | Cadastro de acao de fiscalizacao |
 | RF-071 | Registro de local, fotos, achados e responsaveis |
 | RF-072 | Relatorio de fiscalizacao consultavel pela API e interface |
@@ -29,7 +29,7 @@
 5. O usuario registra uma fiscalizacao com achados, responsaveis, fotos e providencias.
 6. A fiscalizacao pode ser atualizada ate conclusao e seu relatorio fica disponivel para consulta.
 7. Gestores configuram integracoes como WhatsApp, e-mail, formulario publico, redes sociais, sistemas legislativos e protocolos externos.
-8. Mensagens de WhatsApp, e-mail e redes sociais entram na caixa de canais por registro manual ou webhook; WhatsApp Cloud API e e-mails Resend entram por endpoints dedicados com validacao de assinatura.
+8. Mensagens de WhatsApp, e-mail e redes sociais entram na caixa de canais por registro manual ou webhook; WhatsApp Cloud API, e-mails Resend e Facebook/Instagram via Meta entram por endpoints dedicados com validacao de assinatura.
 9. O usuario revisa cada mensagem recebida e decide se ela deve virar solicitacao.
 10. O formulario publico cria solicitacoes diretamente quando a integracao `FORMULARIO_PUBLICO` esta ativa.
 
@@ -54,7 +54,7 @@
 
 ## Limites desta entrega
 
-- Integracoes ficam configuraveis e auditadas; envio de e-mail, inbound Resend e inbound WhatsApp Business Cloud API ja possuem conectores especificos quando credenciais e secrets estao configurados.
-- Webhooks multicanal recebem payloads normalizados; redes sociais ainda aguardam validacao de assinatura especifica por provedor.
-- Redes sociais estao operacionais como inbox governada; automacoes especificas de cada provedor ficam para incrementos de integracao.
+- Integracoes ficam configuraveis e auditadas; envio de e-mail, inbound Resend, inbound WhatsApp Business Cloud API e inbound Facebook/Instagram via Meta ja possuem conectores especificos quando credenciais e secrets estao configurados.
+- Webhooks multicanal recebem payloads normalizados; novos provedores podem ser adicionados por endpoint dedicado e assinatura propria.
+- Redes sociais estao operacionais como inbox governada para Facebook/Instagram; automacoes especificas de resposta e moderacao ficam para incrementos de integracao.
 - Fotos em agenda e fiscalizacao sao metadados estruturados; upload binario dedicado pode reutilizar o subsistema de anexos em uma proxima fatia.

@@ -266,6 +266,8 @@ def _sanitize_integration_config(config: dict) -> tuple[dict, bool]:
         "api_key",
         "accessToken",
         "access_token",
+        "pageAccessToken",
+        "page_access_token",
         "clientSecret",
     }
     public_config = {}

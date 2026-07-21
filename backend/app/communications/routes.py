@@ -24,6 +24,7 @@ from app.communications.service import (
     template_data,
     validate_template_body,
 )
+from app.communications.social import extract_meta_social_events
 from app.communications.whatsapp import (
     WhatsAppWebhookError,
     extract_whatsapp_messages,
@@ -434,6 +435,113 @@ def receive_whatsapp_business_webhook(tenant_slug: str):
             "channel_message",
             item.id,
             after={"canal": RequestSource.WHATSAPP.value, "idExterno": item.external_id},
+        )
+        items.append(item)
+
+    if items:
+        db.session.commit()
+    else:
+        db.session.rollback()
+    return jsonify(recebidas=len(items), duplicadas=duplicated), 202
+
+
+@communications_bp.get("/canais/webhooks/<tenant_slug>/redes-sociais/meta")
+@limiter.limit("30 per minute")
+def verify_meta_social_webhook(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant nÃ£o encontrado."), 404
+    integration = _active_integration(tenant.id, IntegrationType.REDE_SOCIAL)
+    if integration is None:
+        return (
+            jsonify(error="validation_error", message="IntegraÃ§Ã£o de redes sociais inativa."),
+            422,
+        )
+
+    verify_token = current_app.config.get("META_WEBHOOK_VERIFY_TOKEN")
+    mode = request.args.get("hub.mode")
+    challenge = request.args.get("hub.challenge")
+    if not verify_token:
+        return jsonify(error="validation_error", message="Webhook Meta nÃ£o configurado."), 422
+    if mode == "subscribe" and request.args.get("hub.verify_token") == verify_token and challenge:
+        return challenge, 200, {"Content-Type": "text/plain"}
+    return jsonify(error="invalid_token", message="Token de verificaÃ§Ã£o invÃ¡lido."), 403
+
+
+@communications_bp.post("/canais/webhooks/<tenant_slug>/redes-sociais/meta")
+@limiter.limit("30 per minute")
+def receive_meta_social_webhook(tenant_slug: str):
+    tenant = db.session.execute(
+        select(Tenant).where(Tenant.slug == tenant_slug)
+    ).scalar_one_or_none()
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Tenant nÃ£o encontrado."), 404
+    integration = _active_integration(tenant.id, IntegrationType.REDE_SOCIAL)
+    if integration is None:
+        return (
+            jsonify(error="validation_error", message="IntegraÃ§Ã£o de redes sociais inativa."),
+            422,
+        )
+
+    app_secret = current_app.config.get("META_APP_SECRET")
+    if not app_secret:
+        return jsonify(error="validation_error", message="Webhook Meta nÃ£o configurado."), 422
+
+    raw_body = request.get_data(cache=True)
+    try:
+        verify_meta_signature(raw_body, request.headers.get("X-Hub-Signature-256"), app_secret)
+    except WhatsAppWebhookError as error:
+        return jsonify(error="invalid_signature", message=str(error)), 400
+
+    payload = request.get_json(silent=True) or {}
+    allowed_platforms = {
+        str(platform).upper()
+        for platform in integration.config.get("plataformas", ["FACEBOOK", "INSTAGRAM"])
+    }
+    items = []
+    duplicated = 0
+    for event in extract_meta_social_events(payload):
+        if event["platform"] not in allowed_platforms:
+            continue
+        existing = db.session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.tenant_id == tenant.id,
+                ChannelMessage.channel == RequestSource.REDE_SOCIAL,
+                ChannelMessage.external_id == event["id"],
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            duplicated += 1
+            continue
+        item = ChannelMessage(
+            tenant_id=tenant.id,
+            channel=RequestSource.REDE_SOCIAL,
+            status=ChannelMessageStatus.RECEBIDA,
+            sender_name=event.get("senderName"),
+            sender_contact=event.get("senderId"),
+            subject=f"{event['platform']} - {event['eventType']}",
+            content=event["content"],
+            external_id=event["id"],
+            metadata_data={
+                "provider": "meta_social_webhooks",
+                "platform": event.get("platform"),
+                "eventType": event.get("eventType"),
+                "recipientId": event.get("recipientId"),
+                "timestamp": event.get("timestamp"),
+                "raw": event.get("raw"),
+            },
+        )
+        db.session.add(item)
+        db.session.flush()
+        add_audit(
+            tenant.id,
+            None,
+            "channel.social.meta.received",
+            "channel_message",
+            item.id,
+            after={"canal": RequestSource.REDE_SOCIAL.value, "idExterno": item.external_id},
         )
         items.append(item)
 
