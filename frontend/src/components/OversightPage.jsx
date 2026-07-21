@@ -15,12 +15,17 @@ const emptyForm = {
 export function OversightPage() {
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [jurisdiction, setJurisdiction] = useState(null);
   const [report, setReport] = useState(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const data = await apiRequest("/api/v1/fiscalizacoes");
+    const [data, jurisdictionData] = await Promise.all([
+      apiRequest("/api/v1/fiscalizacoes"),
+      apiRequest("/api/v1/admin/jurisdicao"),
+    ]);
     setItems(data.content);
+    setJurisdiction(jurisdictionData);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -66,7 +71,7 @@ export function OversightPage() {
           <div className="settings-title"><SearchCheck size={21} /><div><strong>Nova fiscalização</strong><small>Planeje ou registre uma vistoria do gabinete.</small></div></div>
           <label>Título<input required value={form.titulo} onChange={(event) => setForm((current) => ({ ...current, titulo: event.target.value }))} /></label>
           <label>Descrição<textarea rows="3" value={form.descricao} onChange={(event) => setForm((current) => ({ ...current, descricao: event.target.value }))} /></label>
-          <label>Local<GooglePlaceAutocompleteInput value={form.local} onChange={(local) => setForm((current) => ({ ...current, local }))} placeholder="Digite um endereço ou ponto de referência" /></label>
+          <label>Local<GooglePlaceAutocompleteInput value={form.local} onChange={(local) => setForm((current) => ({ ...current, local }))} placeholder="Digite um endereço ou ponto de referência" territoryBounds={jurisdiction?.limites} /></label>
           <label>Achados<textarea rows="3" value={form.achados} onChange={(event) => setForm((current) => ({ ...current, achados: event.target.value }))} /></label>
           <label>Responsáveis<textarea rows="2" value={form.responsaveis} onChange={(event) => setForm((current) => ({ ...current, responsaveis: event.target.value }))} /></label>
           <label>Providências<textarea rows="3" value={form.providencias} onChange={(event) => setForm((current) => ({ ...current, providencias: event.target.value }))} /></label>

@@ -4,7 +4,7 @@ const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 let googleMapsPromise;
 let googleMapsCallbackId = 0;
 
-export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
+export function GooglePlaceAutocompleteInput({ value, onChange, placeholder, territoryBounds }) {
   const inputRef = useRef(null);
   const onChangeRef = useRef(onChange);
   const [status, setStatus] = useState(googleMapsApiKey ? "loading" : "disabled");
@@ -23,8 +23,10 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
       .then(() => {
         if (disposed || !inputRef.current || !window.google?.maps?.places) return;
         autocomplete = new window.google.maps.places.Autocomplete(inputRef.current, {
+          bounds: toGoogleBounds(territoryBounds),
           componentRestrictions: { country: "br" },
           fields: ["formatted_address", "geometry", "name", "place_id"],
+          strictBounds: hasValidBounds(territoryBounds),
         });
         listener = autocomplete.addListener("place_changed", () => {
           const place = autocomplete.getPlace();
@@ -42,7 +44,7 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
       listener?.remove();
       autocomplete?.unbindAll?.();
     };
-  }, []);
+  }, [territoryBounds]);
 
   return (
     <span className="maps-autocomplete-field">
@@ -52,7 +54,7 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder }) {
         onChange={(event) => onChangeRef.current(event.target.value)}
         placeholder={placeholder}
       />
-      {googleMapsApiKey && <small>{statusLabel(status)}</small>}
+      {googleMapsApiKey && <small>{statusLabel(status, territoryBounds)}</small>}
     </span>
   );
 }
@@ -100,8 +102,35 @@ function loadGoogleMapsPlaces(apiKey) {
   return googleMapsPromise;
 }
 
-function statusLabel(status) {
+function statusLabel(status, bounds) {
+  if (status === "ready" && hasValidBounds(bounds)) {
+    return "Sugestões do Google Maps restritas ao território";
+  }
   if (status === "ready") return "Sugestões do Google Maps ativas";
   if (status === "error") return "Google Maps indisponível; use texto livre";
   return "Carregando Google Maps...";
+}
+
+function toGoogleBounds(bounds) {
+  if (!hasValidBounds(bounds)) return undefined;
+  return new window.google.maps.LatLngBounds(
+    { lat: Number(bounds.minLatitude), lng: Number(bounds.minLongitude) },
+    { lat: Number(bounds.maxLatitude), lng: Number(bounds.maxLongitude) },
+  );
+}
+
+function hasValidBounds(bounds) {
+  if (!bounds) return false;
+  const minLatitude = Number(bounds.minLatitude);
+  const maxLatitude = Number(bounds.maxLatitude);
+  const minLongitude = Number(bounds.minLongitude);
+  const maxLongitude = Number(bounds.maxLongitude);
+  return (
+    Number.isFinite(minLatitude)
+    && Number.isFinite(maxLatitude)
+    && Number.isFinite(minLongitude)
+    && Number.isFinite(maxLongitude)
+    && minLatitude < maxLatitude
+    && minLongitude < maxLongitude
+  );
 }
