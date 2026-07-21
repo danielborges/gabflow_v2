@@ -46,12 +46,12 @@
 
 ## Insights
 
-- **RIA-060** Explicar método, período e base de cálculo.
-- **RIA-061** Sinalizar correlação sem afirmar causalidade.
-- **RIA-062** Apresentar intervalo de confiança ou qualidade do dado.
-- **RIA-063** Evitar inferência de preferência político-eleitoral individual.
-- **RIA-064** Alertar sobre amostra insuficiente.
-- **RIA-065** Possibilitar auditoria da origem dos dados.
+- **RIA-060** Explicar método, período e base de cálculo. **Implementado na Release 5 com regras e janelas explícitas nos alertas e relatório.**
+- **RIA-061** Sinalizar correlação sem afirmar causalidade. **Implementado na Release 5 por alertas determinísticos de crescimento, sem decisão automática.**
+- **RIA-062** Apresentar intervalo de confiança ou qualidade do dado. **Implementado parcialmente na Release 5 por cobertura geográfica e agregação mínima; intervalo estatístico fica pendente.**
+- **RIA-063** Evitar inferência de preferência político-eleitoral individual. **Implementado na Release 5 por restrição documental e ausência de score individual.**
+- **RIA-064** Alertar sobre amostra insuficiente. **Implementado na Release 5 por supressão de grupos pequenos.**
+- **RIA-065** Possibilitar auditoria da origem dos dados. **Implementado na Release 5 com relatório mensal e evidências por protocolo.**
 
 ## Avaliação
 

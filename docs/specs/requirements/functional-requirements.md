@@ -73,14 +73,14 @@
 
 ## Dashboards e relatórios
 
-- **RF-080** Exibir volume por status, categoria, bairro, canal e período.
-- **RF-081** Exibir tempo médio de triagem, primeira resposta e resolução.
-- **RF-082** Exibir taxa de reabertura e reincidência.
-- **RF-083** Exibir mapa de calor.
-- **RF-084** Permitir filtros e exportação.
-- **RF-085** Gerar relatório mensal do mandato.
-- **RF-086** Exibir indicadores por órgão destinatário.
-- **RF-087** Exibir solicitações sem retorno ou próximas do prazo.
+- **RF-080** Exibir volume por status, categoria, bairro, canal e período. **Implementado na Release 5.**
+- **RF-081** Exibir tempo médio de triagem, primeira resposta e resolução. **Implementado parcialmente na Release 5 com primeira resposta, encaminhamento, encerramento e resolução.**
+- **RF-082** Exibir taxa de reabertura e reincidência. **Implementado na Release 5 com contagem de reaberturas e alertas de reincidência.**
+- **RF-083** Exibir mapa de calor. **Implementado na Release 5.**
+- **RF-084** Permitir filtros e exportação. **Filtros implementados na Release 5; exportação pendente.**
+- **RF-085** Gerar relatório mensal do mandato. **Implementado na Release 5.**
+- **RF-086** Exibir indicadores por órgão destinatário. **Implementado na Release 5.**
+- **RF-087** Exibir solicitações sem retorno ou próximas do prazo. **Implementado na Release 5 para prazos, retornos e fila prioritária.**
 
 ## Administração
 
