@@ -4,6 +4,7 @@
 
 - Cidadão
 - Assessor
+- Chefe de Gabinete
 - Vereador
 - Administrador
 - Órgãos municipais

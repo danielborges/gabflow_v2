@@ -7,6 +7,7 @@
 - timezone
 - configurações
 - status
+- chief_of_staff_id
 
 ## Usuario
 - id
@@ -14,6 +15,7 @@
 - nome
 - email
 - perfil
+- funcoes_designadas
 - status
 - mfa_enabled
 

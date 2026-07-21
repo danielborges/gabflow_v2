@@ -45,7 +45,10 @@ const navigation = [
 ];
 
 export function Workspace({ user, onLogout }) {
-  const enabledModules = user.tenant?.modulosHabilitados || [];
+  const configuredModules = user.tenant?.modulosHabilitados;
+  const enabledModules = Array.isArray(configuredModules)
+    ? configuredModules
+    : navigation.map((item) => item.module).filter(Boolean);
   const representativeViews = new Set(["overview", "requests", "agenda", "documents", "rag-assistant", "channels"]);
   const isModuleEnabled = (module) => !module || enabledModules.includes(module);
   const availableNavigation = navigation.filter((item) => (
@@ -132,7 +135,7 @@ export function Workspace({ user, onLogout }) {
           <GlobalSearch onOpen={openSearchResult} />
           <div className="user-summary">
             <span className="avatar">{user.name.slice(0, 2).toUpperCase()}</span>
-            <span><strong>{user.name}</strong><small>{user.tenant.name}</small></span>
+            <span><strong>{user.name}</strong><small>{user.chefeGabinete ? `${user.tenant.name} · Chefe de Gabinete` : user.tenant.name}</small></span>
           </div>
           <NotificationCenter />
           <button className="icon-button" onClick={onLogout} aria-label="Sair" title="Sair">

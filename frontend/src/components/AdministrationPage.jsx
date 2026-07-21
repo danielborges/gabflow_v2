@@ -284,6 +284,7 @@ export function AdministrationPage() {
 
 function OfficeSettings({ data, users, onChange, onSubmit, error }) {
   const update = (section, key, value) => onChange({ ...data, [section]: { ...data[section], [key]: value } });
+  const chiefOptions = users.filter((user) => user.status === "active" && !["representative", "platform_admin"].includes(user.perfil));
   return (
     <form className="settings-form office-settings-form" onSubmit={onSubmit}>
       <div className="settings-title"><ShieldCheck size={21} /><div><strong>Dados do gabinete</strong><small>Identidade institucional, vereador, mandato e chefe de gabinete.</small></div></div>
@@ -303,7 +304,7 @@ function OfficeSettings({ data, users, onChange, onSubmit, error }) {
         <label>Cor primaria<input type="color" value={data.identidadeVisual.corPrimaria || "#2563eb"} onChange={(event) => update("identidadeVisual", "corPrimaria", event.target.value)} /></label>
         <label>Cor secundaria<input type="color" value={data.identidadeVisual.corSecundaria || "#0f766e"} onChange={(event) => update("identidadeVisual", "corSecundaria", event.target.value)} /></label>
         <label>URL do logo<input value={data.identidadeVisual.logoUrl || ""} onChange={(event) => update("identidadeVisual", "logoUrl", event.target.value)} /></label>
-        <label>Chefe de gabinete<select value={data.chefeGabineteId || ""} onChange={(event) => onChange({ ...data, chefeGabineteId: event.target.value })}><option value="">Nao definido</option>{users.map((user) => <option key={user.id} value={user.id}>{user.nome}</option>)}</select></label>
+        <label>Chefe de gabinete<select value={data.chefeGabineteId || ""} onChange={(event) => onChange({ ...data, chefeGabineteId: event.target.value })}><option value="">Nao definido</option>{chiefOptions.map((user) => <option key={user.id} value={user.id}>{user.nome}</option>)}</select></label>
       </div>
       {error && <p className="form-error">{error}</p>}
       <button className="primary-button compact"><Save size={18} /> Salvar gabinete</button>
@@ -323,7 +324,7 @@ function UsersSettings({ form, users, onForm, onSubmit, onUpdate, error }) {
       <button className="primary-button compact"><Plus size={18} /> Criar usuario</button>
     </form>
     <div className="category-list">
-      {users.map((user) => <article key={user.id}><span className="entity-icon"><Users size={19} /></span><div><strong>{user.nome}</strong><small>{user.email} · {user.perfil} · {user.status}</small></div><select value={user.status} onChange={(event) => onUpdate(user, { status: event.target.value })}><option value="active">active</option><option value="blocked">blocked</option></select></article>)}
+      {users.map((user) => <article key={user.id}><span className="entity-icon"><Users size={19} /></span><div><strong>{user.nome}{user.chefeGabinete ? " · Chefe de Gabinete" : ""}</strong><small>{user.email} · {user.perfil} · {user.status}</small></div><select value={user.status} onChange={(event) => onUpdate(user, { status: event.target.value })}><option value="active">active</option><option value="blocked">blocked</option></select></article>)}
     </div>
   </>;
 }

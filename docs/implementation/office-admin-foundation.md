@@ -11,6 +11,9 @@
 - Perfil `representative` para vereador ou deputado estadual, cadastrado como usuario proprio do gabinete.
 - Perfil `representative` com acesso executivo a painel, indicadores, solicitacoes, agenda, documentos, canais e assistente de IA, sem acesso ao menu administrativo.
 - Aprovacao de minutas legislativas em revisao pelo perfil `representative`.
+- Designacao funcional de Chefe de Gabinete por `chief_of_staff_id`, limitada a usuario ativo do proprio gabinete com perfil interno.
+- Exposicao de `chefeGabinete` e `funcoes=["chefe_gabinete"]` na sessao e na lista administrativa de usuarios.
+- Permissoes adicionais de supervisao legislativa para Chefe de Gabinete sem conversao automatica para `admin`: rejeitar minuta em revisao, registrar protocolo externo e adicionar tramitacao.
 - Bloqueio e atualizacao de perfil de usuarios internos.
 - Auditoria interna em `/api/v1/admin/auditoria`.
 - Restricao de rotas administrativas de configuracao para `admin`.
@@ -21,6 +24,8 @@
 Todas as consultas e mutacoes do Administrador do Gabinete usam o `tenant_id` do token autenticado. O perfil nao tem acesso a `/api/v1/platform/*` e nao consegue operar sobre usuarios, configuracoes ou auditoria de outro gabinete.
 
 O perfil `representative` tambem usa o isolamento por `tenant_id`. Ele pode consultar dados executivos do proprio gabinete e aprovar minutas, mas nao pode cadastrar configuracoes administrativas nem executar mutacoes operacionais restritas aos perfis `admin`, `manager` e `staff`.
+
+A funcao `chefe_gabinete` tambem e isolada por `tenant_id` e nasce da designacao feita pelo Administrador do Gabinete. Ela nao altera o papel base do usuario e nao libera `/api/v1/admin/perfil-gabinete`; quando o usuario tambem precisar administrar configuracoes, o perfil `admin` deve ser atribuido explicitamente.
 
 ## APIs principais
 
@@ -42,5 +47,6 @@ O perfil `representative` tambem usa o isolamento por `tenant_id`. Ele pode cons
 - Criar telas dedicadas para documentos legislativos, agenda, notificacoes, RAG e privacidade dentro da administracao do gabinete.
 - Conectar identidade visual configurada a temas, logo e assets renderizados no workspace.
 - Adicionar fluxo formal de designacao/aceite do chefe de gabinete.
+- Evoluir a matriz granular de permissoes do Chefe de Gabinete para aprovar encerramentos, autorizar respostas e distribuir solicitacoes com regras dedicadas por acao.
 - Implementar politicas configuraveis de consentimento, retencao e exportacao por gabinete.
 - Adicionar testes automatizados de browser cobrindo o workspace administrativo completo.

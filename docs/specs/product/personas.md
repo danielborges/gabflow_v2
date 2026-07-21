@@ -14,10 +14,21 @@ Necessidades:
 
 Necessidades:
 - distribuir atividades;
+- atribuir responsaveis;
 - acompanhar prazos;
+- visualizar todos os atendimentos;
+- aprovar encerramentos;
+- organizar agenda;
 - monitorar produtividade;
 - identificar gargalos;
 - garantir padrão de atendimento.
+- supervisionar documentos;
+- autorizar respostas;
+- gerar relatorios.
+
+Restricao:
+- deve ser assessor previamente cadastrado e ativo no gabinete;
+- a designacao como chefe nao transforma automaticamente o usuario em Administrador do Gabinete.
 
 ## Assessor de Atendimento
 

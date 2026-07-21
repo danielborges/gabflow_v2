@@ -21,11 +21,14 @@ auth_bp = Blueprint("auth", __name__)
 
 
 def _serialize_user(user: User) -> dict:
+    chief_of_staff = _is_chief_of_staff(user)
     return {
         "id": str(user.id),
         "name": user.name,
         "email": user.email,
         "role": user.role.value,
+        "chefeGabinete": chief_of_staff,
+        "funcoes": ["chefe_gabinete"] if chief_of_staff else [],
         "tenant": {
             "id": str(user.tenant.id),
             "name": user.tenant.name,
@@ -38,6 +41,10 @@ def _serialize_user(user: User) -> dict:
         if user.tenant is not None
         else None,
     }
+
+
+def _is_chief_of_staff(user: User) -> bool:
+    return bool(user.tenant and user.tenant.chief_of_staff_id == user.id)
 
 
 def _audit(user: User, action: str) -> None:
@@ -97,6 +104,7 @@ def login():
         additional_claims={
             "tenant_id": str(user.tenant_id) if user.tenant_id else None,
             "role": user.role.value,
+            "is_chief_of_staff": _is_chief_of_staff(user),
         },
     )
     response = jsonify(user=_serialize_user(user))

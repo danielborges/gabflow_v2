@@ -165,3 +165,88 @@ def test_representative_profile_consults_and_approves_without_admin_access(app, 
     )
     assert approved.status_code == 200
     assert approved.json["status"] == "APROVADA"
+
+
+def test_chief_of_staff_designation_grants_supervision_without_admin_role(app, client):
+    csrf = _login(client)
+    chief = client.post(
+        "/api/v1/admin/usuarios",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nome": "Chefe Operacional",
+            "email": "chefe@teste.local",
+            "senha": PASSWORD,
+            "perfil": "staff",
+        },
+    )
+    regular_staff = client.post(
+        "/api/v1/admin/usuarios",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nome": "Assessor Regular",
+            "email": "assessor.regular@teste.local",
+            "senha": PASSWORD,
+            "perfil": "staff",
+        },
+    )
+    assert chief.status_code == 201
+    assert regular_staff.status_code == 201
+
+    profile = client.patch(
+        "/api/v1/admin/perfil-gabinete",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"chefeGabineteId": chief.json["id"]},
+    )
+    assert profile.status_code == 200
+    assert profile.json["chefeGabineteId"] == chief.json["id"]
+
+    users = client.get("/api/v1/admin/usuarios")
+    assert users.status_code == 200
+    chief_data = next(item for item in users.json["content"] if item["id"] == chief.json["id"])
+    assert chief_data["perfil"] == "staff"
+    assert chief_data["chefeGabinete"] is True
+    assert chief_data["funcoes"] == ["chefe_gabinete"]
+
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        admin = db.session.execute(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        ).scalar_one()
+        draft = LegislativeDraft(
+            tenant_id=tenant.id,
+            document_type=LegislativeDocumentType.INDICACAO,
+            status=LegislativeDraftStatus.APROVADA,
+            generation_status=LegislativeGenerationStatus.CONCLUIDA,
+            title="Indicacao aprovada para protocolo",
+            content="Texto aprovado.",
+            justification="Demanda prioritaria.",
+            current_version=1,
+            created_by_id=admin.id,
+            approved_by_id=admin.id,
+        )
+        db.session.add(draft)
+        db.session.commit()
+        draft_id = draft.id
+
+    csrf = _login(client, email="assessor.regular@teste.local")
+    blocked = client.post(
+        f"/api/v1/legislativo/minutas/{draft_id}/protocolo",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"protocolo": "CM-2026-REGULAR"},
+    )
+    assert blocked.status_code == 403
+
+    csrf = _login(client, email="chefe@teste.local")
+    me = client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json["user"]["role"] == "staff"
+    assert me.json["user"]["chefeGabinete"] is True
+    assert client.get("/api/v1/admin/perfil-gabinete").status_code == 403
+
+    protocolled = client.post(
+        f"/api/v1/legislativo/minutas/{draft_id}/protocolo",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"protocolo": "CM-2026-CHEFE"},
+    )
+    assert protocolled.status_code == 200
+    assert protocolled.json["protocolo"] == "CM-2026-CHEFE"

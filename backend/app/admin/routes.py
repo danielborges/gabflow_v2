@@ -85,12 +85,15 @@ def _office_profile_data(item: Tenant) -> dict:
 
 
 def _user_data(item: User) -> dict:
+    chief_of_staff = bool(item.tenant and item.tenant.chief_of_staff_id == item.id)
     return {
         "id": str(item.id),
         "nome": item.name,
         "email": item.email,
         "perfil": item.role.value,
         "status": item.status.value,
+        "chefeGabinete": chief_of_staff,
+        "funcoes": ["chefe_gabinete"] if chief_of_staff else [],
         "mfaHabilitado": item.mfa_enabled,
         "ultimoLoginEm": item.last_login_at.isoformat() if item.last_login_at else None,
         "criadoEm": item.created_at.isoformat(),
@@ -141,6 +144,16 @@ def update_office_profile():
         chief = _tenant_user(tenant_id, chief_id)
         if chief is None:
             return jsonify(error="validation_error", message="Chefe de gabinete invalido."), 422
+        if chief.status != UserStatus.ACTIVE:
+            return jsonify(
+                error="validation_error",
+                message="Chefe de gabinete deve ser um usuario ativo.",
+            ), 422
+        if chief.role in {Role.PLATFORM_ADMIN, Role.REPRESENTATIVE}:
+            return jsonify(
+                error="validation_error",
+                message="Chefe de gabinete deve ser assessor ou administrador interno.",
+            ), 422
         tenant.chief_of_staff_id = chief.id
     after = _office_profile_data(tenant)
     add_audit(

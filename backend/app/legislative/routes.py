@@ -10,7 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.audit import add_audit
-from app.auth.permissions import roles_required
+from app.auth.permissions import is_chief_of_staff, roles_or_chief_required, roles_required
 from app.extensions import db
 from app.legislative.exports import draft_docx, draft_pdf
 from app.legislative.foundation import (
@@ -416,7 +416,7 @@ def review_draft(draft_id: uuid.UUID):
         draft.approved_by_id = user_id
         draft.approved_at = datetime.now(UTC)
     else:
-        if get_jwt().get("role") not in {"admin", "manager"}:
+        if get_jwt().get("role") not in {"admin", "manager"} and not is_chief_of_staff():
             return jsonify(error="forbidden", message="A rejeição exige perfil gestor."), 403
         reason = str(payload.get("motivo", "")).strip()
         if not reason:
@@ -445,7 +445,7 @@ def review_draft(draft_id: uuid.UUID):
 
 
 @legislative_bp.post("/legislativo/minutas/<uuid:draft_id>/protocolo")
-@roles_required("admin", "manager")
+@roles_or_chief_required("admin", "manager")
 def register_protocol(draft_id: uuid.UUID):
     tenant_id, user_id = _context()
     draft = _draft(tenant_id, draft_id)
@@ -508,7 +508,7 @@ def list_tramitations(draft_id: uuid.UUID):
 
 
 @legislative_bp.post("/legislativo/minutas/<uuid:draft_id>/tramitacoes")
-@roles_required("admin", "manager")
+@roles_or_chief_required("admin", "manager")
 def add_tramitation(draft_id: uuid.UUID):
     tenant_id, user_id = _context()
     draft = _draft(tenant_id, draft_id)
