@@ -1,6 +1,7 @@
 import { ClipboardCheck, FileText, Plus, SearchCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 const emptyForm = {
   titulo: "",
@@ -65,7 +66,7 @@ export function OversightPage() {
           <div className="settings-title"><SearchCheck size={21} /><div><strong>Nova fiscalização</strong><small>Planeje ou registre uma vistoria do gabinete.</small></div></div>
           <label>Título<input required value={form.titulo} onChange={(event) => setForm((current) => ({ ...current, titulo: event.target.value }))} /></label>
           <label>Descrição<textarea rows="3" value={form.descricao} onChange={(event) => setForm((current) => ({ ...current, descricao: event.target.value }))} /></label>
-          <label>Local<input value={form.local} onChange={(event) => setForm((current) => ({ ...current, local: event.target.value }))} /></label>
+          <label>Local<GooglePlaceAutocompleteInput value={form.local} onChange={(local) => setForm((current) => ({ ...current, local }))} placeholder="Digite um endereço ou ponto de referência" /></label>
           <label>Achados<textarea rows="3" value={form.achados} onChange={(event) => setForm((current) => ({ ...current, achados: event.target.value }))} /></label>
           <label>Responsáveis<textarea rows="2" value={form.responsaveis} onChange={(event) => setForm((current) => ({ ...current, responsaveis: event.target.value }))} /></label>
           <label>Providências<textarea rows="3" value={form.providencias} onChange={(event) => setForm((current) => ({ ...current, providencias: event.target.value }))} /></label>

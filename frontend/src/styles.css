@@ -245,6 +245,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .settings-form input, .settings-form select, .settings-form textarea, .duplicate-form input, .inline-form input { width: 100%; padding: 0 11px; border: 1px solid #cbd6e2; border-radius: 5px; outline: 0; color: var(--ink); background: white; }
 .settings-form input, .settings-form select, .duplicate-form input, .inline-form input { height: 42px; }
 .settings-form textarea { padding-top: 10px; resize: vertical; }
+.maps-autocomplete-field { display: grid; gap: 5px; }
+.maps-autocomplete-field small { color: var(--muted); font-size: 0.74rem; font-weight: 650; }
+.pac-container { z-index: 2000; border: 1px solid #cbd6e2; border-radius: 6px; box-shadow: 0 12px 30px rgba(15, 31, 51, 0.14); font-family: inherit; }
 .form-success { margin: 0; padding: 10px 12px; border: 1px solid #a7f3d0; border-radius: 6px; color: #047857; background: #ecfdf5; font-size: .74rem; font-weight: 750; }
 .jurisdiction-import-button { align-self: end; min-height: 42px; justify-content: center; }
 .template-help { color: var(--muted); line-height: 1.5; }
