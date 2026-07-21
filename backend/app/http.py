@@ -2,11 +2,14 @@ import secrets
 
 from flask import Flask, g, request
 
+from app.modules import enforce_tenant_access
+
 
 def register_http_hooks(app: Flask) -> None:
     @app.before_request
     def set_request_context() -> None:
         g.request_id = request.headers.get("X-Request-ID") or secrets.token_hex(16)
+        return enforce_tenant_access(request.endpoint, request.blueprint)
 
     @app.after_request
     def apply_response_headers(response):

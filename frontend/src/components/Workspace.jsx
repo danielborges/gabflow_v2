@@ -32,28 +32,50 @@ import { RagKnowledgeBasePage } from "./RagKnowledgeBasePage";
 import { RequestsPage } from "./RequestsPage";
 
 const navigation = [
-  { id: "overview", label: "Visão geral", icon: LayoutDashboard, enabled: true },
-  { id: "requests", label: "Solicitações", icon: ClipboardList, enabled: true },
-  { id: "citizens", label: "Cidadãos", icon: Users, enabled: true },
-  { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true },
-  { id: "rag-assistant", label: "Assistente RAG", icon: Sparkles, enabled: true },
-  { id: "documents", label: "Documentos", icon: FileText, enabled: true },
-  { id: "agenda", label: "Agenda", icon: CalendarDays, enabled: true },
-  { id: "oversight", label: "Fiscalizacao", icon: ClipboardCheck, enabled: true },
-  { id: "channels", label: "Canais", icon: MessagesSquare, enabled: true },
-  { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true },
+  { id: "overview", label: "Visao geral", icon: LayoutDashboard, enabled: true },
+  { id: "requests", label: "Solicitacoes", icon: ClipboardList, enabled: true, module: "solicitacoes" },
+  { id: "citizens", label: "Cidadaos", icon: Users, enabled: true, module: "cidadaos" },
+  { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true, module: "ia" },
+  { id: "rag-assistant", label: "Assistente RAG", icon: Sparkles, enabled: true, module: "rag" },
+  { id: "documents", label: "Documentos", icon: FileText, enabled: true, module: "documentos" },
+  { id: "agenda", label: "Agenda", icon: CalendarDays, enabled: true, module: "agenda" },
+  { id: "oversight", label: "Fiscalizacao", icon: ClipboardCheck, enabled: true, module: "fiscalizacao" },
+  { id: "channels", label: "Canais", icon: MessagesSquare, enabled: true, module: "canais" },
+  { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true, module: "rag" },
 ];
 
 export function Workspace({ user, onLogout }) {
+  const enabledModules = user.tenant?.modulosHabilitados || [];
+  const representativeViews = new Set(["overview", "requests", "agenda", "documents", "rag-assistant", "channels"]);
+  const isModuleEnabled = (module) => !module || enabledModules.includes(module);
+  const availableNavigation = navigation.filter((item) => (
+    isModuleEnabled(item.module) && (user.role !== "representative" || representativeViews.has(item.id))
+  ));
+  const initialView =
+    availableNavigation.find((item) => item.id === "requests")?.id ||
+    availableNavigation[0]?.id ||
+    "overview";
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeView, setActiveView] = useState("requests");
+  const [activeView, setActiveView] = useState(initialView);
   const [requestSearch, setRequestSearch] = useState("");
 
   function openSearchResult(item) {
+    const target = navigation.find((entry) => entry.id === item.view);
+    if (
+      !isModuleEnabled(target?.module) ||
+      (user.role === "representative" && !representativeViews.has(target?.id))
+    ) {
+      return;
+    }
     if (item.view === "requests" && item.pesquisa) {
       setRequestSearch(item.pesquisa);
     }
     setActiveView(item.view || "requests");
+    setMenuOpen(false);
+  }
+
+  function openView(id) {
+    setActiveView(id);
     setMenuOpen(false);
   }
 
@@ -70,16 +92,13 @@ export function Workspace({ user, onLogout }) {
             <ChevronRight size={20} />
           </button>
         </div>
-        <nav aria-label="Navegação principal">
-          {navigation.map(({ id, label, icon: Icon, enabled, managerOnly }) => (
+        <nav aria-label="Navegacao principal">
+          {availableNavigation.map(({ id, label, icon: Icon, enabled, managerOnly }) => (
             <button
               key={id}
               className={activeView === id ? "nav-item active" : "nav-item"}
               disabled={!enabled || (managerOnly && !["admin", "manager"].includes(user.role))}
-              onClick={() => {
-                setActiveView(id);
-                setMenuOpen(false);
-              }}
+              onClick={() => openView(id)}
             >
               <Icon size={19} />
               <span>{label}</span>
@@ -89,25 +108,19 @@ export function Workspace({ user, onLogout }) {
         <div className="sidebar-footer">
           <button
             className={activeView === "privacy" ? "nav-item active" : "nav-item"}
-            disabled={!["admin", "manager"].includes(user.role)}
-            onClick={() => {
-              setActiveView("privacy");
-              setMenuOpen(false);
-            }}
+            disabled={!["admin", "manager"].includes(user.role) || !isModuleEnabled("privacidade")}
+            onClick={() => openView("privacy")}
           >
             <ShieldCheck size={19} /><span>Privacidade</span>
           </button>
           <button
             className={activeView === "admin" ? "nav-item active" : "nav-item"}
-            disabled={!["admin", "manager"].includes(user.role)}
-            onClick={() => {
-              setActiveView("admin");
-              setMenuOpen(false);
-            }}
+            disabled={user.role !== "admin"}
+            onClick={() => openView("admin")}
           >
-            <Settings size={19} /><span>Administração</span>
+            <Settings size={19} /><span>Administracao</span>
           </button>
-          <div className="security-note"><ShieldCheck size={18} /><span>Sessão protegida</span></div>
+          <div className="security-note"><ShieldCheck size={18} /><span>Sessao protegida</span></div>
         </div>
       </aside>
 
@@ -127,18 +140,22 @@ export function Workspace({ user, onLogout }) {
           </button>
         </header>
 
-        {activeView === "requests" && <RequestsPage user={user} initialSearch={requestSearch} />}
-        {activeView === "agenda" && <AgendaPage />}
-        {activeView === "oversight" && <OversightPage />}
-        {activeView === "channels" && <ChannelsPage />}
-        {activeView === "citizens" && <DirectoryPage />}
-        {activeView === "ai-quality" && <AIQualityPage />}
-        {activeView === "rag-assistant" && <RagAssistantPage />}
-        {activeView === "documents" && <LegislativeDocumentsPage user={user} />}
-        {activeView === "rag" && <RagKnowledgeBasePage />}
+        {activeView === "requests" && isModuleEnabled("solicitacoes") && (
+          <RequestsPage user={user} initialSearch={requestSearch} />
+        )}
+        {activeView === "agenda" && isModuleEnabled("agenda") && <AgendaPage />}
+        {activeView === "oversight" && isModuleEnabled("fiscalizacao") && <OversightPage />}
+        {activeView === "channels" && isModuleEnabled("canais") && <ChannelsPage />}
+        {activeView === "citizens" && isModuleEnabled("cidadaos") && <DirectoryPage />}
+        {activeView === "ai-quality" && isModuleEnabled("ia") && <AIQualityPage />}
+        {activeView === "rag-assistant" && isModuleEnabled("rag") && <RagAssistantPage />}
+        {activeView === "documents" && isModuleEnabled("documentos") && (
+          <LegislativeDocumentsPage user={user} />
+        )}
+        {activeView === "rag" && isModuleEnabled("rag") && <RagKnowledgeBasePage />}
         {activeView === "admin" && <AdministrationPage />}
-        {activeView === "privacy" && <PrivacyGovernancePage />}
-        {activeView === "overview" && <OperationalDashboard onOpenRequests={() => setActiveView("requests")} />}
+        {activeView === "privacy" && isModuleEnabled("privacidade") && <PrivacyGovernancePage />}
+        {activeView === "overview" && <OperationalDashboard onOpenRequests={() => openView("requests")} />}
       </main>
     </div>
   );

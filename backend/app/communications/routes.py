@@ -553,7 +553,7 @@ def receive_meta_social_webhook(tenant_slug: str):
 
 
 @communications_bp.post("/canais/mensagens/<uuid:message_id>/solicitacao")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def convert_channel_message(message_id: uuid.UUID):
     tenant_id, user_id = _context()
     item = db.session.execute(
@@ -601,7 +601,7 @@ def convert_channel_message(message_id: uuid.UUID):
 
 
 @communications_bp.patch("/canais/mensagens/<uuid:message_id>")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def update_channel_message(message_id: uuid.UUID):
     tenant_id, user_id = _context()
     item = db.session.execute(
@@ -813,7 +813,7 @@ def _resend_email_content(received_email: dict, data: dict) -> str:
 
 
 @communications_bp.get("/admin/templates-resposta")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin", "manager", "staff", "representative")
 def list_templates():
     tenant_id, _ = _context()
     filters = [ResponseTemplate.tenant_id == tenant_id]
@@ -833,7 +833,7 @@ def list_templates():
 
 
 @communications_bp.post("/admin/templates-resposta")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def create_template():
     tenant_id, user_id = _context()
     try:
@@ -860,7 +860,7 @@ def create_template():
 
 
 @communications_bp.patch("/admin/templates-resposta/<uuid:template_id>")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def update_template(template_id: uuid.UUID):
     tenant_id, user_id = _context()
     item = db.session.execute(
@@ -1071,7 +1071,7 @@ def _valid_assignee(tenant_id: uuid.UUID, assignee_id) -> User | None:
 
 
 @communications_bp.post("/solicitacoes/<uuid:request_id>/retornos")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def schedule_return(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -1128,7 +1128,7 @@ def schedule_return(request_id: uuid.UUID):
 
 
 @communications_bp.patch("/retornos/<uuid:return_id>")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def update_return(return_id: uuid.UUID):
     tenant_id, user_id = _context()
     item = db.session.execute(

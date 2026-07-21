@@ -14,7 +14,8 @@ from sqlalchemy import select
 
 from app.auth.security import verify_password
 from app.extensions import db, limiter
-from app.models import AuditLog, Tenant, TenantStatus, User, UserStatus
+from app.models import AuditLog, Role, Tenant, TenantStatus, User, UserStatus
+from app.modules import BLOCKING_CONTRACT_STATUSES, normalize_modules
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -29,7 +30,13 @@ def _serialize_user(user: User) -> dict:
             "id": str(user.tenant.id),
             "name": user.tenant.name,
             "slug": user.tenant.slug,
-        },
+            "status": user.tenant.status.value,
+            "contrato": user.tenant.contract_status.value,
+            "plano": user.tenant.plan,
+            "modulosHabilitados": normalize_modules(user.tenant.enabled_modules),
+        }
+        if user.tenant is not None
+        else None,
     }
 
 
@@ -55,16 +62,28 @@ def login():
     password = str(payload.get("password", ""))
     tenant_slug = str(payload.get("tenant", "")).strip().lower()
 
-    if not email or not password or not tenant_slug:
-        return jsonify(error="validation_error", message="Preencha tenant, e-mail e senha."), 400
+    if not email or not password:
+        return jsonify(error="validation_error", message="Preencha e-mail e senha."), 400
 
-    statement = select(User).join(Tenant).where(User.email == email, Tenant.slug == tenant_slug)
+    if tenant_slug:
+        statement = (
+            select(User)
+            .join(Tenant, User.tenant_id == Tenant.id)
+            .where(User.email == email, Tenant.slug == tenant_slug)
+        )
+    else:
+        statement = select(User).where(User.email == email, User.role == Role.PLATFORM_ADMIN)
     user = db.session.execute(statement).scalar_one_or_none()
 
     if (
         user is None
         or user.status != UserStatus.ACTIVE
-        or user.tenant.status != TenantStatus.ACTIVE
+        or (user.tenant is not None and user.tenant.status != TenantStatus.ACTIVE)
+        or (
+            user.tenant is not None
+            and user.tenant.contract_status in BLOCKING_CONTRACT_STATUSES
+        )
+        or (not tenant_slug and user.role != Role.PLATFORM_ADMIN)
         or not verify_password(user.password_hash, password)
     ):
         return jsonify(error="invalid_credentials", message="Credenciais inválidas."), 401
@@ -75,7 +94,10 @@ def login():
 
     token = create_access_token(
         identity=str(user.id),
-        additional_claims={"tenant_id": str(user.tenant_id), "role": user.role.value},
+        additional_claims={
+            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+            "role": user.role.value,
+        },
     )
     response = jsonify(user=_serialize_user(user))
     set_access_cookies(response, token)
@@ -86,10 +108,10 @@ def login():
 @jwt_required()
 def logout():
     user_id = uuid.UUID(get_jwt_identity())
-    tenant_id = uuid.UUID(get_jwt()["tenant_id"])
+    tenant_claim = get_jwt().get("tenant_id")
     db.session.add(
         AuditLog(
-            tenant_id=tenant_id,
+            tenant_id=uuid.UUID(tenant_claim) if tenant_claim else None,
             user_id=user_id,
             action="auth.logout",
             entity_type="user",
@@ -108,10 +130,13 @@ def logout():
 @jwt_required()
 def me():
     user_id = uuid.UUID(get_jwt_identity())
-    tenant_id = uuid.UUID(get_jwt()["tenant_id"])
-    user = db.session.execute(
-        select(User).where(User.id == user_id, User.tenant_id == tenant_id)
-    ).scalar_one_or_none()
+    tenant_claim = get_jwt().get("tenant_id")
+    statement = select(User).where(User.id == user_id)
+    if tenant_claim:
+        statement = statement.where(User.tenant_id == uuid.UUID(tenant_claim))
+    else:
+        statement = statement.where(User.role == Role.PLATFORM_ADMIN, User.tenant_id.is_(None))
+    user = db.session.execute(statement).scalar_one_or_none()
     if user is None or user.status != UserStatus.ACTIVE:
         return jsonify(error="unauthorized", message="Sessão inválida."), 401
     return jsonify(user=_serialize_user(user))

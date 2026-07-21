@@ -6,19 +6,24 @@ import uuid
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.audit import add_audit
 from app.auth.permissions import roles_required
+from app.auth.security import hash_password
 from app.extensions import db
 from app.models import (
+    AuditLog,
     ExternalAgency,
     IntegrationSetting,
     IntegrationStatus,
     IntegrationType,
     RequestCategory,
+    Role,
     Tenant,
     Territory,
+    User,
+    UserStatus,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -70,6 +75,28 @@ def _jurisdiction_data(item: Tenant) -> dict:
     }
 
 
+def _office_profile_data(item: Tenant) -> dict:
+    return {
+        "vereador": item.representative_info or {},
+        "mandato": item.mandate_info or {},
+        "identidadeVisual": item.visual_identity or {},
+        "chefeGabineteId": str(item.chief_of_staff_id) if item.chief_of_staff_id else None,
+    }
+
+
+def _user_data(item: User) -> dict:
+    return {
+        "id": str(item.id),
+        "nome": item.name,
+        "email": item.email,
+        "perfil": item.role.value,
+        "status": item.status.value,
+        "mfaHabilitado": item.mfa_enabled,
+        "ultimoLoginEm": item.last_login_at.isoformat() if item.last_login_at else None,
+        "criadoEm": item.created_at.isoformat(),
+    }
+
+
 def _integration_data(item: IntegrationSetting) -> dict:
     return {
         "id": str(item.id),
@@ -82,8 +109,185 @@ def _integration_data(item: IntegrationSetting) -> dict:
     }
 
 
+@admin_bp.get("/perfil-gabinete")
+@roles_required("admin")
+def get_office_profile():
+    tenant_id, _ = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    return jsonify(_office_profile_data(tenant))
+
+
+@admin_bp.patch("/perfil-gabinete")
+@roles_required("admin")
+def update_office_profile():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    payload = request.get_json(silent=True) or {}
+    before = _office_profile_data(tenant)
+    try:
+        tenant.representative_info = _clean_dict(
+            payload.get("vereador"), tenant.representative_info
+        )
+        tenant.mandate_info = _clean_dict(payload.get("mandato"), tenant.mandate_info)
+        tenant.visual_identity = _clean_dict(
+            payload.get("identidadeVisual"), tenant.visual_identity
+        )
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    chief_id = payload.get("chefeGabineteId", tenant.chief_of_staff_id)
+    if chief_id in ("", None):
+        tenant.chief_of_staff_id = None
+    else:
+        chief = _tenant_user(tenant_id, chief_id)
+        if chief is None:
+            return jsonify(error="validation_error", message="Chefe de gabinete invalido."), 422
+        tenant.chief_of_staff_id = chief.id
+    after = _office_profile_data(tenant)
+    add_audit(
+        tenant_id, user_id, "tenant.office_profile.updated", "tenant", tenant.id, before, after
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@admin_bp.get("/usuarios")
+@roles_required("admin")
+def admin_list_users():
+    tenant_id, _ = _context()
+    users = db.session.execute(
+        select(User).where(User.tenant_id == tenant_id).order_by(User.name)
+    ).scalars()
+    return jsonify(content=[_user_data(item) for item in users])
+
+
+@admin_bp.post("/usuarios")
+@roles_required("admin")
+def admin_create_user():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("nome", "")).strip()
+    email = str(payload.get("email", "")).strip().lower()
+    password = str(payload.get("senha", "")).strip()
+    try:
+        role = Role(str(payload.get("perfil", "staff")).lower())
+    except ValueError:
+        return jsonify(error="validation_error", message="Perfil invalido."), 422
+    if role == Role.PLATFORM_ADMIN:
+        return jsonify(error="validation_error", message="Perfil invalido para gabinete."), 422
+    if len(name) < 2 or not email or len(password) < 8:
+        return (
+            jsonify(error="validation_error", message="Informe nome, e-mail e senha segura."),
+            422,
+        )
+    active_users = db.session.scalar(
+        select(func.count(User.id)).where(
+            User.tenant_id == tenant_id,
+            User.status == UserStatus.ACTIVE,
+        )
+    )
+    if active_users >= tenant.user_limit:
+        return jsonify(error="user_limit_reached", message="Limite de usuarios atingido."), 422
+    exists = db.session.execute(
+        select(User.id).where(User.tenant_id == tenant_id, User.email == email)
+    ).scalar_one_or_none()
+    if exists:
+        return jsonify(error="conflict", message="E-mail ja cadastrado no gabinete."), 409
+    item = User(
+        tenant_id=tenant_id,
+        name=name,
+        email=email,
+        password_hash=hash_password(password),
+        role=role,
+        status=UserStatus.ACTIVE,
+    )
+    db.session.add(item)
+    db.session.flush()
+    after = _user_data(item)
+    add_audit(tenant_id, user_id, "tenant.user.created", "user", item.id, None, after)
+    db.session.commit()
+    return jsonify(after), 201
+
+
+@admin_bp.patch("/usuarios/<uuid:item_id>")
+@roles_required("admin")
+def admin_update_user(item_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _tenant_user(tenant_id, item_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Usuario nao encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    before = _user_data(item)
+    if "nome" in payload:
+        item.name = str(payload["nome"]).strip() or item.name
+    if "perfil" in payload:
+        try:
+            role = Role(str(payload["perfil"]).lower())
+        except ValueError:
+            return jsonify(error="validation_error", message="Perfil invalido."), 422
+        if role == Role.PLATFORM_ADMIN:
+            return jsonify(error="validation_error", message="Perfil invalido para gabinete."), 422
+        item.role = role
+    if "status" in payload:
+        try:
+            item.status = UserStatus(str(payload["status"]).lower())
+        except ValueError:
+            return jsonify(error="validation_error", message="Status invalido."), 422
+    if payload.get("senha"):
+        password = str(payload["senha"])
+        if len(password) < 8:
+            return (
+                jsonify(error="validation_error", message="Senha deve ter ao menos 8 caracteres."),
+                422,
+            )
+        item.password_hash = hash_password(password)
+    db.session.flush()
+    after = _user_data(item)
+    add_audit(tenant_id, user_id, "tenant.user.updated", "user", item.id, before, after)
+    db.session.commit()
+    return jsonify(after)
+
+
+@admin_bp.get("/auditoria")
+@roles_required("admin")
+def admin_audit():
+    tenant_id, _ = _context()
+    page = _positive_int(request.args.get("page"), 1)
+    per_page = _positive_int(request.args.get("perPage"), 10)
+    if per_page not in {10, 25, 50}:
+        per_page = 10
+    total = db.session.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.tenant_id == tenant_id)
+    )
+    items = db.session.execute(
+        select(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .order_by(AuditLog.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    ).scalars()
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return jsonify(
+        content=[
+            {
+                "id": str(item.id),
+                "acao": item.action,
+                "entidade": item.entity_type,
+                "entidadeId": item.entity_id,
+                "usuarioId": str(item.user_id) if item.user_id else None,
+                "criadoEm": item.created_at.isoformat(),
+            }
+            for item in items
+        ],
+        page=page,
+        perPage=per_page,
+        total=total,
+        totalPages=total_pages,
+    )
+
+
 @admin_bp.get("/jurisdicao")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin", "manager", "staff", "representative")
 def get_jurisdiction():
     tenant_id, _ = _context()
     tenant = db.session.get(Tenant, tenant_id)
@@ -91,7 +295,7 @@ def get_jurisdiction():
 
 
 @admin_bp.patch("/jurisdicao")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def update_jurisdiction():
     tenant_id, user_id = _context()
     tenant = db.session.get(Tenant, tenant_id)
@@ -145,7 +349,7 @@ def update_jurisdiction():
 
 
 @admin_bp.post("/jurisdicao/ibge")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def import_ibge_jurisdiction():
     tenant_id, user_id = _context()
     tenant = db.session.get(Tenant, tenant_id)
@@ -193,7 +397,7 @@ def import_ibge_jurisdiction():
 
 
 @admin_bp.get("/integracoes")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin")
 def list_integrations():
     tenant_id, _ = _context()
     items = db.session.execute(
@@ -205,7 +409,7 @@ def list_integrations():
 
 
 @admin_bp.post("/integracoes")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def upsert_integration():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
@@ -278,6 +482,32 @@ def _sanitize_integration_config(config: dict) -> tuple[dict, bool]:
             continue
         public_config[str(key)] = value
     return public_config, has_secret
+
+
+def _clean_dict(value, fallback) -> dict:
+    if value is None:
+        return fallback or {}
+    if not isinstance(value, dict):
+        raise ValueError("Valor estruturado invalido.")
+    return {str(key): item for key, item in value.items() if item not in (None, "")}
+
+
+def _tenant_user(tenant_id: uuid.UUID, value) -> User | None:
+    try:
+        user_id = uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+    return db.session.execute(
+        select(User).where(User.id == user_id, User.tenant_id == tenant_id)
+    ).scalar_one_or_none()
+
+
+def _positive_int(value, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
 
 
 def _optional_coordinate(value, label: str, minimum: float, maximum: float) -> float | None:
@@ -425,7 +655,7 @@ def _default_jurisdiction_name(
 
 
 @admin_bp.get("/categorias")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin", "manager", "staff", "representative")
 def list_categories():
     tenant_id, _ = _context()
     items = db.session.execute(
@@ -437,7 +667,7 @@ def list_categories():
 
 
 @admin_bp.post("/categorias")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def create_category():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
@@ -487,7 +717,7 @@ def create_category():
 
 
 @admin_bp.patch("/categorias/<uuid:category_id>")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def update_category(category_id: uuid.UUID):
     tenant_id, user_id = _context()
     item = db.session.execute(
@@ -532,7 +762,7 @@ def update_category(category_id: uuid.UUID):
 
 
 @admin_bp.get("/territorios")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin", "manager", "staff", "representative")
 def list_territories():
     tenant_id, _ = _context()
     items = db.session.execute(
@@ -542,7 +772,7 @@ def list_territories():
 
 
 @admin_bp.post("/territorios")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def create_territory():
     tenant_id, user_id = _context()
     name = str((request.get_json(silent=True) or {}).get("nome", "")).strip()
@@ -559,7 +789,7 @@ def create_territory():
 
 
 @admin_bp.get("/orgaos")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin", "manager", "staff", "representative")
 def list_agencies():
     tenant_id, _ = _context()
     items = db.session.execute(
@@ -571,7 +801,7 @@ def list_agencies():
 
 
 @admin_bp.post("/orgaos")
-@roles_required("admin", "manager")
+@roles_required("admin")
 def create_agency():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}

@@ -108,3 +108,27 @@ def register_commands(app: Flask) -> None:
             )
         db.session.commit()
         click.echo(f"Seed do tenant {tenant} aplicado para {email}.")
+
+    @app.cli.command("seed-platform-admin")
+    @click.option("--email", default="platform@gabflow.local")
+    @click.option("--password", envvar="SEED_PLATFORM_ADMIN_PASSWORD", required=True)
+    def seed_platform_admin(email: str, password: str) -> None:
+        normalized_email = email.lower()
+        user = db.session.execute(
+            select(User).where(User.tenant_id.is_(None), User.email == normalized_email)
+        ).scalar_one_or_none()
+        if user is None:
+            db.session.add(
+                User(
+                    tenant_id=None,
+                    name="Administrador Geral",
+                    email=normalized_email,
+                    password_hash=hash_password(password),
+                    role=Role.PLATFORM_ADMIN,
+                )
+            )
+        else:
+            user.role = Role.PLATFORM_ADMIN
+            user.password_hash = hash_password(password)
+        db.session.commit()
+        click.echo(f"Administrador Geral do GabFlow aplicado para {normalized_email}.")

@@ -71,7 +71,8 @@ const attachmentMimeTypes = [
 ];
 const maximumAttachmentBytes = 15 * 1024 * 1024;
 
-export function RequestsPage({ initialSearch = "" }) {
+export function RequestsPage({ user, initialSearch = "" }) {
+  const readOnly = user?.role === "representative";
   const [items, setItems] = useState([]);
   const [references, setReferences] = useState(emptyReferences);
   const [loading, setLoading] = useState(true);
@@ -148,9 +149,9 @@ export function RequestsPage({ initialSearch = "" }) {
           <h1>Solicitações</h1>
           <p>Registre e acompanhe as demandas recebidas pelo gabinete.</p>
         </div>
-        <button className="primary-button compact" onClick={() => setShowCreate(true)}>
+        {!readOnly && <button className="primary-button compact" onClick={() => setShowCreate(true)}>
           <Plus size={18} /> Nova solicitação
-        </button>
+        </button>}
       </section>
 
       <section className="request-toolbar" aria-label="Filtros de solicitações">
@@ -215,7 +216,7 @@ export function RequestsPage({ initialSearch = "" }) {
         )}
       </section>
 
-      {showCreate && (
+      {showCreate && !readOnly && (
         <RequestForm
           references={references}
           onClose={() => setShowCreate(false)}
@@ -230,6 +231,7 @@ export function RequestsPage({ initialSearch = "" }) {
         <RequestDetails
           request={selected}
           references={references}
+          readOnly={readOnly}
           onClose={() => setSelected(null)}
           onChanged={(updated) => {
             setSelected(updated);
@@ -319,7 +321,7 @@ function RequestForm({ references, onClose, onCreated }) {
   );
 }
 
-function RequestDetails({ request, references, onClose, onChanged }) {
+function RequestDetails({ request, references, readOnly = false, onClose, onChanged }) {
   const linkedCitizen = references.citizens.find((item) => item.id === request.cidadaoId);
   const preferredChannel = linkedCitizen?.canalPreferencial || "";
   const [status, setStatus] = useState(request.status);
@@ -683,15 +685,15 @@ function RequestDetails({ request, references, onClose, onChanged }) {
             {request.urgencia && <span>Urgência {request.urgencia.toLowerCase()}</span>}
           </div>
 
-          <AITriagePanel
+          {!readOnly && <AITriagePanel
             request={request}
             categories={references.categories}
             agencies={references.agencies}
             onChanged={onChanged}
             onError={setError}
-          />
+          />}
 
-          <section className="drawer-section">
+          {!readOnly && <section className="drawer-section">
             <h3>Acompanhamento</h3>
             <div className="form-grid">
               <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}>{statuses.slice(1).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -701,9 +703,9 @@ function RequestDetails({ request, references, onClose, onChanged }) {
             {request.prazo && <p className="muted-copy">Prazo de atendimento: <strong>{formatDate(request.prazo)}</strong></p>}
             {closing && <><label>Motivo do encerramento<textarea rows="2" value={reason} onChange={(event) => setReason(event.target.value)} /></label><label>Evidência ou justificativa<textarea rows="2" value={evidence} onChange={(event) => setEvidence(event.target.value)} /></label></>}
             <button className="secondary-button action-button" onClick={updateRequest}><CheckCircle2 size={17} /> Atualizar acompanhamento</button>
-          </section>
+          </section>}
 
-          <section className="drawer-section">
+          {!readOnly && <section className="drawer-section">
             <h3>Encaminhamentos</h3>
             {(request.encaminhamentos || []).map((item) => <article className="forwarding-item" key={item.id}><div><strong>{item.orgao}</strong><small>{item.protocoloExterno || "Sem protocolo externo"} · {item.status}</small></div>{item.resposta ? <p>{item.resposta}</p> : <form onSubmit={(event) => registerAgencyResponse(event, item.id)}><input required value={externalResponse} onChange={(event) => setExternalResponse(event.target.value)} placeholder="Registrar resposta do órgão" /><button className="secondary-button">Registrar</button></form>}</article>)}
             {(request.encaminhamentos || []).length === 0 && <p className="muted-copy">Nenhum encaminhamento registrado.</p>}
@@ -712,16 +714,16 @@ function RequestDetails({ request, references, onClose, onChanged }) {
               <div className="form-grid"><label>Protocolo externo<input value={forwarding.protocoloExterno} onChange={(event) => setForwarding((current) => ({ ...current, protocoloExterno: event.target.value }))} /></label><label>Prazo<input type="datetime-local" value={forwarding.prazo} onChange={(event) => setForwarding((current) => ({ ...current, prazo: event.target.value }))} /></label></div>
               <button className="secondary-button action-button"><Send size={17} /> Encaminhar</button>
             </form>
-          </section>
+          </section>}
 
-          <section className="drawer-section">
+          {!readOnly && <section className="drawer-section">
             <h3>Tarefas</h3>
             <div className="task-list">
               {(request.tarefas || []).map((task) => <label key={task.id} className={task.status === "CONCLUIDA" ? "task-item completed" : "task-item"}><input type="checkbox" checked={task.status === "CONCLUIDA"} onChange={() => toggleTask(task)} /><span><strong>{task.titulo}</strong><small>{task.prazo ? `Prazo: ${formatDate(task.prazo)}` : task.prioridade}</small></span></label>)}
               {(request.tarefas || []).length === 0 && <p className="muted-copy">Nenhuma tarefa criada.</p>}
             </div>
             <form className="inline-form" onSubmit={addTask}><input required minLength="3" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="Nova tarefa" /><button className="primary-button compact" title="Adicionar tarefa"><Plus size={17} /> Adicionar</button></form>
-          </section>
+          </section>}
 
           <section className="drawer-section">
             <h3>Anexos</h3>
@@ -750,13 +752,13 @@ function RequestDetails({ request, references, onClose, onChanged }) {
               ))}
               {(request.anexos || []).length === 0 && <p className="muted-copy">Nenhum anexo enviado.</p>}
             </div>
-            <AttachmentDropzone
+            {!readOnly && <AttachmentDropzone
               file={attachment}
               uploading={uploadingAttachment}
               onFile={setAttachment}
               onError={setError}
               onSubmit={uploadAttachment}
-            />
+            />}
           </section>
 
           <section className="drawer-section">

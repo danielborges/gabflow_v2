@@ -13,7 +13,9 @@ from app.models import (
     Organization,
     OversightAction,
     ServiceRequest,
+    Tenant,
 )
+from app.modules import normalize_modules
 
 search_bp = Blueprint("search", __name__)
 
@@ -22,18 +24,26 @@ search_bp = Blueprint("search", __name__)
 @jwt_required()
 def global_search():
     tenant_id = uuid.UUID(get_jwt()["tenant_id"])
+    tenant = db.session.get(Tenant, tenant_id)
+    enabled_modules = set(normalize_modules(tenant.enabled_modules if tenant else []))
     query = str(request.args.get("q", "")).strip()
     if len(query) < 2:
         return jsonify(content=[])
     pattern = f"%{query[:100]}%"
     results = []
-    results.extend(_request_results(tenant_id, pattern))
-    results.extend(_citizen_results(tenant_id, pattern))
-    results.extend(_organization_results(tenant_id, pattern))
-    results.extend(_agenda_results(tenant_id, pattern))
-    results.extend(_oversight_results(tenant_id, pattern))
-    results.extend(_channel_results(tenant_id, pattern))
-    results.extend(_draft_results(tenant_id, pattern))
+    if "solicitacoes" in enabled_modules:
+        results.extend(_request_results(tenant_id, pattern))
+    if "cidadaos" in enabled_modules:
+        results.extend(_citizen_results(tenant_id, pattern))
+        results.extend(_organization_results(tenant_id, pattern))
+    if "agenda" in enabled_modules:
+        results.extend(_agenda_results(tenant_id, pattern))
+    if "fiscalizacao" in enabled_modules:
+        results.extend(_oversight_results(tenant_id, pattern))
+    if "canais" in enabled_modules:
+        results.extend(_channel_results(tenant_id, pattern))
+    if "documentos" in enabled_modules:
+        results.extend(_draft_results(tenant_id, pattern))
     return jsonify(content=results[:20])
 
 

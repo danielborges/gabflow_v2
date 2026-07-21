@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "./api";
 import { Login } from "./components/Login";
+import { PlatformAdminWorkspace } from "./components/PlatformAdminWorkspace";
 import { PublicRequestForm } from "./components/PublicRequestForm";
 import { Workspace } from "./components/Workspace";
 
@@ -34,5 +35,13 @@ export default function App() {
     );
   }
 
-  return user ? <Workspace user={user} onLogout={logout} /> : <Login onLogin={setUser} />;
+  if (!user) {
+    return <Login onLogin={setUser} />;
+  }
+
+  return user.role === "platform_admin" ? (
+    <PlatformAdminWorkspace user={user} onLogout={logout} />
+  ) : (
+    <Workspace user={user} onLogout={logout} />
+  );
 }

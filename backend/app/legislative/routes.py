@@ -401,7 +401,7 @@ def review_draft(draft_id: uuid.UUID):
             draft.status = LegislativeDraftStatus.EM_REVISAO
 
     elif action == "APROVAR":
-        if get_jwt().get("role") not in {"admin", "manager"}:
+        if get_jwt().get("role") not in {"admin", "manager", "representative"}:
             return jsonify(error="forbidden", message="A aprovação exige perfil gestor."), 403
         if draft.status != LegislativeDraftStatus.EM_REVISAO:
             return jsonify(

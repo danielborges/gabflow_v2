@@ -7,6 +7,7 @@ export function Login({ onLogin }) {
   const [email, setEmail] = useState("admin@gabflow.local");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [platformAccess, setPlatformAccess] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -17,7 +18,7 @@ export function Login({ onLogin }) {
     try {
       const data = await apiRequest("/api/v1/auth/login", {
         method: "POST",
-        body: JSON.stringify({ tenant, email, password }),
+        body: JSON.stringify({ tenant: platformAccess ? "" : tenant, email, password }),
       });
       onLogin(data.user);
     } catch (requestError) {
@@ -54,7 +55,16 @@ export function Login({ onLogin }) {
             </div>
           </div>
 
-          <label>
+          <label className="checkbox-line">
+            <input
+              type="checkbox"
+              checked={platformAccess}
+              onChange={(event) => setPlatformAccess(event.target.checked)}
+            />
+            Acessar como Administrador Geral
+          </label>
+
+          <label className={platformAccess ? "field-disabled" : ""}>
             Ambiente
             <span className="input-wrap">
               <PanelsTopLeft size={18} aria-hidden="true" />
@@ -62,7 +72,8 @@ export function Login({ onLogin }) {
                 value={tenant}
                 onChange={(event) => setTenant(event.target.value)}
                 autoComplete="organization"
-                required
+                required={!platformAccess}
+                disabled={platformAccess}
               />
             </span>
           </label>

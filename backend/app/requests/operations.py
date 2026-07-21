@@ -19,6 +19,7 @@ from app.attachments import (
     verify_attachment_token,
 )
 from app.audit import add_audit
+from app.auth.permissions import roles_required
 from app.extensions import db
 from app.models import (
     Attachment,
@@ -88,7 +89,7 @@ def attachment_data(item: Attachment) -> dict:
 
 
 @request_ops_bp.post("/solicitacoes/<uuid:request_id>/tarefas")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def create_task(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -150,7 +151,7 @@ def create_task(request_id: uuid.UUID):
 
 
 @request_ops_bp.patch("/tarefas/<uuid:task_id>")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def update_task(task_id: uuid.UUID):
     tenant_id, user_id = _context()
     task = db.session.execute(
@@ -182,7 +183,7 @@ def update_task(task_id: uuid.UUID):
 
 
 @request_ops_bp.post("/solicitacoes/agrupar-duplicadas")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def group_duplicates():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
@@ -267,7 +268,7 @@ def group_duplicates():
 
 
 @request_ops_bp.post("/solicitacoes/<uuid:request_id>/anexos")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def upload_attachment(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -320,7 +321,7 @@ def upload_attachment(request_id: uuid.UUID):
 
 
 @request_ops_bp.post("/transcricoes-audio/<uuid:transcription_id>/revisao")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def review_audio_transcription(transcription_id: uuid.UUID):
     tenant_id, user_id = _context()
     transcription = db.session.execute(
@@ -391,7 +392,7 @@ def review_audio_transcription(transcription_id: uuid.UUID):
 
 
 @request_ops_bp.post("/transcricoes-audio/<uuid:transcription_id>/reprocessar")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def reprocess_audio_transcription(transcription_id: uuid.UUID):
     tenant_id, user_id = _context()
     transcription = db.session.execute(
@@ -431,7 +432,7 @@ def reprocess_audio_transcription(transcription_id: uuid.UUID):
 
 
 @request_ops_bp.post("/ocr-documentos/<uuid:ocr_id>/revisao")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def review_document_ocr(ocr_id: uuid.UUID):
     tenant_id, user_id = _context()
     ocr = db.session.execute(
@@ -503,7 +504,7 @@ def review_document_ocr(ocr_id: uuid.UUID):
 
 
 @request_ops_bp.post("/ocr-documentos/<uuid:ocr_id>/reprocessar")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def reprocess_document_ocr(ocr_id: uuid.UUID):
     tenant_id, user_id = _context()
     ocr = db.session.execute(

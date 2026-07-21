@@ -28,6 +28,8 @@ def utc_now() -> datetime:
 class TenantStatus(str, enum.Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
+    SUSPENDED = "suspended"
+    CANCELLED = "cancelled"
 
 
 class UserStatus(str, enum.Enum):
@@ -36,9 +38,26 @@ class UserStatus(str, enum.Enum):
 
 
 class Role(str, enum.Enum):
+    PLATFORM_ADMIN = "platform_admin"
     ADMIN = "admin"
     MANAGER = "manager"
+    REPRESENTATIVE = "representative"
     STAFF = "staff"
+
+
+class ContractStatus(str, enum.Enum):
+    TRIAL = "trial"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    CANCELLED = "cancelled"
+
+
+class PlatformSettingType(str, enum.Enum):
+    PARAMETER = "PARAMETER"
+    GLOBAL_TEMPLATE = "GLOBAL_TEMPLATE"
+    INTEGRATION_PROVIDER = "INTEGRATION_PROVIDER"
+    FEATURE_FLAG = "FEATURE_FLAG"
+    SECURITY_POLICY = "SECURITY_POLICY"
 
 
 class RequestSource(str, enum.Enum):
@@ -300,13 +319,29 @@ class Tenant(db.Model):
     jurisdiction_center_longitude: Mapped[float | None] = mapped_column(Float)
     jurisdiction_bounds: Mapped[dict | None] = mapped_column(JSON)
     jurisdiction_geojson: Mapped[dict | None] = mapped_column(JSON)
+    plan: Mapped[str] = mapped_column(String(80), default="starter", nullable=False)
+    contract_status: Mapped[ContractStatus] = mapped_column(
+        Enum(ContractStatus, name="contract_status"), default=ContractStatus.TRIAL, nullable=False
+    )
+    user_limit: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    storage_limit_mb: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
+    enabled_modules: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    contract_notes: Mapped[str | None] = mapped_column(Text)
+    representative_info: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    mandate_info: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    visual_identity: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    chief_of_staff_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     status: Mapped[TenantStatus] = mapped_column(
         Enum(TenantStatus, name="tenant_status"), default=TenantStatus.ACTIVE
     )
     protocol_sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    users: Mapped[list["User"]] = relationship(back_populates="tenant")
+    users: Mapped[list["User"]] = relationship(
+        back_populates="tenant", foreign_keys="User.tenant_id"
+    )
 
 
 class User(db.Model):
@@ -314,8 +349,8 @@ class User(db.Model):
     __table_args__ = (UniqueConstraint("tenant_id", "email"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     email: Mapped[str] = mapped_column(String(254), nullable=False)
@@ -328,15 +363,17 @@ class User(db.Model):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    tenant: Mapped[Tenant] = relationship(back_populates="users")
+    tenant: Mapped[Tenant | None] = relationship(
+        back_populates="users", foreign_keys=[tenant_id]
+    )
 
 
 class AuditLog(db.Model):
     __tablename__ = "audit_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
@@ -351,6 +388,76 @@ class AuditLog(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
+
+
+class PlatformSetting(db.Model):
+    __tablename__ = "platform_settings"
+    __table_args__ = (UniqueConstraint("setting_type", "key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    setting_type: Mapped[PlatformSettingType] = mapped_column(
+        Enum(PlatformSettingType, name="platform_setting_type"), nullable=False, index=True
+    )
+    key: Mapped[str] = mapped_column(String(120), nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    value: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class PlatformSupportAccess(db.Model):
+    __tablename__ = "platform_support_accesses"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    requested_by: Mapped[str] = mapped_column(String(180), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    authorized_by: Mapped[str | None] = mapped_column(String(180))
+    scope: Mapped[str] = mapped_column(String(180), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="REGISTRADO", nullable=False)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+
+
+class PlatformContractEvent(db.Model):
+    __tablename__ = "platform_contract_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    previous_status: Mapped[ContractStatus | None] = mapped_column(
+        Enum(ContractStatus, name="contract_status", create_type=False)
+    )
+    new_status: Mapped[ContractStatus] = mapped_column(
+        Enum(ContractStatus, name="contract_status", create_type=False), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    tenant: Mapped[Tenant] = relationship()
 
 
 class Citizen(db.Model):

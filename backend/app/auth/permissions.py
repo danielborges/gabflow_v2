@@ -17,3 +17,7 @@ def roles_required(*allowed_roles: str):
         return wrapper
 
     return decorator
+
+
+def platform_admin_required(fn):
+    return roles_required("platform_admin")(fn)

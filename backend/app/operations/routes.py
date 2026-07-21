@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.audit import add_audit
+from app.auth.permissions import roles_required
 from app.extensions import db, limiter
 from app.models import (
     Citizen,
@@ -105,7 +106,7 @@ def contact_attempt_data(item: ContactAttempt) -> dict:
 
 
 @operations_bp.post("/solicitacoes/<uuid:request_id>/encaminhamentos")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def create_forwarding(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -163,7 +164,7 @@ def create_forwarding(request_id: uuid.UUID):
 
 
 @operations_bp.patch("/encaminhamentos/<uuid:forwarding_id>")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def update_forwarding(forwarding_id: uuid.UUID):
     tenant_id, user_id = _context()
     item = db.session.execute(
@@ -212,7 +213,7 @@ def update_forwarding(forwarding_id: uuid.UUID):
 
 
 @operations_bp.post("/solicitacoes/<uuid:request_id>/reabrir")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def reopen_request(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -251,7 +252,7 @@ def reopen_request(request_id: uuid.UUID):
 
 
 @operations_bp.post("/solicitacoes/<uuid:request_id>/chave-publica")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def rotate_public_key(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -272,7 +273,7 @@ def rotate_public_key(request_id: uuid.UUID):
 
 
 @operations_bp.post("/solicitacoes/<uuid:request_id>/tentativas-contato")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def create_contact_attempt(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _service_request(request_id, tenant_id)
@@ -616,7 +617,7 @@ def monthly_mandate_report():
 
 
 @operations_bp.post("/painel/territorial/geocodificar")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def geocode_pending_requests():
     tenant_id, user_id = _context()
     territory_names = {

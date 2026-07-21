@@ -7,7 +7,7 @@ from app.models import AuditLog
 
 
 def add_audit(
-    tenant_id: uuid.UUID,
+    tenant_id: uuid.UUID | None,
     user_id: uuid.UUID,
     action: str,
     entity_type: str,

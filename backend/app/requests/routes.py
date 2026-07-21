@@ -14,6 +14,7 @@ from app.ai.service import (
     latest_assistance_execution,
     latest_triage_execution,
 )
+from app.auth.permissions import roles_required
 from app.communications.service import scheduled_return_data
 from app.extensions import db
 from app.models import (
@@ -191,7 +192,7 @@ def list_requests():
 
 
 @requests_bp.post("/solicitacoes")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def create_request():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
@@ -278,7 +279,7 @@ def get_request(request_id: uuid.UUID):
 
 
 @requests_bp.patch("/solicitacoes/<uuid:request_id>")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def update_request(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _get_request_or_404(request_id, tenant_id)
@@ -397,7 +398,7 @@ def update_request(request_id: uuid.UUID):
 
 
 @requests_bp.post("/solicitacoes/<uuid:request_id>/interacoes")
-@jwt_required()
+@roles_required("admin", "manager", "staff")
 def create_interaction(request_id: uuid.UUID):
     tenant_id, user_id = _context()
     service_request = _get_request_or_404(request_id, tenant_id)

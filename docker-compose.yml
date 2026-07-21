@@ -141,6 +141,9 @@ services:
       SEED_TENANT: ${SEED_TENANT:-gabinete-demo}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@gabflow.local}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Defina SEED_ADMIN_PASSWORD no arquivo .env}
+      SEED_PLATFORM_ADMIN_ON_START: ${SEED_PLATFORM_ADMIN_ON_START:-false}
+      SEED_PLATFORM_ADMIN_EMAIL: ${SEED_PLATFORM_ADMIN_EMAIL:-platform@gabflow.local}
+      SEED_PLATFORM_ADMIN_PASSWORD: ${SEED_PLATFORM_ADMIN_PASSWORD:-}
     depends_on:
       db:
         condition: service_healthy
