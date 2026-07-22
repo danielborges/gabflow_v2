@@ -4,7 +4,14 @@ const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 let googleMapsPromise;
 let googleMapsCallbackId = 0;
 
-export function GooglePlaceAutocompleteInput({ value, onChange, placeholder, territoryBounds }) {
+export function GooglePlaceAutocompleteInput({
+  value,
+  onChange,
+  placeholder,
+  territoryBounds,
+  inputProps = {},
+  hideStatus = false,
+}) {
   const inputRef = useRef(null);
   const onChangeRef = useRef(onChange);
   const [status, setStatus] = useState(googleMapsApiKey ? "loading" : "disabled");
@@ -27,6 +34,7 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder, ter
           componentRestrictions: { country: "br" },
           fields: ["formatted_address", "geometry", "name", "place_id"],
           strictBounds: hasValidBounds(territoryBounds),
+          types: ["address"],
         });
         listener = autocomplete.addListener("place_changed", () => {
           const place = autocomplete.getPlace();
@@ -49,12 +57,13 @@ export function GooglePlaceAutocompleteInput({ value, onChange, placeholder, ter
   return (
     <span className="maps-autocomplete-field">
       <input
+        {...inputProps}
         ref={inputRef}
         value={value}
         onChange={(event) => onChangeRef.current(event.target.value)}
         placeholder={placeholder}
       />
-      {googleMapsApiKey && <small>{statusLabel(status, territoryBounds)}</small>}
+      {!hideStatus && googleMapsApiKey && <small>{statusLabel(status, territoryBounds)}</small>}
     </span>
   );
 }

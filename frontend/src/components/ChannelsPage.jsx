@@ -1,6 +1,7 @@
 import { Inbox, MessageSquare, Plus, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { contactPlaceholderForChannel, formatBrazilianPhone, isValidContactByChannel } from "../contactValidation";
 
 const emptyForm = {
   canal: "WHATSAPP",
@@ -25,6 +26,10 @@ export function ChannelsPage() {
   async function submit(event) {
     event.preventDefault();
     setError("");
+    if (form.remetenteContato && !isValidContactByChannel(form.canal, form.remetenteContato)) {
+      setError("Informe um contato válido para o canal selecionado.");
+      return;
+    }
     try {
       await apiRequest("/api/v1/canais/mensagens", {
         method: "POST",
@@ -72,7 +77,7 @@ export function ChannelsPage() {
               <option value="EMAIL">E-mail</option>
               <option value="REDE_SOCIAL">Rede social</option>
             </select></label>
-            <label>Contato<input value={form.remetenteContato} onChange={(event) => setForm((current) => ({ ...current, remetenteContato: event.target.value }))} /></label>
+            <label>Contato<input type={form.canal === "EMAIL" ? "email" : "text"} inputMode={form.canal === "EMAIL" ? "email" : form.canal === "WHATSAPP" ? "numeric" : "text"} placeholder={contactPlaceholderForChannel(form.canal)} maxLength={form.canal === "WHATSAPP" ? 15 : undefined} value={form.remetenteContato} onChange={(event) => setForm((current) => ({ ...current, remetenteContato: form.canal === "WHATSAPP" ? formatBrazilianPhone(event.target.value) : event.target.value }))} /></label>
           </div>
           <label>Nome<input value={form.remetenteNome} onChange={(event) => setForm((current) => ({ ...current, remetenteNome: event.target.value }))} /></label>
           <label>Assunto<input value={form.assunto} onChange={(event) => setForm((current) => ({ ...current, assunto: event.target.value }))} /></label>

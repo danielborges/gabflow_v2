@@ -1,5 +1,6 @@
 import gzip
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,6 +32,8 @@ from app.models import (
 admin_bp = Blueprint("admin", __name__)
 
 CHAMBER_TYPES = {"CAMARA_MUNICIPAL", "ASSEMBLEIA_LEGISLATIVA"}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+BR_PHONE_RE = re.compile(r"^\D*([1-9]{2})\D*(?:(9\d{4})\D*(\d{4})|([2-5]\d{3})\D*(\d{4}))\D*$")
 IBGE_MALHAS_URL = (
     "https://servicodados.ibge.gov.br/api/v3/malhas/"
     "{scope}/{code}?formato=application/vnd.geo+json&qualidade=minima"
@@ -306,7 +309,13 @@ def update_office_profile():
                 payload.get("redesSociais"),
                 visual_identity.get("redesSociais"),
             )
+        _validate_office_contacts(visual_identity)
         tenant.visual_identity = visual_identity
+        office_name = str(
+            (visual_identity.get("dadosInstitucionais") or {}).get("nomeGabinete") or ""
+        ).strip()
+        if office_name:
+            tenant.name = office_name[:160]
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     chief_id = payload.get("chefeGabineteId", tenant.chief_of_staff_id)
@@ -507,7 +516,7 @@ def update_jurisdiction():
     name = str(payload.get("nome", tenant.jurisdiction_name or "")).strip() or None
     ibge_code = str(payload.get("codigoIbge", tenant.jurisdiction_ibge_code or "")).strip() or None
     center = payload.get("centro") or {}
-    bounds = payload.get("limites")
+    bounds = payload.get("limites", tenant.jurisdiction_bounds)
     geojson = payload.get("geojson", tenant.jurisdiction_geojson)
     try:
         latitude = _optional_coordinate(center.get("latitude"), "Latitude", -90, 90)
@@ -685,6 +694,24 @@ def _clean_dict(value, fallback) -> dict:
     return {str(key): item for key, item in value.items() if item not in (None, "")}
 
 
+def _validate_office_contacts(visual_identity: dict) -> None:
+    institutional = visual_identity.get("dadosInstitucionais") or {}
+    if not isinstance(institutional, dict):
+        raise ValueError("Dados institucionais invalidos.")
+    email = str(institutional.get("emailOficial") or "").strip()
+    phone = str(institutional.get("telefone") or "").strip()
+    site = str(institutional.get("site") or "").strip()
+    logo = str(visual_identity.get("logoUrl") or "").strip()
+    if email and not EMAIL_RE.match(email):
+        raise ValueError("Informe um e-mail oficial valido.")
+    if phone and not BR_PHONE_RE.match(phone):
+        raise ValueError("Informe um telefone institucional valido com DDD.")
+    if site and not _valid_http_url(site):
+        raise ValueError("Informe um site institucional valido.")
+    if logo and not (_valid_http_url(logo) or logo.startswith("data:image/")):
+        raise ValueError("Informe uma imagem valida para o logotipo.")
+
+
 def _clean_parliamentarian(value, fallback) -> dict:
     if not isinstance(value, dict):
         raise ValueError("Valor estruturado invalido.")
@@ -726,9 +753,27 @@ def _clean_parliamentarian(value, fallback) -> dict:
         for key, item in redes.items()
         if item not in (None, "")
     }
+    email = str(data.get("email") or "").strip()
+    phone = str(data.get("telefoneInstitucional") or "").strip()
+    photo = str(data.get("fotografiaUrl") or "").strip()
+    site = str(data["redesSociais"].get("site") or "").strip()
+    if email and not EMAIL_RE.match(email):
+        raise ValueError("Informe um e-mail valido para o parlamentar.")
+    if phone and not BR_PHONE_RE.match(phone):
+        raise ValueError("Informe um telefone institucional valido com DDD.")
+    if photo and not _valid_http_url(photo):
+        raise ValueError("Informe uma URL valida para a fotografia.")
+    if site and not _valid_http_url(site):
+        raise ValueError("Informe um site valido para o parlamentar.")
     data["mandatos"] = cleaned_mandates
     data["statusMandato"] = str(data.get("statusMandato") or "ATIVO").upper()
     return data
+
+
+def _valid_http_url(value: str) -> bool:
+    candidate = value if value.lower().startswith(("http://", "https://")) else f"https://{value}"
+    parsed = urllib.parse.urlsplit(candidate)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc and "." in parsed.netloc)
 
 
 def _tenant_user(tenant_id: uuid.UUID, value) -> User | None:
@@ -1048,6 +1093,8 @@ def create_agency():
     email = str(payload.get("emailContato", "")).strip() or None
     if len(name) < 2:
         return jsonify(error="validation_error", message="Informe o nome do órgão."), 422
+    if email and not EMAIL_RE.match(email):
+        return jsonify(error="validation_error", message="Informe um e-mail de contato valido."), 422
     item = ExternalAgency(tenant_id=tenant_id, name=name, contact_email=email)
     db.session.add(item)
     db.session.flush()

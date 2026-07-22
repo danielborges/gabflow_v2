@@ -18,3 +18,33 @@ export function isValidBrazilianPhone(value) {
 export function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
 }
+
+export function normalizeWebsiteUrl(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+export function isValidWebsiteUrl(value) {
+  if (!value.trim()) return true;
+  try {
+    const url = new URL(normalizeWebsiteUrl(value));
+    return ["http:", "https:"].includes(url.protocol) && Boolean(url.hostname.includes("."));
+  } catch {
+    return false;
+  }
+}
+
+export function isValidContactByChannel(channel, value) {
+  if (!value.trim()) return false;
+  if (["WHATSAPP", "TELEFONE"].includes(channel)) return isValidBrazilianPhone(value);
+  if (channel === "EMAIL") return isValidEmail(value);
+  return value.trim().length >= 3;
+}
+
+export function contactPlaceholderForChannel(channel) {
+  if (["WHATSAPP", "TELEFONE"].includes(channel)) return "(00) 00000-0000";
+  if (channel === "EMAIL") return "nome@dominio.com.br";
+  return "Endereço ou referência";
+}

@@ -5,6 +5,7 @@ from app.extensions import db
 from app.models import (
     ContractStatus,
     PlatformContractEvent,
+    PublicLead,
     RequestSource,
     Role,
     ServiceRequest,
@@ -142,6 +143,89 @@ def test_platform_usage_is_aggregated_without_internal_content(app, client):
 
     assert support.status_code == 201
     assert support.json["escopo"] == "Validar configuracao de webhook"
+
+
+def test_platform_admin_manages_contracting_interests(app, client):
+    csrf = _login_platform(app, client)
+    with app.app_context():
+        lead = PublicLead(
+            plan="professional",
+            name="Maria Silva",
+            organization="Gabinete Modelo",
+            admin_name="Maria Silva",
+            email="maria@gabinete.local",
+            phone="(11) 3333-0000",
+            whatsapp="(11) 99999-0000",
+            city="São Paulo",
+            state="SP",
+            municipality_ibge_id=3550308,
+            audience="camara_municipal",
+            preferred_contact="whatsapp",
+            discovery_source="instagram",
+            payment_status="pending",
+        )
+        db.session.add(lead)
+        db.session.commit()
+        lead_id = str(lead.id)
+
+    listed = client.get("/api/v1/platform/interesses-contratacao")
+    assert listed.status_code == 200
+    assert listed.json["content"][0]["nomeGabinete"] == "Gabinete Modelo"
+
+    updated = client.patch(
+        f"/api/v1/platform/interesses-contratacao/{lead_id}",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "status": "payment_pending",
+            "pagamento": "invoice_sent",
+            "dataOnboarding": "2026-08-10",
+            "observacoesContrato": "Aguardando pagamento.",
+            "tentativaContato": {
+                "canal": "whatsapp",
+                "resultado": "retorno solicitado",
+                "observacao": "Administrador pediu proposta formal.",
+            },
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json["status"] == "payment_pending"
+    assert updated.json["pagamento"] == "invoice_sent"
+    assert updated.json["dataOnboarding"] == "2026-08-10"
+    assert updated.json["tentativasContato"][0]["canal"] == "whatsapp"
+
+    action_update = client.patch(
+        f"/api/v1/platform/interesses-contratacao/{lead_id}",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "documentoContrato": {"nome": "Contrato assinado", "tipo": "contrato_assinado"},
+            "pagamentoItem": {
+                "tipo": "onboarding",
+                "status": "paid",
+                "valor": 1500,
+                "vencimento": "2026-08-01",
+            },
+            "onboarding": {
+                "data": "2026-08-15",
+                "local": "remota",
+                "tecnicoResponsavel": "Equipe GabFlow",
+            },
+            "gerarContrato": True,
+        },
+    )
+    assert action_update.status_code == 200
+    assert action_update.json["pagamentos"][0]["status"] == "paid"
+    assert action_update.json["onboarding"]["local"] == "remota"
+    assert action_update.json["documentosContrato"][0]["tipo"] == "contrato_gerado"
+
+    converted = client.post(
+        f"/api/v1/platform/interesses-contratacao/{lead_id}/converter",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"slug": "gabinete-modelo-convertido"},
+    )
+    assert converted.status_code == 201
+    assert converted.json["tenant"]["slug"] == "gabinete-modelo-convertido"
+    assert converted.json["interesse"]["status"] == "converted"
 
 
 def test_disabled_module_blocks_tenant_endpoint(app, client):

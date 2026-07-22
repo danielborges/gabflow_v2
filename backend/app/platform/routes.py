@@ -1,4 +1,6 @@
 import uuid
+from datetime import date
+import re
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
@@ -21,6 +23,7 @@ from app.models import (
     PlatformSetting,
     PlatformSettingType,
     PlatformSupportAccess,
+    PublicLead,
     RagDocument,
     Role,
     ServiceRequest,
@@ -33,7 +36,18 @@ from app.modules import AVAILABLE_MODULES, DEFAULT_MODULES, normalize_modules, v
 
 platform_bp = Blueprint("platform", __name__)
 
-PLANS = {"starter", "professional", "premium", "enterprise"}
+PLANS = {"starter", "professional", "premium"}
+LEAD_STATUSES = {
+    "new",
+    "contacting",
+    "proposal_sent",
+    "contract_negotiation",
+    "payment_pending",
+    "onboarding_scheduled",
+    "converted",
+    "lost",
+}
+LEAD_PAYMENT_STATUSES = {"pending", "invoice_sent", "paid", "overdue", "cancelled"}
 
 
 def _actor_id() -> uuid.UUID:
@@ -96,6 +110,37 @@ def _contract_event_data(item: PlatformContractEvent) -> dict:
     }
 
 
+def _lead_data(item: PublicLead) -> dict:
+    return {
+        "id": str(item.id),
+        "plano": item.plan,
+        "tipoInstituicao": item.audience,
+        "estado": item.state,
+        "municipio": item.city,
+        "municipioIbgeId": item.municipality_ibge_id,
+        "nomeGabinete": item.organization,
+        "administradorGabinete": item.admin_name or item.name,
+        "telefone": item.phone,
+        "whatsapp": item.whatsapp,
+        "email": item.email,
+        "formaContato": item.preferred_contact,
+        "comoEncontrou": item.discovery_source,
+        "observacoes": item.message,
+        "status": item.status,
+        "pagamento": item.payment_status,
+        "dataOnboarding": item.onboarding_date.isoformat() if item.onboarding_date else None,
+        "onboarding": item.onboarding_details or {},
+        "tentativasContato": item.contact_attempts or [],
+        "documentosContrato": item.contract_documents or [],
+        "pagamentos": item.payments or [],
+        "historicoAcoes": item.action_history or [],
+        "tenantConvertidoId": str(item.converted_tenant_id) if item.converted_tenant_id else None,
+        "observacoesContrato": item.contract_notes,
+        "criadoEm": item.created_at.isoformat() if item.created_at else None,
+        "atualizadoEm": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
 @platform_bp.get("/overview")
 @platform_admin_required
 def overview():
@@ -112,6 +157,7 @@ def overview():
         "documentosRag": db.session.scalar(select(func.count(RagDocument.id))) or 0,
         "anexos": db.session.scalar(select(func.count(Attachment.id))) or 0,
         "mensagensCanal": db.session.scalar(select(func.count(ChannelMessage.id))) or 0,
+        "interessesContratacao": db.session.scalar(select(func.count(PublicLead.id))) or 0,
     }
     statuses = {status.value: tenant_statuses.get(status, 0) for status in TenantStatus}
     return jsonify(
@@ -135,6 +181,117 @@ def list_tenants():
         )
     items = db.session.execute(statement).scalars().all()
     return jsonify(content=[_tenant_data(item) for item in items])
+
+
+@platform_bp.get("/interesses-contratacao")
+@platform_admin_required
+def list_contracting_interests():
+    status = str(request.args.get("status", "")).strip().lower()
+    statement = select(PublicLead).order_by(PublicLead.created_at.desc())
+    if status:
+        statement = statement.where(PublicLead.status == status)
+    items = db.session.execute(statement.limit(200)).scalars().all()
+    return jsonify(content=[_lead_data(item) for item in items])
+
+
+@platform_bp.patch("/interesses-contratacao/<uuid:lead_id>")
+@platform_admin_required
+def update_contracting_interest(lead_id: uuid.UUID):
+    item = db.session.get(PublicLead, lead_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Interesse em contratacao nao encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    before = _lead_data(item)
+    if "status" in payload:
+        status = str(payload["status"]).strip().lower()
+        if status not in LEAD_STATUSES:
+            return jsonify(error="validation_error", message="Status de contratacao invalido."), 422
+        item.status = status
+    if "pagamento" in payload:
+        payment = str(payload["pagamento"]).strip().lower()
+        if payment not in LEAD_PAYMENT_STATUSES:
+            return jsonify(error="validation_error", message="Status de pagamento invalido."), 422
+        item.payment_status = payment
+    try:
+        if "dataOnboarding" in payload:
+            item.onboarding_date = _optional_date(payload["dataOnboarding"])
+        if "tentativaContato" in payload:
+            attempt = _contact_attempt(payload["tentativaContato"])
+            item.contact_attempts = [attempt, *(item.contact_attempts or [])][:50]
+            _append_lead_action(item, "contact_attempt", attempt)
+        if "documentoContrato" in payload:
+            document = _contract_document(payload["documentoContrato"])
+            item.contract_documents = [document, *(item.contract_documents or [])][:50]
+            _append_lead_action(item, "contract_document.registered", document)
+        if "pagamentoItem" in payload:
+            payment = _payment_item(payload["pagamentoItem"])
+            item.payments = [payment, *(item.payments or [])][:80]
+            item.payment_status = payment["status"]
+            _append_lead_action(item, "payment.registered", payment)
+        if "onboarding" in payload:
+            onboarding = _onboarding_details(payload["onboarding"])
+            item.onboarding_details = onboarding
+            item.onboarding_date = _optional_date(onboarding.get("data"))
+            _append_lead_action(item, "onboarding.scheduled", onboarding)
+        if payload.get("gerarContrato") is True:
+            contract = _generated_contract(item)
+            item.contract_documents = [contract, *(item.contract_documents or [])][:50]
+            _append_lead_action(item, "contract.generated", contract)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    if "observacoesContrato" in payload:
+        item.contract_notes = str(payload["observacoesContrato"]).strip()[:2000] or None
+    db.session.flush()
+    after = _lead_data(item)
+    add_audit(
+        None,
+        _actor_id(),
+        "platform.contracting_interest.updated",
+        "public_lead",
+        item.id,
+        before,
+        after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@platform_bp.post("/interesses-contratacao/<uuid:lead_id>/converter")
+@platform_admin_required
+def convert_contracting_interest(lead_id: uuid.UUID):
+    item = db.session.get(PublicLead, lead_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Interesse em contratacao nao encontrado."), 404
+    if item.converted_tenant_id:
+        return jsonify(error="conflict", message="Interesse ja convertido em gabinete."), 409
+    payload = request.get_json(silent=True) or {}
+    slug = str(payload.get("slug", "")).strip().lower() or _slugify(item.organization)
+    if db.session.execute(select(Tenant.id).where(Tenant.slug == slug)).scalar_one_or_none():
+        return jsonify(error="conflict", message="Slug de gabinete ja cadastrado."), 409
+    try:
+        tenant = Tenant(
+            name=item.organization,
+            slug=slug,
+            status=TenantStatus.ACTIVE,
+            contract_status=ContractStatus.TRIAL,
+            plan=_plan(payload.get("plano", item.plan)),
+            user_limit=_positive_int(payload.get("limiteUsuarios", _default_user_limit(item.plan)), "Limite de usuarios"),
+            storage_limit_mb=_positive_int(payload.get("limiteArmazenamentoMb", 1024), "Limite de armazenamento"),
+            enabled_modules=_modules(payload.get("modulosHabilitados", DEFAULT_MODULES)),
+            contract_notes=str(payload.get("observacoesContrato", item.contract_notes or "")).strip() or None,
+        )
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    before = _lead_data(item)
+    db.session.add(tenant)
+    db.session.flush()
+    item.converted_tenant_id = tenant.id
+    item.status = "converted"
+    _append_lead_action(item, "tenant.converted", {"tenantId": str(tenant.id), "slug": tenant.slug})
+    after = _lead_data(item)
+    add_audit(None, _actor_id(), "platform.contracting_interest.converted", "public_lead", item.id, before, {"lead": after, "tenant": _tenant_data(tenant)})
+    db.session.commit()
+    return jsonify(interesse=after, tenant=_tenant_data(tenant)), 201
 
 
 @platform_bp.post("/gabinetes")
@@ -456,6 +613,112 @@ def _tenant_count(model, tenant_id: uuid.UUID) -> int:
 def _count_by(column) -> dict:
     rows = db.session.execute(select(column, func.count()).group_by(column))
     return {str(key): value for key, value in rows}
+
+
+def _optional_date(value) -> date | None:
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as error:
+        raise ValueError("Data de onboarding invalida.") from error
+
+
+def _contact_attempt(payload) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Tentativa de contato invalida.")
+    channel = str(payload.get("canal", "")).strip().lower()
+    note = str(payload.get("observacao", "")).strip()
+    result = str(payload.get("resultado", "")).strip()[:120]
+    if channel not in {"email", "telefone", "whatsapp"} or len(note) < 2:
+        raise ValueError("Informe canal e observacao da tentativa de contato.")
+    return {
+        "canal": channel,
+        "resultado": result or "registrado",
+        "observacao": note[:1000],
+        "registradoEm": date.today().isoformat(),
+    }
+
+
+def _contract_document(payload) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Documento invalido.")
+    name = str(payload.get("nome", "")).strip()
+    kind = str(payload.get("tipo", "contrato_assinado")).strip().lower()
+    url = str(payload.get("url", "")).strip()
+    notes = str(payload.get("observacao", "")).strip()
+    if len(name) < 2:
+        raise ValueError("Informe o nome do documento.")
+    return {
+        "tipo": kind[:60],
+        "nome": name[:180],
+        "url": url[:500] or None,
+        "observacao": notes[:1000] or None,
+        "registradoEm": date.today().isoformat(),
+    }
+
+
+def _payment_item(payload) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Pagamento invalido.")
+    kind = str(payload.get("tipo", "")).strip().lower()
+    status = str(payload.get("status", "")).strip().lower()
+    if kind not in {"onboarding", "mensalidade"}:
+        raise ValueError("Tipo de pagamento invalido.")
+    if status not in LEAD_PAYMENT_STATUSES:
+        raise ValueError("Status de pagamento invalido.")
+    try:
+        amount = float(payload.get("valor") or 0)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Valor de pagamento invalido.") from error
+    return {
+        "tipo": kind,
+        "status": status,
+        "valor": round(amount, 2),
+        "vencimento": str(payload.get("vencimento", "")).strip()[:10] or None,
+        "observacao": str(payload.get("observacao", "")).strip()[:1000] or None,
+        "registradoEm": date.today().isoformat(),
+    }
+
+
+def _onboarding_details(payload) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Dados de onboarding invalidos.")
+    location = str(payload.get("local", "")).strip().lower()
+    if location not in {"remota", "presencial"}:
+        raise ValueError("Local de onboarding invalido.")
+    data = str(payload.get("data", "")).strip()
+    _optional_date(data)
+    return {
+        "data": data,
+        "local": location,
+        "tecnicoResponsavel": str(payload.get("tecnicoResponsavel", "")).strip()[:160],
+        "observacao": str(payload.get("observacao", "")).strip()[:1000],
+    }
+
+
+def _generated_contract(item: PublicLead) -> dict:
+    return {
+        "tipo": "contrato_gerado",
+        "nome": f"Contrato GabFlow - {item.organization}",
+        "url": None,
+        "observacao": "Minuta gerada para conferência comercial.",
+        "registradoEm": date.today().isoformat(),
+    }
+
+
+def _append_lead_action(item: PublicLead, action: str, payload: dict) -> None:
+    event = {"acao": action, "dados": payload, "registradoEm": date.today().isoformat()}
+    item.action_history = [event, *(item.action_history or [])][:100]
+
+
+def _default_user_limit(plan: str) -> int:
+    return {"starter": 5, "professional": 15, "premium": 9999}.get(plan, 5)
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug[:80] or f"gabinete-{uuid.uuid4().hex[:8]}"
 
 
 def _platform_settings_summary(setting_type: PlatformSettingType) -> list[dict]:

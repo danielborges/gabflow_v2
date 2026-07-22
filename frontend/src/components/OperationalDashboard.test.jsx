@@ -94,7 +94,7 @@ describe("OperationalDashboard", () => {
             granularidade: "dia",
           },
           opcoes: {
-            categorias: ["SaÃºde"],
+            categorias: ["Saúde"],
             canais: ["WHATSAPP"],
             territorios: [{ id: "territory-1", nome: "Centro" }],
             orgaos: [{ id: "agency-1", nome: "Secretaria de Saúde" }],

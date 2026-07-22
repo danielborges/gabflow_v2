@@ -1,6 +1,7 @@
 import { CalendarDays, ClipboardPlus, MapPin, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 const emptyForm = {
   tipo: "VISITA",
@@ -16,17 +17,20 @@ const emptyForm = {
 export function AgendaPage() {
   const [events, setEvents] = useState([]);
   const [routes, setRoutes] = useState([]);
+  const [jurisdiction, setJurisdiction] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [agendaData, routeData] = await Promise.all([
+    const [agendaData, routeData, jurisdictionData] = await Promise.all([
       apiRequest("/api/v1/agenda/compromissos"),
       apiRequest("/api/v1/agenda/roteiros-visita"),
+      apiRequest("/api/v1/admin/jurisdicao"),
     ]);
     setEvents(agendaData.content);
     setRoutes(routeData.content);
+    setJurisdiction(jurisdictionData);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -112,7 +116,7 @@ export function AgendaPage() {
           </div>
           <label>Título<input required value={form.titulo} onChange={(event) => setForm((current) => ({ ...current, titulo: event.target.value }))} /></label>
           <label>Descrição<textarea rows="3" value={form.descricao} onChange={(event) => setForm((current) => ({ ...current, descricao: event.target.value }))} /></label>
-          <label>Local<input value={form.local} onChange={(event) => setForm((current) => ({ ...current, local: event.target.value }))} /></label>
+          <label>Local<GooglePlaceAutocompleteInput value={form.local} onChange={(local) => setForm((current) => ({ ...current, local }))} placeholder="Digite um endereço ou ponto de referência" territoryBounds={jurisdiction?.limites} inputProps={{ "aria-label": "Local" }} /></label>
           <label>Participantes<textarea rows="3" value={form.participantes} onChange={(event) => setForm((current) => ({ ...current, participantes: event.target.value }))} /></label>
           {error && <p className="form-error">{error}</p>}
           <button className="primary-button compact"><Plus size={18} /> Adicionar</button>

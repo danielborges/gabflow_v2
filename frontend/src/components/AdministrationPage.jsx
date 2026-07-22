@@ -15,20 +15,26 @@ import {
   X,
   Sparkles,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { formatBrazilianPhone, isValidBrazilianPhone, isValidEmail, isValidWebsiteUrl, normalizeWebsiteUrl } from "../contactValidation";
+import brazilLocations from "../data/brazilLocations.json";
+import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
+
+const brazilStates = brazilLocations.states;
+const municipalitiesByState = brazilLocations.municipalitiesByState;
 
 const sections = [
   ["office", "Gabinete"],
   ["parliamentarian", "Parlamentar"],
-  ["users", "Usuarios"],
-  ["jurisdiction", "Jurisdicao"],
+  ["users", "Usuários"],
   ["categories", "Categorias"],
-  ["territories", "Territorios"],
-  ["agencies", "Orgaos"],
+  ["territories", "Territórios"],
+  ["agencies", "Órgãos"],
   ["templates", "Templates"],
-  ["integrations", "Integracoes"],
+  ["integrations", "Integrações"],
   ["audit", "Auditoria"],
 ];
 
@@ -90,6 +96,22 @@ const userStatusLabels = {
   blocked: "Bloqueado",
 };
 
+const defaultOfficeHours = {
+  days: ["seg", "ter", "qua", "qui", "sex"],
+  start: "08:00",
+  end: "17:00",
+};
+
+const weekdays = [
+  ["seg", "Seg"],
+  ["ter", "Ter"],
+  ["qua", "Qua"],
+  ["qui", "Qui"],
+  ["sex", "Sex"],
+  ["sab", "Sab"],
+  ["dom", "Dom"],
+];
+
 export function AdministrationPage() {
   const [active, setActive] = useState("office");
   const [auditPage, setAuditPage] = useState(1);
@@ -110,6 +132,7 @@ export function AdministrationPage() {
   });
   const [form, setForm] = useState(initialForm);
   const [officeForm, setOfficeForm] = useState(emptyOffice);
+  const [officeJurisdictionForm, setOfficeJurisdictionForm] = useState(() => jurisdictionForm(null));
   const [parliamentarianForm, setParliamentarianForm] = useState(emptyParliamentarian);
   const [error, setError] = useState("");
 
@@ -154,6 +177,7 @@ export function AdministrationPage() {
       },
     });
     setOfficeForm(mappedOffice);
+    setOfficeJurisdictionForm(jurisdictionForm(jurisdiction));
     setParliamentarianForm(mappedParliamentarian);
   }, [auditPage, auditPerPage]);
 
@@ -202,12 +226,17 @@ export function AdministrationPage() {
     try {
       const officePayload = {
         ...officeForm,
+        redesSociais: {},
         identidadeVisual: {
           ...officeForm.identidadeVisual,
           dadosInstitucionais: officeForm.dadosInstitucionais,
-          redesSociais: officeForm.redesSociais,
+          redesSociais: {},
         },
       };
+      await apiRequest("/api/v1/admin/jurisdicao", {
+        method: "PATCH",
+        body: JSON.stringify(jurisdictionPayload(officeJurisdictionForm)),
+      });
       await apiRequest("/api/v1/admin/perfil-gabinete", {
         method: "PATCH",
         body: JSON.stringify(officePayload),
@@ -266,17 +295,17 @@ export function AdministrationPage() {
   }
 
   const labels = {
-    categories: ["Nova categoria", "O SLA sera aplicado a solicitacao.", Clock3],
-    territories: ["Novo territorio", "Organize as demandas por bairro ou regiao.", MapPinned],
-    agencies: ["Novo orgao", "Cadastre os destinatarios dos encaminhamentos.", Building2],
-    templates: ["Novo template", "Use somente as variaveis seguras indicadas.", FileText],
-    integrations: ["Nova integracao", "Configure canais e sistemas externos autorizados.", PlugZap],
+    categories: ["Nova categoria", "O SLA será aplicado à solicitação.", Clock3],
+    territories: ["Novo território", "Organize as demandas por bairro ou região.", MapPinned],
+    agencies: ["Novo órgão", "Cadastre os destinatários dos encaminhamentos.", Building2],
+    templates: ["Novo template", "Use somente as variáveis seguras indicadas.", FileText],
+    integrations: ["Nova integração", "Configure canais e sistemas externos autorizados.", PlugZap],
   };
   const [title, description, Icon] = labels[active] || [];
-  const wideLayout = ["audit", "office", "parliamentarian", "jurisdiction"].includes(active);
+  const wideLayout = ["audit", "office", "parliamentarian"].includes(active);
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuracao administrativa</h1><p>Gerencie identidade institucional, equipe, usuarios, parametros, canais, documentos, privacidade e auditoria interna.</p></div></section>
+    <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuração administrativa</h1><p>Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna.</p></div></section>
     <section className="admin-tabs segmented-control">
       {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => setActive(id)}>{label}</button>)}
     </section>
@@ -284,8 +313,12 @@ export function AdministrationPage() {
       {active === "office" && (
         <OfficeSettings
           data={officeForm}
+          jurisdictionForm={officeJurisdictionForm}
           users={data.users}
+          jurisdiction={data.jurisdiction}
           onChange={setOfficeForm}
+          onJurisdictionChange={setOfficeJurisdictionForm}
+          onSaved={load}
           onSubmit={saveOffice}
           error={error}
         />
@@ -321,8 +354,7 @@ export function AdministrationPage() {
           }}
         />
       )}
-      {active === "jurisdiction" && <JurisdictionSettings data={data.jurisdiction} onSaved={load} />}
-      {!["office", "parliamentarian", "users", "audit", "jurisdiction"].includes(active) && <>
+      {!["office", "parliamentarian", "users", "audit"].includes(active) && <>
         <form className="settings-form" onSubmit={submit}>
           <div className="settings-title"><Settings2 size={21} /><div><strong>{title}</strong><small>{description}</small></div></div>
           <label>Nome<input required value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} /></label>
@@ -334,15 +366,15 @@ export function AdministrationPage() {
               <label>Categoria<select value={form.categoriaId} onChange={(event) => setForm((current) => ({ ...current, categoriaId: event.target.value }))}><option value="">Todas</option>{data.categories.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
             </div>
             <label>Assunto<input value={form.assunto} onChange={(event) => setForm((current) => ({ ...current, assunto: event.target.value }))} /></label>
-            <label>Conteudo<textarea required rows="7" value={form.conteudo} onChange={(event) => setForm((current) => ({ ...current, conteudo: event.target.value }))} placeholder="Ola, {{cidadao}}. A solicitacao {{protocolo}} esta com status {{status}}." /></label>
-            <small className="template-help">Variaveis permitidas: {"{{cidadao}}"}, {"{{protocolo}}"} e {"{{status}}"}</small>
+            <label>Conteúdo<textarea required rows="7" value={form.conteudo} onChange={(event) => setForm((current) => ({ ...current, conteudo: event.target.value }))} placeholder="Olá, {{cidadao}}. A solicitação {{protocolo}} está com status {{status}}." /></label>
+            <small className="template-help">Variáveis permitidas: {"{{cidadao}}"}, {"{{protocolo}}"} e {"{{status}}"}</small>
           </>}
           {active === "integrations" && <>
             <div className="form-grid">
               <label>Tipo<select value={form.tipoIntegracao} onChange={(event) => setForm((current) => ({ ...current, tipoIntegracao: event.target.value }))}>
                 <option value="WHATSAPP">WhatsApp Business</option>
                 <option value="EMAIL">E-mail</option>
-                <option value="FORMULARIO_PUBLICO">Formulario publico</option>
+                <option value="FORMULARIO_PUBLICO">Formulário público</option>
                 <option value="REDE_SOCIAL">Rede social</option>
                 <option value="SISTEMA_LEGISLATIVO">Sistema legislativo</option>
                 <option value="PROTOCOLO_EXTERNO">Protocolo externo</option>
@@ -353,7 +385,7 @@ export function AdministrationPage() {
                 <option value="INATIVA">Inativa</option>
               </select></label>
             </div>
-            <label>Configuracao publica<textarea rows="4" value={form.configuracao} onChange={(event) => setForm((current) => ({ ...current, configuracao: event.target.value }))} placeholder="numero=+5532999999999&#10;webhook=https://..." /></label>
+            <label>Configuração pública<textarea rows="4" value={form.configuracao} onChange={(event) => setForm((current) => ({ ...current, configuracao: event.target.value }))} placeholder="numero=+5532999999999&#10;webhook=https://..." /></label>
             <label>Token ou segredo<input value={form.segredo} onChange={(event) => setForm((current) => ({ ...current, segredo: event.target.value }))} /></label>
           </>}
           {error && <p className="form-error">{error}</p>}
@@ -367,34 +399,433 @@ export function AdministrationPage() {
   </>;
 }
 
-function OfficeSettings({ data, users, onChange, onSubmit, error }) {
+function OfficeSettings({
+  data,
+  jurisdictionForm: jurisdictionData,
+  users,
+  jurisdiction,
+  onChange,
+  onJurisdictionChange,
+  onSaved,
+  onSubmit,
+  error,
+}) {
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [importing, setImporting] = useState(false);
+  const [draggingLogo, setDraggingLogo] = useState(false);
+  const institutional = data.dadosInstitucionais || {};
+  const visual = data.identidadeVisual || {};
+  const chiefOptions = users.filter((user) => user.status === "active" && !["representative", "platform_admin"].includes(user.perfil));
+  const selectedState = jurisdictionData.uf || institutional.estado || "";
+  const stateMunicipalities = municipalitiesByState[selectedState] || [];
+  const selectedMunicipality = jurisdictionData.municipio || institutional.municipio || "";
+  const selectedStateData = brazilStates.find((state) => state.code === selectedState);
+  const selectedCityData = stateMunicipalities.find((city) => city.name === selectedMunicipality);
+  const effectiveIbgeCode = jurisdictionData.codigoIbge || selectedCityData?.id || selectedStateData?.ibgeId || "";
+  const schedule = parseOfficeHours(institutional.horarioAtendimento);
+  const canLoadIbge = Boolean(effectiveIbgeCode);
+
+  function update(section, key, value) {
+    onChange({ ...data, [section]: { ...data[section], [key]: value } });
+  }
+
+  function updateInstitutional(patch) {
+    onChange({ ...data, dadosInstitucionais: { ...institutional, ...patch } });
+  }
+
+  function nextIbgeCode(type, stateCode, cityName) {
+    if (type === "ASSEMBLEIA_LEGISLATIVA") {
+      return brazilStates.find((state) => state.code === stateCode)?.ibgeId || "";
+    }
+    return (municipalitiesByState[stateCode] || []).find((city) => city.name === cityName)?.id || "";
+  }
+
+  function updateState(state) {
+    const municipalities = municipalitiesByState[state] || [];
+    const currentCityExists = municipalities.some((city) => city.name === selectedMunicipality);
+    const nextCity = currentCityExists ? selectedMunicipality : "";
+    const code = nextIbgeCode(jurisdictionData.tipoCasa, state, nextCity);
+    updateInstitutional({ estado: state, municipio: nextCity });
+    onJurisdictionChange((current) => ({
+      ...current,
+      uf: state,
+      municipio: nextCity,
+      codigoIbge: code ? String(code) : "",
+      nome: defaultJurisdictionName(current.tipoCasa, nextCity, state),
+    }));
+  }
+
+  function updateMunicipality(municipalityName) {
+    const code = nextIbgeCode(jurisdictionData.tipoCasa, selectedState, municipalityName);
+    updateInstitutional({ estado: selectedState, municipio: municipalityName });
+    onJurisdictionChange((current) => ({
+      ...current,
+      uf: selectedState,
+      municipio: municipalityName,
+      codigoIbge: code ? String(code) : "",
+      nome: defaultJurisdictionName(current.tipoCasa, municipalityName, selectedState),
+    }));
+  }
+
+  function updateJurisdictionType(value) {
+    const code = nextIbgeCode(value, selectedState, selectedMunicipality);
+    onJurisdictionChange((current) => ({
+      ...current,
+      tipoCasa: value,
+      codigoIbge: code ? String(code) : current.codigoIbge,
+      nome: defaultJurisdictionName(value, current.municipio || selectedMunicipality, current.uf || selectedState),
+    }));
+  }
+
+  function updateContactField(section, key, value) {
+    update(section, key, value);
+    if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
+  }
+
+  function handleSubmit(event) {
+    const errors = {};
+    if (institutional.telefone && !isValidBrazilianPhone(institutional.telefone)) {
+      errors.telefone = "Informe um telefone válido com DDD.";
+    }
+    if (institutional.whatsapp && !isValidBrazilianPhone(institutional.whatsapp)) {
+      errors.whatsapp = "Informe um WhatsApp válido com DDD.";
+    }
+    if (institutional.emailOficial && !isValidEmail(institutional.emailOficial)) {
+      errors.emailOficial = "Informe um e-mail válido.";
+    }
+    if (institutional.site && !isValidWebsiteUrl(institutional.site)) {
+      errors.site = "Informe um site válido, como https://camara.gov.br.";
+    }
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      event.preventDefault();
+      return;
+    }
+    onSubmit(event);
+  }
+
+  async function importFromIbge() {
+    setImporting(true);
+    try {
+      await apiRequest("/api/v1/admin/jurisdicao/ibge", {
+        method: "POST",
+        body: JSON.stringify({
+          tipoCasa: jurisdictionData.tipoCasa,
+          codigoIbge: String(effectiveIbgeCode),
+          nome: jurisdictionData.nome || defaultJurisdictionName(jurisdictionData.tipoCasa, selectedMunicipality, selectedState),
+        }),
+      });
+      await onSaved();
+      setFieldErrors((current) => ({ ...current, ibge: "" }));
+    } catch (requestError) {
+      setFieldErrors((current) => ({ ...current, ibge: requestError.message }));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function updateSchedule(key, value) {
+    const nextSchedule = { ...schedule, [key]: value };
+    update("dadosInstitucionais", "horarioAtendimento", formatOfficeHours(nextSchedule));
+  }
+
+  function updateWeekday(day) {
+    const days = schedule.days.includes(day)
+      ? schedule.days.filter((item) => item !== day)
+      : [...schedule.days, day];
+    updateSchedule("days", days);
+  }
+
+  function applyLogoFile(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => update("identidadeVisual", "logoUrl", String(reader.result || ""));
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <form className="settings-form office-settings-form office-panel-form" onSubmit={handleSubmit} noValidate>
+      <div className="settings-title"><ShieldCheck size={21} /><div><strong>Dados do gabinete</strong><small>Configurações administrativas do gabinete e sua jurisdição.</small></div></div>
+
+      <section className="office-form-panel">
+        <h3>Jurisdição</h3>
+        <div className="form-grid">
+          <label>Tipo<select value={jurisdictionData.tipoCasa} onChange={(event) => updateJurisdictionType(event.target.value)}>
+            <option value="CAMARA_MUNICIPAL">Câmara Municipal</option>
+            <option value="ASSEMBLEIA_LEGISLATIVA">Assembleia Legislativa</option>
+          </select></label>
+          <label>Estado<select value={selectedState} onChange={(event) => updateState(event.target.value)}>
+            <option value="">Selecionar estado</option>
+            {brazilStates.map((state) => <option key={state.code} value={state.code}>{state.name} - {state.code}</option>)}
+          </select></label>
+          <MunicipalitySearchSelect
+            stateCode={selectedState}
+            municipalities={stateMunicipalities}
+            value={selectedMunicipality}
+            onChange={updateMunicipality}
+          />
+        </div>
+        <div className="office-inner-panel">
+          <h4>Malha IBGE</h4>
+          {jurisdiction?.geojson && <p className="form-success ibge-status-message">Malha oficial carregada para o mapa territorial.</p>}
+          {fieldErrors.ibge && <p className="form-error">{fieldErrors.ibge}</p>}
+          <div className="ibge-actions-row">
+            <button type="button" className="primary-button compact ibge-load-button" disabled={!canLoadIbge || importing} onClick={importFromIbge}>
+              {importing ? "Carregando..." : "Carregar Malha IBGE"}
+            </button>
+          </div>
+          <div className="ibge-values-grid" aria-label="Dados da malha IBGE">
+            <IbgeValue label="Código IBGE" value={effectiveIbgeCode} />
+            <IbgeValue label="Latitude Central" value={jurisdictionData.latitude} />
+            <IbgeValue label="Longitude Central" value={jurisdictionData.longitude} />
+            <IbgeValue label="Latitude mínima" value={jurisdictionData.minLatitude} />
+            <IbgeValue label="Latitude máxima" value={jurisdictionData.maxLatitude} />
+            <IbgeValue label="Longitude mínima" value={jurisdictionData.minLongitude} />
+            <IbgeValue label="Longitude máxima" value={jurisdictionData.maxLongitude} />
+          </div>
+        </div>
+      </section>
+
+      <section className="office-form-panel">
+        <h3>Dados do Gabinete</h3>
+        <div className="office-data-grid">
+          <div className="office-data-row">
+            <label>Nome do Gabinete<input value={institutional.nomeGabinete || ""} onChange={(event) => update("dadosInstitucionais", "nomeGabinete", event.target.value)} /></label>
+            <label className="address-field-label">
+              <span>Endereço</span>
+              <GooglePlaceAutocompleteInput
+                value={institutional.enderecoInstitucional || ""}
+                onChange={(value) => update("dadosInstitucionais", "enderecoInstitucional", value)}
+                placeholder="Digite o endereço"
+                territoryBounds={jurisdiction?.limites}
+                hideStatus
+                inputProps={{ "aria-label": "Endereço" }}
+              />
+              <small className="maps-territory-note">Sugestões do Google Maps restritas ao território</small>
+            </label>
+            <label>Chefe de gabinete<select value={data.chefeGabineteId || ""} onChange={(event) => onChange({ ...data, chefeGabineteId: event.target.value })}><option value="">Não definido</option>{chiefOptions.map((user) => <option key={user.id} value={user.id}>{user.nome}</option>)}</select></label>
+          </div>
+          <div className="office-data-row">
+            <label>Telefone<input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} value={institutional.telefone || ""} onChange={(event) => updateContactField("dadosInstitucionais", "telefone", formatBrazilianPhone(event.target.value))} aria-invalid={Boolean(fieldErrors.telefone)} />{fieldErrors.telefone && <small className="field-error">{fieldErrors.telefone}</small>}</label>
+            <label>WhatsApp<span className="whatsapp-input"><WhatsAppMark /><input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} value={institutional.whatsapp || ""} onChange={(event) => updateContactField("dadosInstitucionais", "whatsapp", formatBrazilianPhone(event.target.value))} aria-invalid={Boolean(fieldErrors.whatsapp)} /></span>{fieldErrors.whatsapp && <small className="field-error">{fieldErrors.whatsapp}</small>}</label>
+          </div>
+          <div className="office-data-row">
+            <label>E-mail institucional<input type="email" inputMode="email" autoComplete="email" placeholder="gabinete@camara.gov.br" value={institutional.emailOficial || ""} onChange={(event) => updateContactField("dadosInstitucionais", "emailOficial", event.target.value)} aria-invalid={Boolean(fieldErrors.emailOficial)} />{fieldErrors.emailOficial && <small className="field-error">{fieldErrors.emailOficial}</small>}</label>
+            <label>Site do Gabinete<input type="url" inputMode="url" placeholder="https://camara.gov.br" value={institutional.site || ""} onBlur={(event) => event.target.value && update("dadosInstitucionais", "site", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateContactField("dadosInstitucionais", "site", event.target.value)} aria-invalid={Boolean(fieldErrors.site)} />{fieldErrors.site && <small className="field-error">{fieldErrors.site}</small>}</label>
+          </div>
+          <OfficeHoursPicker schedule={schedule} onToggleDay={updateWeekday} onChange={updateSchedule} />
+        </div>
+      </section>
+
+      <section className="office-form-panel">
+        <h3>Otimizações</h3>
+        <div className="office-optimization-grid">
+          <label>Cor primária<input className="color-square-input" type="color" value={visual.corPrimaria || "#2563eb"} onChange={(event) => update("identidadeVisual", "corPrimaria", event.target.value)} /></label>
+          <label>Cor secundária<input className="color-square-input" type="color" value={visual.corSecundaria || "#0f766e"} onChange={(event) => update("identidadeVisual", "corSecundaria", event.target.value)} /></label>
+          <label
+            className={`logo-dropzone ${draggingLogo ? "is-dragging" : ""}`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDraggingLogo(true);
+            }}
+            onDragLeave={() => setDraggingLogo(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDraggingLogo(false);
+              applyLogoFile(event.dataTransfer.files?.[0]);
+            }}
+          >
+            Logotipo do Gabinete
+            <span><Upload size={18} /> Arraste uma imagem ou selecione o arquivo</span>
+            <input type="file" accept="image/*" onChange={(event) => applyLogoFile(event.target.files?.[0])} />
+            {visual.logoUrl && <img src={visual.logoUrl} alt="Logotipo do gabinete" />}
+          </label>
+        </div>
+      </section>
+
+      {error && <p className="form-error">{error}</p>}
+      <button className="primary-button compact"><Save size={18} /> Salvar gabinete</button>
+    </form>
+  );
+}
+
+// eslint-disable-next-line no-unused-vars
+function LegacyOfficeSettings({
+  data,
+  jurisdictionForm: jurisdictionData,
+  users,
+  jurisdiction,
+  onChange,
+  onJurisdictionChange,
+  onSaved,
+  onSubmit,
+  error,
+}) {
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [importing, setImporting] = useState(false);
+  const [draggingLogo, setDraggingLogo] = useState(false);
   const update = (section, key, value) => onChange({ ...data, [section]: { ...data[section], [key]: value } });
   const institutional = data.dadosInstitucionais || {};
   const social = data.redesSociais || {};
   const chiefOptions = users.filter((user) => user.status === "active" && !["representative", "platform_admin"].includes(user.perfil));
+  const selectedState = jurisdictionData.uf || institutional.estado || "";
+  const stateMunicipalities = municipalitiesByState[selectedState] || [];
+  const selectedMunicipality = jurisdictionData.municipio || institutional.municipio || "";
+  const visual = data.identidadeVisual || {};
+  const schedule = parseOfficeHours(institutional.horarioAtendimento);
+
+  function updateInstitutional(patch) {
+    onChange({
+      ...data,
+      dadosInstitucionais: {
+        ...institutional,
+        ...patch,
+      },
+    });
+  }
+
+  function updateState(state) {
+    const municipalities = municipalitiesByState[state] || [];
+    const currentCityExists = municipalities.some((city) => city.name === selectedMunicipality);
+    const nextCity = currentCityExists ? selectedMunicipality : "";
+    updateInstitutional({
+      estado: state,
+      municipio: nextCity,
+    });
+    onJurisdictionChange((current) => ({
+      ...current,
+      uf: state,
+      municipio: nextCity,
+      codigoIbge: currentCityExists ? current.codigoIbge : "",
+      nome: defaultJurisdictionName(current.tipoCasa, nextCity, state),
+    }));
+  }
+
+  function updateMunicipality(municipalityName) {
+    const city = stateMunicipalities.find((item) => item.name === municipalityName);
+    updateInstitutional({ estado: selectedState, municipio: municipalityName });
+    onJurisdictionChange((current) => ({
+      ...current,
+      uf: selectedState,
+      municipio: municipalityName,
+      codigoIbge: city?.id ? String(city.id) : current.codigoIbge,
+      nome: defaultJurisdictionName(current.tipoCasa, municipalityName, selectedState),
+    }));
+  }
+
+  function updateJurisdiction(key, value) {
+    onJurisdictionChange((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === "tipoCasa" ? { nome: defaultJurisdictionName(value, current.municipio, current.uf) } : {}),
+    }));
+  }
+
+  function updateContactField(section, key, value) {
+    update(section, key, value);
+    if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
+  }
+
+  function handleSubmit(event) {
+    const errors = {};
+    if (institutional.telefone && !isValidBrazilianPhone(institutional.telefone)) {
+      errors.telefone = "Informe um telefone válido com DDD.";
+    }
+    if (institutional.whatsapp && !isValidBrazilianPhone(institutional.whatsapp)) {
+      errors.whatsapp = "Informe um WhatsApp válido com DDD.";
+    }
+    if (institutional.emailOficial && !isValidEmail(institutional.emailOficial)) {
+      errors.emailOficial = "Informe um e-mail válido.";
+    }
+    if (institutional.site && !isValidWebsiteUrl(institutional.site)) {
+      errors.site = "Informe um site válido, como https://camara.gov.br.";
+    }
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      event.preventDefault();
+      return;
+    }
+    onSubmit(event);
+  }
+
+  async function importFromIbge() {
+    setImporting(true);
+    try {
+      await apiRequest("/api/v1/admin/jurisdicao/ibge", {
+        method: "POST",
+        body: JSON.stringify({
+          tipoCasa: jurisdictionData.tipoCasa,
+          codigoIbge: jurisdictionData.codigoIbge,
+          nome: jurisdictionData.nome,
+        }),
+      });
+      await onSaved();
+    } catch (requestError) {
+      setFieldErrors((current) => ({ ...current, ibge: requestError.message }));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function updateSchedule(key, value) {
+    const nextSchedule = { ...schedule, [key]: value };
+    update("dadosInstitucionais", "horarioAtendimento", formatOfficeHours(nextSchedule));
+  }
+
+  function updateWeekday(day) {
+    const days = schedule.days.includes(day)
+      ? schedule.days.filter((item) => item !== day)
+      : [...schedule.days, day];
+    updateSchedule("days", days);
+  }
+
+  function applyLogoFile(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => update("identidadeVisual", "logoUrl", String(reader.result || ""));
+    reader.readAsDataURL(file);
+  }
+
+  void importing;
+  void draggingLogo;
+  void setDraggingLogo;
+  void visual;
+  void updateMunicipality;
+  void updateJurisdiction;
+  void importFromIbge;
+  void updateWeekday;
+  void applyLogoFile;
+
   return (
-    <form className="settings-form office-settings-form" onSubmit={onSubmit}>
+    <form className="settings-form office-settings-form" onSubmit={handleSubmit} noValidate>
       <div className="settings-title"><ShieldCheck size={21} /><div><strong>Dados do gabinete</strong><small>Identidade institucional, canais oficiais, redes sociais, logotipo e chefia administrativa.</small></div></div>
       <div className="form-grid">
         <label>Nome do gabinete<input value={institutional.nomeGabinete || ""} onChange={(event) => update("dadosInstitucionais", "nomeGabinete", event.target.value)} /></label>
-        <label>Câmara Municipal<input value={institutional.camaraMunicipal || ""} onChange={(event) => update("dadosInstitucionais", "camaraMunicipal", event.target.value)} /></label>
-        <label>Município<input value={institutional.municipio || ""} onChange={(event) => update("dadosInstitucionais", "municipio", event.target.value)} /></label>
-        <label>Estado<input maxLength="2" value={institutional.estado || ""} onChange={(event) => update("dadosInstitucionais", "estado", event.target.value.toUpperCase())} /></label>
+        <label>Estado<select value={selectedState} onChange={(event) => updateState(event.target.value)}>
+          <option value="">Selecionar estado</option>
+          {brazilStates.map((state) => <option key={state.code} value={state.code}>{state.name} - {state.code}</option>)}
+        </select></label>
+        <MunicipalitySearchSelect
+          stateCode={selectedState}
+          municipalities={stateMunicipalities}
+          value={institutional.municipio || ""}
+          onChange={(municipality) => update("dadosInstitucionais", "municipio", municipality)}
+        />
       </div>
       <div className="form-grid">
-        <label>Endereço institucional<input value={institutional.enderecoInstitucional || ""} onChange={(event) => update("dadosInstitucionais", "enderecoInstitucional", event.target.value)} /></label>
-        <label>Telefone<input value={institutional.telefone || ""} onChange={(event) => update("dadosInstitucionais", "telefone", event.target.value)} /></label>
-        <label>E-mail oficial<input type="email" value={institutional.emailOficial || ""} onChange={(event) => update("dadosInstitucionais", "emailOficial", event.target.value)} /></label>
+        <label>Endereço institucional<GooglePlaceAutocompleteInput value={institutional.enderecoInstitucional || ""} onChange={(value) => update("dadosInstitucionais", "enderecoInstitucional", value)} placeholder="Digite o endereço institucional" territoryBounds={jurisdiction?.limites} inputProps={{ "aria-label": "Endereço institucional" }} /></label>
+        <label>Telefone<input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} value={institutional.telefone || ""} onChange={(event) => updateContactField("dadosInstitucionais", "telefone", formatBrazilianPhone(event.target.value))} aria-invalid={Boolean(fieldErrors.telefone)} />{fieldErrors.telefone && <small className="field-error">{fieldErrors.telefone}</small>}</label>
+        <label>E-mail oficial<input type="email" inputMode="email" autoComplete="email" placeholder="gabinete@camara.gov.br" value={institutional.emailOficial || ""} onChange={(event) => updateContactField("dadosInstitucionais", "emailOficial", event.target.value)} aria-invalid={Boolean(fieldErrors.emailOficial)} />{fieldErrors.emailOficial && <small className="field-error">{fieldErrors.emailOficial}</small>}</label>
         <label>Horário de atendimento<input value={institutional.horarioAtendimento || ""} onChange={(event) => update("dadosInstitucionais", "horarioAtendimento", event.target.value)} placeholder="Segunda a sexta, 8h às 17h" /></label>
       </div>
       <div className="form-grid">
-        <label>Site<input value={institutional.site || ""} onChange={(event) => update("dadosInstitucionais", "site", event.target.value)} /></label>
+        <label>Site<input type="url" inputMode="url" placeholder="https://camara.gov.br" value={institutional.site || ""} onBlur={(event) => event.target.value && update("dadosInstitucionais", "site", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateContactField("dadosInstitucionais", "site", event.target.value)} aria-invalid={Boolean(fieldErrors.site)} />{fieldErrors.site && <small className="field-error">{fieldErrors.site}</small>}</label>
         <label>Instagram<input value={social.instagram || ""} onChange={(event) => update("redesSociais", "instagram", event.target.value)} /></label>
         <label>Facebook<input value={social.facebook || ""} onChange={(event) => update("redesSociais", "facebook", event.target.value)} /></label>
         <label>YouTube<input value={social.youtube || ""} onChange={(event) => update("redesSociais", "youtube", event.target.value)} /></label>
       </div>
       <div className="form-grid">
-        <label>Logotipo URL<input value={data.identidadeVisual.logoUrl || ""} onChange={(event) => update("identidadeVisual", "logoUrl", event.target.value)} /></label>
+        <label>Logotipo URL<input type="url" inputMode="url" placeholder="https://..." value={data.identidadeVisual.logoUrl || ""} onBlur={(event) => event.target.value && update("identidadeVisual", "logoUrl", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateContactField("identidadeVisual", "logoUrl", event.target.value)} aria-invalid={Boolean(fieldErrors.logoUrl)} />{fieldErrors.logoUrl && <small className="field-error">{fieldErrors.logoUrl}</small>}</label>
         <label>Cor primária<input type="color" value={data.identidadeVisual.corPrimaria || "#2563eb"} onChange={(event) => update("identidadeVisual", "corPrimaria", event.target.value)} /></label>
         <label>Cor secundária<input type="color" value={data.identidadeVisual.corSecundaria || "#0f766e"} onChange={(event) => update("identidadeVisual", "corSecundaria", event.target.value)} /></label>
         <label>Chefe de gabinete<select value={data.chefeGabineteId || ""} onChange={(event) => onChange({ ...data, chefeGabineteId: event.target.value })}><option value="">Não definido</option>{chiefOptions.map((user) => <option key={user.id} value={user.id}>{user.nome}</option>)}</select></label>
@@ -405,8 +836,135 @@ function OfficeSettings({ data, users, onChange, onSubmit, error }) {
   );
 }
 
+function OfficeHoursPicker({ schedule, onToggleDay, onChange }) {
+  return (
+    <div className="office-data-row office-hours-row">
+      <div className="office-hours-picker">
+        <span>Horário de atendimento</span>
+        <div className="weekday-row" role="group" aria-label="Dias de atendimento">
+          {weekdays.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`weekday-toggle ${schedule.days.includes(key) ? "is-selected" : ""}`}
+              onClick={() => onToggleDay(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label>Início<input type="time" value={schedule.start} onChange={(event) => onChange("start", event.target.value)} /></label>
+      <label>Fim<input type="time" value={schedule.end} onChange={(event) => onChange("end", event.target.value)} /></label>
+    </div>
+  );
+}
+
+function IbgeValue({ label, value }) {
+  const displayValue = value === null || value === undefined || value === "" ? "-" : value;
+  return (
+    <div className="ibge-value-cell">
+      <span>{label}</span>
+      <strong>{displayValue}</strong>
+    </div>
+  );
+}
+
+function WhatsAppMark() {
+  return (
+    <span className="whatsapp-mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" focusable="false">
+        <path fill="#25D366" d="M16 3.5A12.4 12.4 0 0 0 5.3 22.2L3.8 28.5l6.5-1.6A12.4 12.4 0 1 0 16 3.5Z" />
+        <path fill="#fff" d="M22.9 18.8c-.4-.2-2.3-1.1-2.6-1.2-.4-.1-.6-.2-.8.2-.2.4-.9 1.2-1.1 1.4-.2.2-.4.3-.8.1-.4-.2-1.5-.5-2.8-1.7-1-1-1.7-2.1-1.9-2.5-.2-.4 0-.6.2-.8.2-.2.4-.4.6-.7.2-.2.2-.4.4-.6.1-.2.1-.5 0-.7-.1-.2-.8-2-.9-2.7-.2-.7-.5-.6-.8-.6h-.7c-.2 0-.7.1-1 .5-.4.4-1.3 1.3-1.3 3.1s1.3 3.6 1.5 3.8c.2.2 2.6 4 6.3 5.6.9.4 1.6.6 2.1.8.9.3 1.7.2 2.3.1.7-.1 2.3-.9 2.6-1.8.3-.9.3-1.6.2-1.8-.1-.2-.4-.3-.8-.5Z" />
+      </svg>
+    </span>
+  );
+}
+
+function MunicipalitySearchSelect({ stateCode, municipalities, value, onChange }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const normalized = normalizeSearch(query);
+  const selected = municipalities.find((city) => city.name === value);
+  const visible = municipalities.filter((city) => {
+    if (!normalized) return true;
+    return normalizeSearch(city.name).includes(normalized);
+  }).slice(0, 30);
+
+  useEffect(() => {
+    setQuery("");
+    setOpen(false);
+  }, [stateCode]);
+
+  function choose(city) {
+    onChange(city.name);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function clear() {
+    onChange("");
+    setQuery("");
+    setOpen(false);
+  }
+
+  return (
+    <label className="municipality-search-select" onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+    }}>
+      Município
+      <div className={`search-select-control ${open ? "is-open" : ""}`}>
+        <MapPinned size={17} aria-hidden="true" />
+        <input
+          role="combobox"
+          aria-label="Município"
+          aria-expanded={open}
+          aria-controls="office-municipality-options"
+          aria-autocomplete="list"
+          disabled={!stateCode}
+          value={open ? query : selected?.name || value}
+          onFocus={() => {
+            if (stateCode) setOpen(true);
+          }}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
+          placeholder={stateCode ? "Busque o município" : "Selecione o estado primeiro"}
+          autoComplete="off"
+        />
+        {value && (
+          <button type="button" className="search-select-toggle" aria-label="Limpar município" onClick={clear}>
+            x
+          </button>
+        )}
+      </div>
+      {open && stateCode && (
+        <div id="office-municipality-options" className="search-select-menu municipality-search-menu" role="listbox">
+          {visible.map((city) => (
+            <button key={city.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => choose(city)}>
+              <span>{city.name}</span>
+              <small>{stateCode}</small>
+            </button>
+          ))}
+          {!visible.length && <p>Nenhum município encontrado nesse estado.</p>}
+        </div>
+      )}
+    </label>
+  );
+}
+
+function normalizeSearch(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
   const [insights, setInsights] = useState(data.insightsOficiais || null);
+  const [fieldErrors, setFieldErrors] = useState({});
   const selectedParty = parties.find((party) => (
     party.id === data.partidoId || party.sigla === data.partido
   ));
@@ -424,6 +982,26 @@ function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
 
   function updateSocial(key, value) {
     update("redesSociais", { ...social, [key]: value });
+    if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
+  }
+
+  function updateField(key, value) {
+    update(key, value);
+    if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
+  }
+
+  function handleSubmit(event) {
+    const errors = {};
+    if (data.email && !isValidEmail(data.email)) errors.email = "Informe um e-mail válido.";
+    if (data.telefoneInstitucional && !isValidBrazilianPhone(data.telefoneInstitucional)) errors.telefoneInstitucional = "Informe um telefone válido com DDD.";
+    if (data.fotografiaUrl && !isValidWebsiteUrl(data.fotografiaUrl)) errors.fotografiaUrl = "Informe uma URL válida para a fotografia.";
+    if (social.site && !isValidWebsiteUrl(social.site)) errors.site = "Informe um site válido.";
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      event.preventDefault();
+      return;
+    }
+    onSubmit(event);
   }
 
   function updateMandate(index, key, value) {
@@ -453,42 +1031,42 @@ function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
 
   return (
     <div className="parliamentarian-admin-panel">
-      <form className="settings-form parliamentarian-form" onSubmit={onSubmit}>
-        <div className="settings-title"><Users size={21} /><div><strong>Cadastro do parlamentar</strong><small>Dados do titular, partido, contato, redes, prioridades e historico de mandatos.</small></div></div>
+      <form className="settings-form parliamentarian-form" onSubmit={handleSubmit} noValidate>
+        <div className="settings-title"><Users size={21} /><div><strong>Cadastro do parlamentar</strong><small>Dados do titular, partido, contato, redes, prioridades e histórico de mandatos.</small></div></div>
         <div className="form-grid">
           <label>Nome completo<input value={data.nomeCompleto || ""} onChange={(event) => update("nomeCompleto", event.target.value)} /></label>
           <label>Nome parlamentar<input value={data.nomeParlamentar || ""} onChange={(event) => update("nomeParlamentar", event.target.value)} /></label>
-          <label>Fotografia URL<input value={data.fotografiaUrl || ""} onChange={(event) => update("fotografiaUrl", event.target.value)} placeholder="https://..." /></label>
+          <label>Fotografia URL<input type="url" inputMode="url" value={data.fotografiaUrl || ""} onBlur={(event) => event.target.value && update("fotografiaUrl", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateField("fotografiaUrl", event.target.value)} placeholder="https://..." aria-invalid={Boolean(fieldErrors.fotografiaUrl)} />{fieldErrors.fotografiaUrl && <small className="field-error">{fieldErrors.fotografiaUrl}</small>}</label>
           <PartySearchSelect parties={parties} value={selectedParty} onChange={updateParty} />
         </div>
         <div className="form-grid">
-          <label>Coligacao ou federacao<input value={data.coligacaoFederacao || ""} onChange={(event) => update("coligacaoFederacao", event.target.value)} /></label>
-          <label>E-mail<input type="email" value={data.email || ""} onChange={(event) => update("email", event.target.value)} /></label>
-          <label>Telefone institucional<input value={data.telefoneInstitucional || ""} onChange={(event) => update("telefoneInstitucional", event.target.value)} /></label>
+          <label>Coligação ou federação<input value={data.coligacaoFederacao || ""} onChange={(event) => update("coligacaoFederacao", event.target.value)} /></label>
+          <label>E-mail<input type="email" inputMode="email" autoComplete="email" placeholder="nome@dominio.com.br" value={data.email || ""} onChange={(event) => updateField("email", event.target.value)} aria-invalid={Boolean(fieldErrors.email)} />{fieldErrors.email && <small className="field-error">{fieldErrors.email}</small>}</label>
+          <label>Telefone institucional<input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} value={data.telefoneInstitucional || ""} onChange={(event) => updateField("telefoneInstitucional", formatBrazilianPhone(event.target.value))} aria-invalid={Boolean(fieldErrors.telefoneInstitucional)} />{fieldErrors.telefoneInstitucional && <small className="field-error">{fieldErrors.telefoneInstitucional}</small>}</label>
           <label>Status no mandato<select value={data.statusMandato || "ATIVO"} onChange={(event) => update("statusMandato", event.target.value)}><option value="ATIVO">Ativo</option><option value="LICENCIADO">Licenciado</option><option value="SUPLENTE">Suplente</option><option value="ENCERRADO">Encerrado</option></select></label>
         </div>
         <label>Biografia resumida<textarea rows="5" value={data.biografia || ""} onChange={(event) => update("biografia", event.target.value)} /></label>
-        <label>Areas prioritarias<input value={(data.areasPrioritarias || []).join(", ")} onChange={(event) => update("areasPrioritarias", event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} placeholder="Saude, educacao, infraestrutura" /></label>
+        <label>Áreas prioritárias<input value={(data.areasPrioritarias || []).join(", ")} onChange={(event) => update("areasPrioritarias", event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} placeholder="Saúde, educação, infraestrutura" /></label>
         <div className="form-grid">
           <label>Instagram<input value={social.instagram || ""} onChange={(event) => updateSocial("instagram", event.target.value)} /></label>
           <label>Facebook<input value={social.facebook || ""} onChange={(event) => updateSocial("facebook", event.target.value)} /></label>
           <label>X / Twitter<input value={social.twitter || ""} onChange={(event) => updateSocial("twitter", event.target.value)} /></label>
-          <label>Site<input value={social.site || ""} onChange={(event) => updateSocial("site", event.target.value)} /></label>
+          <label>Site<input type="url" inputMode="url" placeholder="https://..." value={social.site || ""} onBlur={(event) => event.target.value && updateSocial("site", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateSocial("site", event.target.value)} aria-invalid={Boolean(fieldErrors.site)} />{fieldErrors.site && <small className="field-error">{fieldErrors.site}</small>}</label>
         </div>
 
         <section className="mandate-history">
           <header>
-            <div><strong>Legislaturas e mandatos</strong><small>Mantenha o mandato atual e historico de mandatos anteriores, incluindo votos recebidos.</small></div>
+            <div><strong>Legislaturas e mandatos</strong><small>Mantenha o mandato atual e histórico de mandatos anteriores, incluindo votos recebidos.</small></div>
             <button type="button" className="secondary-button compact" onClick={addMandate}><Plus size={17} /> Adicionar mandato</button>
           </header>
           {(data.mandatos || []).map((mandate, index) => (
             <article key={`${index}-${mandate.legislatura || "mandato"}`} className="mandate-row">
               <label>Legislatura<input value={mandate.legislatura || ""} onChange={(event) => updateMandate(index, "legislatura", event.target.value)} placeholder="2025-2028" /></label>
               <label>Cargo<input value={mandate.cargo || ""} onChange={(event) => updateMandate(index, "cargo", event.target.value)} /></label>
-              <label>Inicio<input type="date" value={mandate.inicio || ""} onChange={(event) => updateMandate(index, "inicio", event.target.value)} /></label>
+              <label>Início<input type="date" value={mandate.inicio || ""} onChange={(event) => updateMandate(index, "inicio", event.target.value)} /></label>
               <label>Fim<input type="date" value={mandate.fim || ""} onChange={(event) => updateMandate(index, "fim", event.target.value)} /></label>
               <label>Votos<input type="number" min="0" value={mandate.votos || ""} onChange={(event) => updateMandate(index, "votos", event.target.value)} /></label>
-              <label>Status<select value={mandate.status || "HISTORICO"} onChange={(event) => updateMandate(index, "status", event.target.value)}><option value="ATUAL">Atual</option><option value="HISTORICO">Historico</option><option value="ENCERRADO">Encerrado</option></select></label>
+              <label>Status<select value={mandate.status || "HISTORICO"} onChange={(event) => updateMandate(index, "status", event.target.value)}><option value="ATUAL">Atual</option><option value="HISTORICO">Histórico</option><option value="ENCERRADO">Encerrado</option></select></label>
               <button type="button" className="icon-button" title="Remover mandato" onClick={() => removeMandate(index)}><Trash2 size={17} /></button>
             </article>
           ))}
@@ -499,7 +1077,7 @@ function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
       </form>
 
       <section className="official-insights-panel">
-        <div className="settings-title"><Sparkles size={21} /><div><strong>Agente de dados oficiais</strong><small>Use fontes oficiais como TSE e TRE para apoiar conferencias e insights.</small></div></div>
+        <div className="settings-title"><Sparkles size={21} /><div><strong>Agente de dados oficiais</strong><small>Use fontes oficiais como TSE e TRE para apoiar conferências e insights.</small></div></div>
         <button type="button" className="secondary-button compact" onClick={requestInsights}><Sparkles size={17} /> Buscar fontes oficiais</button>
         {insights?.fontes?.map((source) => (
           <a key={source.nome} href={source.url} target="_blank" rel="noreferrer">
@@ -768,7 +1346,7 @@ function AuditSettings({ items, pagination, perPage, onPage, onPerPage }) {
           <strong>Trilha de auditoria interna</strong>
           <span>{pagination.total} registro(s)</span>
         </div>
-        <label>Itens por pagina<select value={perPage} onChange={(event) => onPerPage(Number(event.target.value))}><option value="10">10</option><option value="25">25</option><option value="50">50</option></select></label>
+        <label>Itens por página<select value={perPage} onChange={(event) => onPerPage(Number(event.target.value))}><option value="10">10</option><option value="25">25</option><option value="50">50</option></select></label>
       </header>
       <div className="audit-admin-table">
         <table>
@@ -798,10 +1376,10 @@ function AuditSettings({ items, pagination, perPage, onPage, onPerPage }) {
         </table>
       </div>
       <footer className="audit-admin-pagination">
-        <span>Pagina {pagination.page} de {pagination.totalPages}</span>
+        <span>Página {pagination.page} de {pagination.totalPages}</span>
         <div>
           <button className="secondary-button compact" type="button" disabled={pagination.page <= 1} onClick={() => onPage(pagination.page - 1)}>Anterior</button>
-          <button className="secondary-button compact" type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => onPage(pagination.page + 1)}>Proxima</button>
+          <button className="secondary-button compact" type="button" disabled={pagination.page >= pagination.totalPages} onClick={() => onPage(pagination.page + 1)}>Próxima</button>
         </div>
       </footer>
     </div>
@@ -827,6 +1405,7 @@ function integrationConfig(value, secret) {
   return config;
 }
 
+// eslint-disable-next-line no-unused-vars
 function JurisdictionSettings({ data, onSaved }) {
   const [form, setForm] = useState(() => jurisdictionForm(data));
   const [error, setError] = useState("");
@@ -888,28 +1467,28 @@ function JurisdictionSettings({ data, onSaved }) {
 
   return (
     <form className="settings-form jurisdiction-form" onSubmit={submit}>
-      <div className="settings-title"><MapPinned size={21} /><div><strong>Jurisdicao territorial</strong><small>Escopo usado por mapa, indicadores e autocomplete.</small></div></div>
+      <div className="settings-title"><MapPinned size={21} /><div><strong>Jurisdição territorial</strong><small>Escopo usado por mapa, indicadores e autocomplete.</small></div></div>
       <div className="form-grid">
-        <label>Tipo<select value={form.tipoCasa} onChange={(event) => setForm((current) => ({ ...current, tipoCasa: event.target.value }))}><option value="CAMARA_MUNICIPAL">Camara Municipal</option><option value="ASSEMBLEIA_LEGISLATIVA">Assembleia Legislativa</option></select></label>
+        <label>Tipo<select value={form.tipoCasa} onChange={(event) => setForm((current) => ({ ...current, tipoCasa: event.target.value }))}><option value="CAMARA_MUNICIPAL">Câmara Municipal</option><option value="ASSEMBLEIA_LEGISLATIVA">Assembleia Legislativa</option></select></label>
         <label>UF<input required maxLength="2" value={form.uf} onChange={(event) => setForm((current) => ({ ...current, uf: event.target.value.toUpperCase() }))} /></label>
       </div>
-      <label>Nome da jurisdicao<input value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} placeholder="Ex.: Juiz de Fora/MG" /></label>
-      <label>Municipio<input value={form.municipio} onChange={(event) => setForm((current) => ({ ...current, municipio: event.target.value }))} /></label>
+      <label>Nome da jurisdição<input value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} placeholder="Ex.: Juiz de Fora/MG" /></label>
+      <label>Município<input value={form.municipio} onChange={(event) => setForm((current) => ({ ...current, municipio: event.target.value }))} /></label>
       <div className="form-grid">
-        <label>Codigo IBGE<input value={form.codigoIbge} onChange={(event) => setForm((current) => ({ ...current, codigoIbge: event.target.value.replace(/\D/g, "") }))} placeholder="Ex.: 3136702" /></label>
+        <label>Código IBGE<input value={form.codigoIbge} onChange={(event) => setForm((current) => ({ ...current, codigoIbge: event.target.value.replace(/\D/g, "") }))} placeholder="Ex.: 3136702" /></label>
         <button type="button" className="secondary-button jurisdiction-import-button" disabled={importing || !form.codigoIbge} onClick={importFromIbge}>{importing ? "Carregando malha..." : "Carregar malha do IBGE"}</button>
       </div>
       <div className="form-grid">
         <label>Latitude central<input type="number" step="0.000001" value={form.latitude} onChange={(event) => setForm((current) => ({ ...current, latitude: event.target.value }))} /></label>
         <label>Longitude central<input type="number" step="0.000001" value={form.longitude} onChange={(event) => setForm((current) => ({ ...current, longitude: event.target.value }))} /></label>
-        <label>Latitude minima<input required type="number" step="0.000001" value={form.minLatitude} onChange={(event) => setForm((current) => ({ ...current, minLatitude: event.target.value }))} /></label>
-        <label>Latitude maxima<input required type="number" step="0.000001" value={form.maxLatitude} onChange={(event) => setForm((current) => ({ ...current, maxLatitude: event.target.value }))} /></label>
-        <label>Longitude minima<input required type="number" step="0.000001" value={form.minLongitude} onChange={(event) => setForm((current) => ({ ...current, minLongitude: event.target.value }))} /></label>
-        <label>Longitude maxima<input required type="number" step="0.000001" value={form.maxLongitude} onChange={(event) => setForm((current) => ({ ...current, maxLongitude: event.target.value }))} /></label>
+        <label>Latitude mínima<input required type="number" step="0.000001" value={form.minLatitude} onChange={(event) => setForm((current) => ({ ...current, minLatitude: event.target.value }))} /></label>
+        <label>Latitude máxima<input required type="number" step="0.000001" value={form.maxLatitude} onChange={(event) => setForm((current) => ({ ...current, maxLatitude: event.target.value }))} /></label>
+        <label>Longitude mínima<input required type="number" step="0.000001" value={form.minLongitude} onChange={(event) => setForm((current) => ({ ...current, minLongitude: event.target.value }))} /></label>
+        <label>Longitude máxima<input required type="number" step="0.000001" value={form.maxLongitude} onChange={(event) => setForm((current) => ({ ...current, maxLongitude: event.target.value }))} /></label>
       </div>
       {error && <p className="form-error">{error}</p>}
       {data?.geojson && <p className="form-success">Malha oficial carregada para o mapa territorial.</p>}
-      <button className="primary-button compact">Salvar jurisdicao</button>
+      <button className="primary-button compact">Salvar jurisdição</button>
     </form>
   );
 }
@@ -929,6 +1508,71 @@ function jurisdictionForm(data) {
     minLongitude: bounds.minLongitude ?? "",
     maxLongitude: bounds.maxLongitude ?? "",
   };
+}
+
+function jurisdictionPayload(form) {
+  const payload = {
+    tipoCasa: form.tipoCasa,
+    nome: form.nome || defaultJurisdictionName(form.tipoCasa, form.municipio, form.uf),
+    municipio: form.municipio,
+    uf: form.uf,
+    codigoIbge: form.codigoIbge,
+    centro: {
+      latitude: form.latitude,
+      longitude: form.longitude,
+    },
+  };
+  const hasBounds = ["minLatitude", "maxLatitude", "minLongitude", "maxLongitude"].every((key) => form[key] !== "");
+  if (hasBounds) {
+    payload.limites = {
+      minLatitude: form.minLatitude,
+      maxLatitude: form.maxLatitude,
+      minLongitude: form.minLongitude,
+      maxLongitude: form.maxLongitude,
+    };
+  }
+  return payload;
+}
+
+function defaultJurisdictionName(type, city, state) {
+  if (type === "ASSEMBLEIA_LEGISLATIVA") {
+    return state ? `Estado de ${state}` : "";
+  }
+  return city ? `Município de ${city}` : "";
+}
+
+function parseOfficeHours(value) {
+  if (!value) return defaultOfficeHours;
+  if (typeof value === "object") {
+    return {
+      ...defaultOfficeHours,
+      ...value,
+      days: Array.isArray(value.days) ? value.days : defaultOfficeHours.days,
+    };
+  }
+  const text = String(value);
+  if (text.startsWith("json:")) {
+    try {
+      const parsed = JSON.parse(text.slice(5));
+      return {
+        ...defaultOfficeHours,
+        ...parsed,
+        days: Array.isArray(parsed.days) ? parsed.days : defaultOfficeHours.days,
+      };
+    } catch {
+      return defaultOfficeHours;
+    }
+  }
+  return defaultOfficeHours;
+}
+
+function formatOfficeHours(schedule) {
+  const normalized = {
+    days: Array.isArray(schedule.days) ? schedule.days : defaultOfficeHours.days,
+    start: schedule.start || defaultOfficeHours.start,
+    end: schedule.end || defaultOfficeHours.end,
+  };
+  return `json:${JSON.stringify(normalized)}`;
 }
 
 function normalizeOffice(data) {

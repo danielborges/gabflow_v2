@@ -14,7 +14,7 @@ export async function apiRequest(path, options = {}) {
   };
   const csrfToken = getCookie("csrf_access_token");
 
-  if (!["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase()) && csrfToken) {
+  if (!options.skipCsrf && !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase()) && csrfToken) {
     headers["X-CSRF-TOKEN"] = decodeURIComponent(csrfToken);
   }
 
@@ -22,7 +22,7 @@ export async function apiRequest(path, options = {}) {
     ...options,
     method,
     headers,
-    credentials: "include",
+    credentials: options.credentials || "include",
   });
   const data = await readResponsePayload(response);
 

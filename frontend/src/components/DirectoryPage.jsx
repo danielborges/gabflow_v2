@@ -2,11 +2,13 @@ import { Building2, Plus, Save, Search, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
 import { formatBrazilianPhone, isValidBrazilianPhone, isValidEmail } from "../contactValidation";
+import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 export function DirectoryPage() {
   const [tab, setTab] = useState("citizens");
   const [citizens, setCitizens] = useState([]);
   const [organizations, setOrganizations] = useState([]);
+  const [jurisdiction, setJurisdiction] = useState(null);
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState(null);
   const [selectedCitizen, setSelectedCitizen] = useState(null);
@@ -15,12 +17,14 @@ export function DirectoryPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [citizenData, organizationData] = await Promise.all([
+      const [citizenData, organizationData, jurisdictionData] = await Promise.all([
         apiRequest(`/api/v1/cidadaos?q=${encodeURIComponent(query)}`),
         apiRequest("/api/v1/organizacoes"),
+        apiRequest("/api/v1/admin/jurisdicao"),
       ]);
       setCitizens(citizenData.content);
       setOrganizations(organizationData.content);
+      setJurisdiction(jurisdictionData);
     } finally {
       setLoading(false);
     }
@@ -105,13 +109,13 @@ export function DirectoryPage() {
         )}
       </section>
 
-      {modal === "citizens" && <CitizenForm citizen={selectedCitizen} onClose={closeModal} onSaved={() => { closeModal(); load(); }} />}
+      {modal === "citizens" && <CitizenForm citizen={selectedCitizen} jurisdiction={jurisdiction} onClose={closeModal} onSaved={() => { closeModal(); load(); }} />}
       {modal === "organizations" && <OrganizationForm onClose={closeModal} onCreated={() => { closeModal(); load(); }} />}
     </>
   );
 }
 
-function CitizenForm({ citizen, onClose, onSaved }) {
+function CitizenForm({ citizen, jurisdiction, onClose, onSaved }) {
   const isEditing = Boolean(citizen?.id);
   const [form, setForm] = useState(() => citizenFormValues(citizen));
   const [error, setError] = useState("");
@@ -173,7 +177,7 @@ function CitizenForm({ citizen, onClose, onSaved }) {
         {fieldErrors.email && <small id="citizen-email-error" className="field-error">{fieldErrors.email}</small>}
       </label>
     </div>
-    <label>Endereço<input name="endereco" value={form.endereco} onChange={change} /></label>
+    <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={(endereco) => setForm((current) => ({ ...current, endereco }))} placeholder="Digite o endereço do cidadão" territoryBounds={jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
     <div className="form-grid"><label>Canal preferencial<select name="canalPreferencial" value={form.canalPreferencial} onChange={change}><option>WHATSAPP</option><option>TELEFONE</option><option>EMAIL</option><option>PRESENCIAL</option></select></label><label>Base legal<select name="baseLegal" value={form.baseLegal} onChange={change}><option value="EXECUCAO_POLITICA_PUBLICA">Execução de política pública</option><option value="CONSENTIMENTO">Consentimento</option><option value="LEGITIMO_INTERESSE">Legítimo interesse</option></select></label></div>
     <label className="checkbox-label"><input type="checkbox" name="consentimentoContato" checked={form.consentimentoContato} onChange={change} /> Autoriza contato pelo gabinete</label>
     <label className="checkbox-label"><input type="checkbox" name="consentimentoDivulgacao" checked={form.consentimentoDivulgacao} onChange={change} /> Autoriza divulgação pública</label>
@@ -218,10 +222,23 @@ function updatedAddresses(citizen, address) {
 function OrganizationForm({ onClose, onCreated }) {
   const [form, setForm] = useState({ nome: "", tipo: "ASSOCIACAO", email: "", telefone: "", territorio: "" });
   const [error, setError] = useState("");
-  function change(event) { setForm((current) => ({ ...current, [event.target.name]: event.target.value })); }
+  const [fieldErrors, setFieldErrors] = useState({});
+  function change(event) {
+    const value = event.target.name === "telefone" ? formatBrazilianPhone(event.target.value) : event.target.value;
+    setForm((current) => ({ ...current, [event.target.name]: value }));
+    if (fieldErrors[event.target.name]) setFieldErrors((current) => ({ ...current, [event.target.name]: "" }));
+  }
+  function validateContacts() {
+    const errors = {};
+    if (form.telefone && !isValidBrazilianPhone(form.telefone)) errors.telefone = "Informe um telefone válido com DDD.";
+    if (form.email && !isValidEmail(form.email)) errors.email = "Informe um e-mail válido.";
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
   async function submit(event) {
     event.preventDefault();
     setError("");
+    if (!validateContacts()) return;
     try {
       await apiRequest("/api/v1/organizacoes", { method: "POST", body: JSON.stringify({
         nome: form.nome, tipo: form.tipo, territorio: form.territorio,
@@ -230,9 +247,9 @@ function OrganizationForm({ onClose, onCreated }) {
       onCreated();
     } catch (requestError) { setError(requestError.message); }
   }
-  return <EntityModal title="Cadastrar organização" onClose={onClose}><form className="request-form" onSubmit={submit}>
+  return <EntityModal title="Cadastrar organização" onClose={onClose}><form className="request-form" onSubmit={submit} noValidate>
     <div className="form-grid"><label>Nome<input required name="nome" value={form.nome} onChange={change} /></label><label>Tipo<select name="tipo" value={form.tipo} onChange={change}><option value="ASSOCIACAO">Associação</option><option value="ESCOLA">Escola</option><option value="EMPRESA">Empresa</option><option value="LIDERANCA">Liderança</option><option value="OUTRA">Outra</option></select></label></div>
-    <div className="form-grid"><label>E-mail<input type="email" name="email" value={form.email} onChange={change} /></label><label>Telefone<input name="telefone" value={form.telefone} onChange={change} /></label></div>
+    <div className="form-grid"><label>E-mail<input type="email" inputMode="email" autoComplete="email" placeholder="nome@dominio.com.br" name="email" value={form.email} onChange={change} aria-invalid={Boolean(fieldErrors.email)} />{fieldErrors.email && <small className="field-error">{fieldErrors.email}</small>}</label><label>Telefone<input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} name="telefone" value={form.telefone} onChange={change} aria-invalid={Boolean(fieldErrors.telefone)} />{fieldErrors.telefone && <small className="field-error">{fieldErrors.telefone}</small>}</label></div>
     <label>Território<input name="territorio" value={form.territorio} onChange={change} placeholder="Bairro ou região" /></label>
     {error && <p className="form-error">{error}</p>}<FormFooter onClose={onClose} />
   </form></EntityModal>;

@@ -655,6 +655,11 @@ def public_form_config(tenant_slug: str):
         nome=tenant.name,
         ativo=integration is not None,
         campos=["nome", "contato", "titulo", "descricao", "endereco"],
+        jurisdicao={
+            "municipio": tenant.jurisdiction_city,
+            "uf": tenant.jurisdiction_state,
+            "limites": tenant.jurisdiction_bounds,
+        },
     )
 
 

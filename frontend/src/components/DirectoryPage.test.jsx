@@ -26,7 +26,7 @@ describe("cadastro de cidadão", () => {
 
   it("aplica a máscara e impede o envio de contatos inválidos", async () => {
     render(<DirectoryPage />);
-    await waitFor(() => expect(apiRequest).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledTimes(3));
     fireEvent.click(screen.getByRole("button", { name: /novo cidadão/i }));
 
     const phone = screen.getByLabelText("Telefone");
@@ -40,7 +40,7 @@ describe("cadastro de cidadão", () => {
 
     expect(await screen.findByText(/telefone válido com DDD/i)).toBeInTheDocument();
     expect(screen.getByText(/e-mail válido/i)).toBeInTheDocument();
-    expect(apiRequest).toHaveBeenCalledTimes(2);
+    expect(apiRequest).toHaveBeenCalledTimes(3);
   });
 
   it("abre o cidadão pelo card e salva as alterações", async () => {

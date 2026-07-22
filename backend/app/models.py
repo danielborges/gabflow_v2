@@ -484,15 +484,34 @@ class PublicLead(db.Model):
     plan: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     organization: Mapped[str] = mapped_column(String(180), nullable=False)
+    admin_name: Mapped[str | None] = mapped_column(String(160))
     email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
     phone: Mapped[str | None] = mapped_column(String(40))
+    whatsapp: Mapped[str | None] = mapped_column(String(40))
     city: Mapped[str | None] = mapped_column(String(120))
     state: Mapped[str | None] = mapped_column(String(2))
+    municipality_ibge_id: Mapped[int | None] = mapped_column(Integer)
     audience: Mapped[str | None] = mapped_column(String(80))
+    preferred_contact: Mapped[str | None] = mapped_column(String(30))
+    discovery_source: Mapped[str | None] = mapped_column(String(80))
     message: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(40), default="new", nullable=False, index=True)
+    payment_status: Mapped[str | None] = mapped_column(String(40))
+    onboarding_date: Mapped[date | None] = mapped_column(Date)
+    onboarding_details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    contact_attempts: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    contract_documents: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    payments: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    action_history: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    converted_tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), index=True
+    )
+    contract_notes: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(80), default="landing_page", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
 
 class Citizen(db.Model):

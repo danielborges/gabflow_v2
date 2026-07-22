@@ -33,13 +33,13 @@ import { RequestsPage } from "./RequestsPage";
 
 const navigation = [
   { id: "overview", label: "Visao geral", icon: LayoutDashboard, enabled: true },
-  { id: "requests", label: "Solicitacoes", icon: ClipboardList, enabled: true, module: "solicitacoes" },
-  { id: "citizens", label: "Cidadaos", icon: Users, enabled: true, module: "cidadaos" },
+  { id: "requests", label: "Solicitações", icon: ClipboardList, enabled: true, module: "solicitacoes" },
+  { id: "citizens", label: "Cidadãos", icon: Users, enabled: true, module: "cidadaos" },
   { id: "ai-quality", label: "Qualidade da IA", icon: BrainCircuit, enabled: true, module: "ia" },
   { id: "rag-assistant", label: "Assistente RAG", icon: Sparkles, enabled: true, module: "rag" },
   { id: "documents", label: "Documentos", icon: FileText, enabled: true, module: "documentos" },
   { id: "agenda", label: "Agenda", icon: CalendarDays, enabled: true, module: "agenda" },
-  { id: "oversight", label: "Fiscalizacao", icon: ClipboardCheck, enabled: true, module: "fiscalizacao" },
+  { id: "oversight", label: "Fiscalização", icon: ClipboardCheck, enabled: true, module: "fiscalizacao" },
   { id: "channels", label: "Canais", icon: MessagesSquare, enabled: true, module: "canais" },
   { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true, module: "rag" },
 ];
@@ -121,7 +121,7 @@ export function Workspace({ user, onLogout }) {
             disabled={user.role !== "admin"}
             onClick={() => openView("admin")}
           >
-            <Settings size={19} /><span>Administracao</span>
+            <Settings size={19} /><span>Administração</span>
           </button>
           <div className="security-note"><ShieldCheck size={18} /><span>Sessao protegida</span></div>
         </div>

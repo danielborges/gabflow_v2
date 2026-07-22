@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { apiRequest } from "../api";
+import { contactPlaceholderForChannel, formatBrazilianPhone, isValidContactByChannel } from "../contactValidation";
+import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 const sources = [
   ["WHATSAPP", "WhatsApp"],
@@ -54,6 +56,7 @@ const emptyReferences = {
   territories: [],
   agencies: [],
   templates: [],
+  jurisdiction: null,
 };
 
 const attachmentMimeTypes = [
@@ -104,7 +107,7 @@ export function RequestsPage({ user, initialSearch = "" }) {
 
   const loadReferences = useCallback(async () => {
     try {
-      const [categories, citizens, organizations, users, territories, agencies, templates] = await Promise.all([
+      const [categories, citizens, organizations, users, territories, agencies, templates, jurisdiction] = await Promise.all([
         apiRequest("/api/v1/admin/categorias"),
         apiRequest("/api/v1/cidadaos"),
         apiRequest("/api/v1/organizacoes"),
@@ -112,6 +115,7 @@ export function RequestsPage({ user, initialSearch = "" }) {
         apiRequest("/api/v1/admin/territorios"),
         apiRequest("/api/v1/admin/orgaos"),
         apiRequest("/api/v1/admin/templates-resposta"),
+        apiRequest("/api/v1/admin/jurisdicao"),
       ]);
       setReferences({
         categories: categories.content,
@@ -121,6 +125,7 @@ export function RequestsPage({ user, initialSearch = "" }) {
         territories: territories.content,
         agencies: agencies.content,
         templates: templates.content,
+        jurisdiction,
       });
     } catch {
       setReferences(emptyReferences);
@@ -312,7 +317,7 @@ function RequestForm({ references, onClose, onCreated }) {
           <label>Responsável<select name="responsavelId" value={form.responsavelId} onChange={change}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
           <label>Título<input name="titulo" maxLength="180" value={form.titulo} onChange={change} placeholder="Resumo objetivo da demanda" /></label>
           <label>Descrição<textarea name="descricao" minLength="3" required rows="5" value={form.descricao} onChange={change} placeholder="Descreva o relato recebido e os fatos relevantes." /></label>
-          <label>Endereço<input name="endereco" value={form.endereco} onChange={change} placeholder="Logradouro, número e referência" /></label>
+          <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={(endereco) => setForm((current) => ({ ...current, endereco }))} placeholder="Logradouro, número e referência" territoryBounds={references.jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <footer><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button compact" disabled={saving}><Plus size={18} />{saving ? "Salvando..." : "Registrar"}</button></footer>
         </form>
@@ -647,9 +652,20 @@ function RequestDetails({ request, references, readOnly = false, onClose, onChan
     }));
   }
 
+  function changeContactDestination(value) {
+    setContactAttempt((current) => ({
+      ...current,
+      destino: ["WHATSAPP", "TELEFONE"].includes(current.canal) ? formatBrazilianPhone(value) : value,
+    }));
+  }
+
   async function addContactAttempt(event) {
     event.preventDefault();
     setError("");
+    if (!isValidContactByChannel(contactAttempt.canal, contactAttempt.destino)) {
+      setError("Informe um destino válido para o canal selecionado.");
+      return;
+    }
     try {
       await apiRequest(`/api/v1/solicitacoes/${request.id}/tentativas-contato`, {
         method: "POST",
@@ -836,7 +852,11 @@ function RequestDetails({ request, references, readOnly = false, onClose, onChan
                 <label>Canal<select required value={contactAttempt.canal} onChange={(event) => changeContactChannel(event.target.value)}><option value="">Selecione</option>{sources.filter(([value]) => ["WHATSAPP", "TELEFONE", "EMAIL", "PRESENCIAL"].includes(value)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label>Resultado<select value={contactAttempt.resultado} onChange={(event) => setContactAttempt((current) => ({ ...current, resultado: event.target.value }))}><option value="REALIZADO">Contato realizado</option><option value="SEM_RESPOSTA">Sem resposta</option><option value="FALHOU">Falhou</option><option value="AGENDADO">Retorno agendado</option></select></label>
               </div>
-              <label>Destino<input required value={contactAttempt.destino} onChange={(event) => setContactAttempt((current) => ({ ...current, destino: event.target.value }))} placeholder="Telefone, e-mail ou endereço" /></label>
+              <label>Destino{contactAttempt.canal === "PRESENCIAL" ? (
+                <GooglePlaceAutocompleteInput value={contactAttempt.destino} onChange={changeContactDestination} placeholder="Endereço da visita" territoryBounds={references.jurisdiction?.limites} inputProps={{ required: true, "aria-label": "Destino" }} />
+              ) : (
+                <input required type={contactAttempt.canal === "EMAIL" ? "email" : "text"} inputMode={contactAttempt.canal === "EMAIL" ? "email" : ["WHATSAPP", "TELEFONE"].includes(contactAttempt.canal) ? "numeric" : "text"} maxLength={["WHATSAPP", "TELEFONE"].includes(contactAttempt.canal) ? 15 : undefined} value={contactAttempt.destino} onChange={(event) => changeContactDestination(event.target.value)} placeholder={contactPlaceholderForChannel(contactAttempt.canal)} />
+              )}</label>
               {preferredChannel && contactAttempt.canal && contactAttempt.canal !== preferredChannel && <label>Justificativa para outro canal<textarea required rows="2" value={contactAttempt.justificativaCanal} onChange={(event) => setContactAttempt((current) => ({ ...current, justificativaCanal: event.target.value }))} /></label>}
               {contactAttempt.resultado === "AGENDADO" && <label>Próxima tentativa<input required type="datetime-local" value={contactAttempt.proximaTentativaEm} onChange={(event) => setContactAttempt((current) => ({ ...current, proximaTentativaEm: event.target.value }))} /></label>}
               <label>Observações<textarea rows="2" value={contactAttempt.observacoes} onChange={(event) => setContactAttempt((current) => ({ ...current, observacoes: event.target.value }))} /></label>
