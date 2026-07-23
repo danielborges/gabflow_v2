@@ -15,9 +15,18 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("external_agencies", sa.Column("responsible", sa.String(length=160), nullable=True))
-    op.add_column("external_agencies", sa.Column("phone", sa.String(length=40), nullable=True))
-    op.add_column("external_agencies", sa.Column("source", sa.String(length=80), nullable=True))
+    op.add_column(
+        "external_agencies",
+        sa.Column("responsible", sa.String(length=160), nullable=True),
+    )
+    op.add_column(
+        "external_agencies",
+        sa.Column("phone", sa.String(length=40), nullable=True),
+    )
+    op.add_column(
+        "external_agencies",
+        sa.Column("source", sa.String(length=80), nullable=True),
+    )
 
 
 def downgrade():

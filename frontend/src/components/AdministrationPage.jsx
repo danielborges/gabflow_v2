@@ -161,6 +161,7 @@ export function AdministrationPage() {
   const [officeJurisdictionForm, setOfficeJurisdictionForm] = useState(() => jurisdictionForm(null));
   const [parliamentarianForm, setParliamentarianForm] = useState(emptyParliamentarian);
   const [error, setError] = useState({ section: "", message: "" });
+  const [success, setSuccess] = useState({ section: "", message: "" });
 
   const load = useCallback(async () => {
     const [categories, territories, agencies, templates, jurisdiction, integrations, office, parliamentarian, users, parties, audit] =
@@ -213,12 +214,24 @@ export function AdministrationPage() {
     setError({ section, message: "" });
   }
 
+  function showSuccess(section, message) {
+    setSuccess({ section, message });
+  }
+
+  function clearSuccess(section = active) {
+    setSuccess((current) => (current.section === section ? { section, message: "" } : current));
+  }
+
   function showError(section, message) {
     setError({ section, message });
   }
 
   function sectionError(section) {
     return error.section === section ? error.message : "";
+  }
+
+  function sectionSuccess(section) {
+    return success.section === section ? success.message : "";
   }
 
   async function submit(event) {
@@ -254,6 +267,7 @@ export function AdministrationPage() {
       await apiRequest(paths[section], { method: "POST", body: JSON.stringify(payload) });
       setForm(initialForm);
       await load();
+      showSuccess(section, "Registro adicionado com sucesso.");
     } catch (requestError) {
       showError(section, requestError.message);
     }
@@ -277,6 +291,7 @@ export function AdministrationPage() {
         body: JSON.stringify(officePayload),
       });
       await load();
+      showSuccess("office", "Gabinete salvo com sucesso.");
     } catch (requestError) {
       showError("office", requestError.message);
     }
@@ -291,6 +306,7 @@ export function AdministrationPage() {
         body: JSON.stringify(parliamentarianForm),
       });
       await load();
+      showSuccess("parliamentarian", "Parlamentar salvo com sucesso.");
       return true;
     } catch (requestError) {
       showError("parliamentarian", requestError.message);
@@ -322,6 +338,7 @@ export function AdministrationPage() {
         senhaUsuario: "",
       }));
       await load();
+      showSuccess("users", "Usuário criado com sucesso.");
     } catch (requestError) {
       showError("users", requestError.message);
     }
@@ -335,6 +352,7 @@ export function AdministrationPage() {
         body: JSON.stringify(patch),
       });
       await load();
+      showSuccess("users", "Usuário atualizado com sucesso.");
     } catch (requestError) {
       showError("users", requestError.message);
     }
@@ -350,6 +368,7 @@ export function AdministrationPage() {
       });
       setForm((current) => ({ ...current, nome: "" }));
       await load();
+      showSuccess("territories", "Território adicionado com sucesso.");
     } catch (requestError) {
       showError("territories", requestError.message);
     }
@@ -363,6 +382,7 @@ export function AdministrationPage() {
         body: JSON.stringify(patch),
       });
       await load();
+      showSuccess("territories", "Território atualizado com sucesso.");
     } catch (requestError) {
       showError("territories", requestError.message);
     }
@@ -373,6 +393,7 @@ export function AdministrationPage() {
     try {
       await apiRequest(`/api/v1/admin/territorios/${territory.id}`, { method: "DELETE" });
       await load();
+      showSuccess("territories", "Território desativado com sucesso.");
     } catch (requestError) {
       showError("territories", requestError.message);
     }
@@ -383,6 +404,7 @@ export function AdministrationPage() {
     try {
       await apiRequest("/api/v1/admin/territorios/recarregar-sugestoes", { method: "POST" });
       await load();
+      showSuccess("territories", "Sugestões de territórios recarregadas com sucesso.");
     } catch (requestError) {
       showError("territories", requestError.message);
     }
@@ -409,6 +431,7 @@ export function AdministrationPage() {
         telefoneOrgao: "",
       }));
       await load();
+      showSuccess("agencies", "Órgão adicionado com sucesso.");
     } catch (requestError) {
       showError("agencies", requestError.message);
     }
@@ -422,6 +445,7 @@ export function AdministrationPage() {
         body: JSON.stringify(patch),
       });
       await load();
+      showSuccess("agencies", "Órgão atualizado com sucesso.");
     } catch (requestError) {
       showError("agencies", requestError.message);
     }
@@ -432,6 +456,7 @@ export function AdministrationPage() {
     try {
       await apiRequest(`/api/v1/admin/orgaos/${agency.id}`, { method: "DELETE" });
       await load();
+      showSuccess("agencies", "Órgão desativado com sucesso.");
     } catch (requestError) {
       showError("agencies", requestError.message);
     }
@@ -442,6 +467,7 @@ export function AdministrationPage() {
     try {
       await apiRequest("/api/v1/admin/orgaos/recarregar-sugestoes", { method: "POST" });
       await load();
+      showSuccess("agencies", "Sugestões de órgãos recarregadas com sucesso.");
     } catch (requestError) {
       showError("agencies", requestError.message);
     }
@@ -469,6 +495,7 @@ export function AdministrationPage() {
         conteudo: "",
       }));
       await load();
+      showSuccess("templates", "Template adicionado com sucesso.");
     } catch (requestError) {
       showError("templates", requestError.message);
     }
@@ -482,6 +509,7 @@ export function AdministrationPage() {
         body: JSON.stringify(patch),
       });
       await load();
+      showSuccess("templates", "Template atualizado com sucesso.");
     } catch (requestError) {
       showError("templates", requestError.message);
     }
@@ -492,6 +520,7 @@ export function AdministrationPage() {
     try {
       await apiRequest(`/api/v1/admin/templates-resposta/${template.id}`, { method: "DELETE" });
       await load();
+      showSuccess("templates", "Template desativado com sucesso.");
     } catch (requestError) {
       showError("templates", requestError.message);
     }
@@ -510,9 +539,10 @@ export function AdministrationPage() {
   return <>
     <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuração administrativa</h1><p>Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna.</p></div></section>
     <section className="admin-tabs segmented-control">
-      {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => { setActive(id); clearError(id); }}>{label}</button>)}
+      {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => { setActive(id); clearError(id); clearSuccess(id); }}>{label}</button>)}
     </section>
     <section className={wideLayout ? "admin-layout admin-layout-wide admin-tab-panel" : "admin-layout admin-tab-panel"}>
+      {sectionSuccess(active) && <p className="form-success admin-section-success">{sectionSuccess(active)}</p>}
       {active === "office" && (
         <OfficeSettings
           data={officeForm}
@@ -632,7 +662,7 @@ export function AdministrationPage() {
             <label>Token ou segredo<input value={form.segredo} onChange={(event) => setForm((current) => ({ ...current, segredo: event.target.value }))} /></label>
           </>}
           {sectionError(active) && <p className="form-error">{sectionError(active)}</p>}
-          <button className="primary-button compact"><Plus size={18} /> Adicionar</button>
+          <div className="form-actions"><button className="primary-button compact"><Plus size={18} /> Adicionar</button></div>
         </form>
         <div className="category-list">
           {data[active].map((item) => <article key={item.id}><span className="entity-icon"><Icon size={19} /></span><div><strong>{item.nome}</strong><small>{active === "templates" ? `${item.canal} · ${item.categoria || "Todas as categorias"} · v${item.versao}` : item.emailContato || (item.ativa ? "Ativo" : "Inativo")}</small></div>{active === "categories" && <span>{item.slaHoras}h</span>}</article>)}
@@ -827,7 +857,7 @@ function OfficeSettings({
       </section>
 
       {error && <p className="form-error">{error}</p>}
-      <button className="primary-button compact"><Save size={18} /> Salvar gabinete</button>
+      <div className="form-actions"><button className="primary-button compact"><Save size={18} /> Salvar gabinete</button></div>
     </form>
   );
 }

@@ -1,14 +1,15 @@
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime, time
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import func, select
 
-from app.audit import add_audit
 from app.agency_suggestions import reload_suggested_agencies
+from app.audit import add_audit
 from app.auth.permissions import platform_admin_required
+from app.auth.security import hash_password
 from app.default_categories import ensure_default_request_categories
 from app.extensions import db
 from app.models import (
@@ -51,6 +52,11 @@ LEAD_STATUSES = {
     "lost",
 }
 LEAD_PAYMENT_STATUSES = {"pending", "invoice_sent", "paid", "overdue", "cancelled"}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+BR_PHONE_RE = re.compile(
+    r"^\D*([1-9]{2})\D*(?:(9\d{4})\D*(\d{4})|([2-5]\d{3})\D*(\d{4}))\D*$"
+)
+TENANT_ROLES = {Role.ADMIN, Role.REPRESENTATIVE, Role.STAFF}
 
 
 def _actor_id() -> uuid.UUID:
@@ -58,6 +64,7 @@ def _actor_id() -> uuid.UUID:
 
 
 def _tenant_data(item: Tenant) -> dict:
+    representative = item.representative_info or {}
     return {
         "id": str(item.id),
         "nome": item.name,
@@ -66,10 +73,27 @@ def _tenant_data(item: Tenant) -> dict:
         "plano": item.plan,
         "contrato": item.contract_status.value,
         "limiteUsuarios": user_limit_for_plan(item.plan),
-        "limiteArmazenamentoMb": item.storage_limit_mb,
         "modulosHabilitados": normalize_modules(item.enabled_modules),
         "observacoesContrato": item.contract_notes,
+        "jurisdicao": {
+            "nome": item.jurisdiction_name,
+            "municipio": item.jurisdiction_city,
+            "uf": item.jurisdiction_state,
+            "codigoIbge": item.jurisdiction_ibge_code,
+            "tipoCasa": item.chamber_type,
+        },
+        "parlamentar": {
+            "nome": (
+                representative.get("nomeParlamentar")
+                or representative.get("nomeCompleto")
+                or representative.get("nomeCivil")
+                or ""
+            ),
+            "partido": representative.get("partido") or "",
+            "statusMandato": representative.get("statusMandato") or "",
+        },
         "usuarios": len(item.users),
+        "usuariosAtivos": _active_tenant_users(item.id),
         "criadoEm": item.created_at.isoformat(),
     }
 
@@ -110,6 +134,25 @@ def _contract_event_data(item: PlatformContractEvent) -> dict:
         "efetivoEm": item.effective_at.isoformat() if item.effective_at else None,
         "criadoEm": item.created_at.isoformat(),
         "usuarioId": str(item.created_by_id) if item.created_by_id else None,
+    }
+
+
+def _tenant_user_data(item: User) -> dict:
+    chief_of_staff = bool(item.tenant and item.tenant.chief_of_staff_id == item.id)
+    return {
+        "id": str(item.id),
+        "tenantId": str(item.tenant_id) if item.tenant_id else None,
+        "gabinete": item.tenant.name if item.tenant else None,
+        "nome": item.name,
+        "email": item.email,
+        "cpf": _format_cpf(item.cpf),
+        "telefone": _format_phone(item.phone),
+        "perfil": item.role.value,
+        "status": item.status.value,
+        "chefeGabinete": chief_of_staff,
+        "mfaHabilitado": item.mfa_enabled,
+        "ultimoLoginEm": item.last_login_at.isoformat() if item.last_login_at else None,
+        "criadoEm": item.created_at.isoformat(),
     }
 
 
@@ -177,12 +220,27 @@ def overview():
 @platform_admin_required
 def list_tenants():
     query = str(request.args.get("q", "")).strip().lower()
+    plan = str(request.args.get("plano", "")).strip().lower()
+    jurisdiction = str(request.args.get("jurisdicao", "")).strip().lower()
+    representative = str(request.args.get("parlamentar", "")).strip().lower()
+    created_from = _optional_datetime_start(request.args.get("criadoDe"))
+    created_to = _optional_datetime_end(request.args.get("criadoAte"))
     statement = select(Tenant).order_by(Tenant.created_at.desc())
     if query:
         statement = statement.where(
             Tenant.name.ilike(f"%{query}%") | Tenant.slug.ilike(f"%{query}%")
         )
-    items = db.session.execute(statement).scalars().all()
+    if plan:
+        statement = statement.where(Tenant.plan == plan)
+    if created_from:
+        statement = statement.where(Tenant.created_at >= created_from)
+    if created_to:
+        statement = statement.where(Tenant.created_at <= created_to)
+    items = [
+        item
+        for item in db.session.execute(statement).scalars().all()
+        if _tenant_matches_optional_filters(item, jurisdiction, representative)
+    ]
     return jsonify(content=[_tenant_data(item) for item in items])
 
 
@@ -284,8 +342,6 @@ def convert_contracting_interest(lead_id: uuid.UUID):
     if db.session.execute(select(Tenant.id).where(Tenant.slug == slug)).scalar_one_or_none():
         return jsonify(error="conflict", message="Slug de gabinete ja cadastrado."), 409
     try:
-        jurisdiction_city = str(payload.get("municipio", "")).strip() or None
-        jurisdiction_state = str(payload.get("uf", "")).strip().upper() or None
         tenant = Tenant(
             name=item.organization,
             slug=slug,
@@ -293,11 +349,8 @@ def convert_contracting_interest(lead_id: uuid.UUID):
             contract_status=ContractStatus.TRIAL,
             plan=normalize_plan(payload.get("plano", item.plan)),
             user_limit=user_limit_for_plan(payload.get("plano", item.plan)),
-            storage_limit_mb=_positive_int(
-                payload.get("limiteArmazenamentoMb", 1024),
-                "Limite de armazenamento",
-            ),
-            enabled_modules=_modules(payload.get("modulosHabilitados", DEFAULT_MODULES)),
+            storage_limit_mb=0,
+            enabled_modules=DEFAULT_MODULES,
             contract_notes=str(
                 payload.get("observacoesContrato", item.contract_notes or "")
             ).strip()
@@ -342,52 +395,13 @@ def convert_contracting_interest(lead_id: uuid.UUID):
 @platform_bp.post("/gabinetes")
 @platform_admin_required
 def create_tenant():
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("nome", "")).strip()
-    slug = str(payload.get("slug", "")).strip().lower()
-    if not name or not slug:
-        return jsonify(error="validation_error", message="Informe nome e slug do gabinete."), 422
-    if db.session.execute(select(Tenant.id).where(Tenant.slug == slug)).scalar_one_or_none():
-        return jsonify(error="conflict", message="Slug de gabinete ja cadastrado."), 409
-    try:
-        tenant = Tenant(
-            name=name,
-            slug=slug,
-            status=TenantStatus.ACTIVE,
-            contract_status=ContractStatus.TRIAL,
-            plan=normalize_plan(payload.get("plano", "starter")),
-            user_limit=user_limit_for_plan(payload.get("plano", "starter")),
-            storage_limit_mb=_positive_int(
-                payload.get("limiteArmazenamentoMb", 1024), "Limite de armazenamento"
-            ),
-            enabled_modules=_modules(payload.get("modulosHabilitados", DEFAULT_MODULES)),
-            contract_notes=str(payload.get("observacoesContrato", "")).strip() or None,
-            chamber_type=str(payload.get("tipoCasa", "CAMARA_MUNICIPAL")).strip()
-            or "CAMARA_MUNICIPAL",
-            jurisdiction_name=str(payload.get("jurisdicaoNome", "")).strip()
-            or _jurisdiction_name(jurisdiction_city, jurisdiction_state),
-            jurisdiction_city=jurisdiction_city,
-            jurisdiction_state=jurisdiction_state,
-            jurisdiction_ibge_code=str(payload.get("codigoIbge", "")).strip() or None,
-        )
-    except ValueError as error:
-        return jsonify(error="validation_error", message=str(error)), 422
-    db.session.add(tenant)
-    db.session.flush()
-    ensure_default_request_categories(tenant.id)
-    reload_suggested_territories(tenant)
-    reload_suggested_agencies(tenant)
-    add_audit(
-        None,
-        _actor_id(),
-        "platform.tenant.created",
-        "tenant",
-        tenant.id,
-        None,
-        _tenant_data(tenant),
+    return (
+        jsonify(
+            error="tenant_creation_locked",
+            message="Gabinetes devem ser criados a partir de Interesses em Contratacao.",
+        ),
+        405,
     )
-    db.session.commit()
-    return jsonify(_tenant_data(tenant)), 201
 
 
 @platform_bp.patch("/gabinetes/<uuid:tenant_id>")
@@ -402,6 +416,11 @@ def update_tenant(tenant_id: uuid.UUID):
     try:
         if "nome" in payload:
             tenant.name = str(payload["nome"]).strip() or tenant.name
+            visual_identity = dict(tenant.visual_identity or {})
+            institutional = dict(visual_identity.get("dadosInstitucionais") or {})
+            institutional["nomeGabinete"] = tenant.name
+            visual_identity["dadosInstitucionais"] = institutional
+            tenant.visual_identity = visual_identity
         if "status" in payload:
             tenant.status = TenantStatus(str(payload["status"]).lower())
         if "contrato" in payload:
@@ -425,12 +444,10 @@ def update_tenant(tenant_id: uuid.UUID):
                 )
             tenant.plan = plan
             tenant.user_limit = plan_limit
-        if "limiteArmazenamentoMb" in payload:
-            tenant.storage_limit_mb = _positive_int(
-                payload["limiteArmazenamentoMb"], "Limite de armazenamento"
-            )
         if "modulosHabilitados" in payload:
             tenant.enabled_modules = _modules(payload["modulosHabilitados"])
+        if "observacoesContrato" in payload:
+            tenant.contract_notes = str(payload["observacoesContrato"]).strip()[:2000] or None
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     if "observacoesContrato" in payload:
@@ -518,6 +535,169 @@ def tenant_usage(tenant_id: uuid.UUID):
             "integracoes": _tenant_count(IntegrationSetting, tenant_id),
         },
     )
+
+
+@platform_bp.get("/gabinetes/<uuid:tenant_id>/usuarios")
+@platform_admin_required
+def list_tenant_users(tenant_id: uuid.UUID):
+    tenant = db.session.get(Tenant, tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    users = db.session.execute(
+        select(User).where(User.tenant_id == tenant_id).order_by(User.name)
+    ).scalars()
+    return jsonify(
+        tenant=_tenant_data(tenant),
+        content=[_tenant_user_data(item) for item in users],
+    )
+
+
+@platform_bp.post("/gabinetes/<uuid:tenant_id>/usuarios")
+@platform_admin_required
+def create_tenant_user(tenant_id: uuid.UUID):
+    tenant = db.session.get(Tenant, tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("nome", "")).strip()
+    email = str(payload.get("email", "")).strip().lower()
+    cpf = _cpf_digits(payload.get("cpf"))
+    phone = str(payload.get("telefone", "")).strip()
+    password = str(payload.get("senha", "")).strip()
+    try:
+        role = Role(str(payload.get("perfil", "staff")).lower())
+    except ValueError:
+        return jsonify(error="validation_error", message="Perfil invalido."), 422
+    if role not in TENANT_ROLES:
+        return jsonify(error="validation_error", message="Perfil invalido para gabinete."), 422
+    validation = _validate_tenant_user_payload(
+        tenant_id=tenant_id,
+        name=name,
+        email=email,
+        cpf=cpf,
+        phone=phone,
+        role=role,
+        password=password,
+    )
+    if validation:
+        return validation
+    if _active_tenant_users(tenant_id) >= user_limit_for_plan(tenant.plan):
+        return jsonify(error="user_limit_reached", message=USER_LIMIT_REACHED_MESSAGE), 422
+    item = User(
+        tenant_id=tenant_id,
+        name=name,
+        email=email,
+        cpf=cpf,
+        phone=_phone_digits(phone) or None,
+        password_hash=hash_password(password),
+        role=role,
+        status=UserStatus.ACTIVE,
+    )
+    db.session.add(item)
+    db.session.flush()
+    after = _tenant_user_data(item)
+    add_audit(tenant_id, _actor_id(), "platform.tenant_user.created", "user", item.id, None, after)
+    db.session.commit()
+    return jsonify(after), 201
+
+
+@platform_bp.patch("/gabinetes/<uuid:tenant_id>/usuarios/<uuid:user_id>")
+@platform_admin_required
+def update_tenant_user(tenant_id: uuid.UUID, user_id: uuid.UUID):
+    tenant = db.session.get(Tenant, tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    item = _tenant_user(tenant_id, user_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Usuario nao encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    before = _tenant_user_data(item)
+    if "nome" in payload:
+        name = str(payload["nome"]).strip()
+        if len(name) < 2:
+            return jsonify(error="validation_error", message="Informe o nome do usuario."), 422
+        item.name = name
+    if "email" in payload:
+        email = str(payload["email"]).strip().lower()
+        validation = _validate_unique_email(email, exclude_user_id=item.id)
+        if validation:
+            return validation
+        item.email = email
+    if "cpf" in payload:
+        cpf = _cpf_digits(payload["cpf"])
+        validation = _validate_unique_cpf(cpf, exclude_user_id=item.id)
+        if validation:
+            return validation
+        item.cpf = cpf
+    if "telefone" in payload:
+        phone = str(payload["telefone"]).strip()
+        if phone and not BR_PHONE_RE.match(phone):
+            return (
+                jsonify(error="validation_error", message="Informe um telefone valido com DDD."),
+                422,
+            )
+        item.phone = _phone_digits(phone) or None
+    if "perfil" in payload:
+        try:
+            role = Role(str(payload["perfil"]).lower())
+        except ValueError:
+            return jsonify(error="validation_error", message="Perfil invalido."), 422
+        if role not in TENANT_ROLES:
+            return jsonify(error="validation_error", message="Perfil invalido para gabinete."), 422
+        if (
+            role in {Role.ADMIN, Role.REPRESENTATIVE}
+            and item.role != role
+            and _tenant_role_exists(tenant_id, role, exclude_user_id=item.id)
+        ):
+            return jsonify(error="role_limit_reached", message=_single_role_message(role)), 422
+        item.role = role
+    if "status" in payload:
+        try:
+            new_status = UserStatus(str(payload["status"]).lower())
+        except ValueError:
+            return jsonify(error="validation_error", message="Status invalido."), 422
+        if item.status != UserStatus.ACTIVE and new_status == UserStatus.ACTIVE:
+            if _active_tenant_users(tenant_id) >= user_limit_for_plan(tenant.plan):
+                return (
+                    jsonify(error="user_limit_reached", message=USER_LIMIT_REACHED_MESSAGE),
+                    422,
+                )
+        item.status = new_status
+    if payload.get("senha"):
+        password = str(payload["senha"])
+        if len(password) < 8:
+            return (
+                jsonify(error="validation_error", message="Senha deve ter ao menos 8 caracteres."),
+                422,
+            )
+        item.password_hash = hash_password(password)
+    db.session.flush()
+    after = _tenant_user_data(item)
+    add_audit(
+        tenant_id, _actor_id(), "platform.tenant_user.updated", "user", item.id, before, after
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@platform_bp.delete("/gabinetes/<uuid:tenant_id>/usuarios/<uuid:user_id>")
+@platform_admin_required
+def block_tenant_user(tenant_id: uuid.UUID, user_id: uuid.UUID):
+    tenant = db.session.get(Tenant, tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    item = _tenant_user(tenant_id, user_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Usuario nao encontrado."), 404
+    before = _tenant_user_data(item)
+    item.status = UserStatus.BLOCKED
+    db.session.flush()
+    after = _tenant_user_data(item)
+    add_audit(
+        tenant_id, _actor_id(), "platform.tenant_user.blocked", "user", item.id, before, after
+    )
+    db.session.commit()
+    return jsonify(after)
 
 
 @platform_bp.post("/gabinetes/<uuid:tenant_id>/reset-admin")
@@ -697,9 +877,164 @@ def _active_tenant_users(tenant_id: uuid.UUID) -> int:
     )
 
 
+def _tenant_user(tenant_id: uuid.UUID, user_id: uuid.UUID) -> User | None:
+    return db.session.execute(
+        select(User).where(User.tenant_id == tenant_id, User.id == user_id)
+    ).scalar_one_or_none()
+
+
+def _tenant_role_exists(
+    tenant_id: uuid.UUID, role: Role, exclude_user_id: uuid.UUID | None = None
+) -> bool:
+    statement = select(User.id).where(User.tenant_id == tenant_id, User.role == role)
+    if exclude_user_id:
+        statement = statement.where(User.id != exclude_user_id)
+    return db.session.execute(statement).scalar_one_or_none() is not None
+
+
+def _validate_tenant_user_payload(
+    *,
+    tenant_id: uuid.UUID,
+    name: str,
+    email: str,
+    cpf: str,
+    phone: str,
+    role: Role,
+    password: str,
+):
+    if len(name) < 2 or len(password) < 8:
+        return (
+            jsonify(error="validation_error", message="Informe nome e senha segura."),
+            422,
+        )
+    validation = _validate_unique_email(email)
+    if validation:
+        return validation
+    validation = _validate_unique_cpf(cpf)
+    if validation:
+        return validation
+    if phone and not BR_PHONE_RE.match(phone):
+        return (
+            jsonify(error="validation_error", message="Informe um telefone valido com DDD."),
+            422,
+        )
+    if role in {Role.ADMIN, Role.REPRESENTATIVE} and _tenant_role_exists(tenant_id, role):
+        return jsonify(error="role_limit_reached", message=_single_role_message(role)), 422
+    return None
+
+
+def _validate_unique_email(email: str, exclude_user_id: uuid.UUID | None = None):
+    if not email or not EMAIL_RE.match(email):
+        return jsonify(error="validation_error", message="Informe um e-mail valido."), 422
+    statement = select(User.id).where(User.email == email)
+    if exclude_user_id:
+        statement = statement.where(User.id != exclude_user_id)
+    if db.session.execute(statement).scalar_one_or_none():
+        return jsonify(error="conflict", message="E-mail ja cadastrado na plataforma."), 409
+    return None
+
+
+def _validate_unique_cpf(cpf: str, exclude_user_id: uuid.UUID | None = None):
+    if not _valid_cpf(cpf):
+        return jsonify(error="validation_error", message="Informe um CPF valido."), 422
+    statement = select(User.id).where(User.cpf == cpf)
+    if exclude_user_id:
+        statement = statement.where(User.id != exclude_user_id)
+    if db.session.execute(statement).scalar_one_or_none():
+        return jsonify(error="conflict", message="CPF ja cadastrado na plataforma."), 409
+    return None
+
+
+def _single_role_message(role: Role) -> str:
+    if role == Role.ADMIN:
+        return "Ja existe um usuario administrador neste gabinete."
+    if role == Role.REPRESENTATIVE:
+        return "Ja existe um usuario parlamentar neste gabinete."
+    return "Perfil limitado ja cadastrado neste gabinete."
+
+
+def _cpf_digits(value) -> str:
+    return re.sub(r"\D", "", str(value or ""))[:11]
+
+
+def _phone_digits(value) -> str:
+    return re.sub(r"\D", "", str(value or ""))[:11]
+
+
+def _valid_cpf(value: str) -> bool:
+    if len(value) != 11 or len(set(value)) == 1:
+        return False
+    digits = [int(item) for item in value]
+    for position in (9, 10):
+        total = sum(digits[index] * (position + 1 - index) for index in range(position))
+        check = (total * 10) % 11
+        if check == 10:
+            check = 0
+        if digits[position] != check:
+            return False
+    return True
+
+
+def _format_cpf(value: str | None) -> str | None:
+    digits = _cpf_digits(value)
+    if len(digits) != 11:
+        return None
+    return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+
+
+def _format_phone(value: str | None) -> str | None:
+    digits = _phone_digits(value)
+    if len(digits) == 11:
+        return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+    if len(digits) == 10:
+        return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
+    return value or None
+
+
 def _count_by(column) -> dict:
     rows = db.session.execute(select(column, func.count()).group_by(column))
     return {str(key): value for key, value in rows}
+
+
+def _tenant_matches_optional_filters(
+    tenant: Tenant, jurisdiction: str, representative: str
+) -> bool:
+    if jurisdiction:
+        jurisdiction_values = [
+            tenant.jurisdiction_name,
+            tenant.jurisdiction_city,
+            tenant.jurisdiction_state,
+            tenant.jurisdiction_ibge_code,
+            tenant.chamber_type,
+        ]
+        if not _contains_any(jurisdiction, jurisdiction_values):
+            return False
+    if representative:
+        data = tenant.representative_info or {}
+        representative_values = [
+            data.get("nomeParlamentar"),
+            data.get("nomeCompleto"),
+            data.get("nomeCivil"),
+            data.get("partido"),
+            data.get("partidoNome"),
+        ]
+        if not _contains_any(representative, representative_values):
+            return False
+    return True
+
+
+def _contains_any(query: str, values: list[str | None]) -> bool:
+    return any(query in str(value or "").casefold() for value in values)
+
+
+def _optional_datetime_start(value) -> datetime | None:
+    parsed = _optional_date(value)
+    return datetime.combine(parsed, time.min) if parsed else None
+
+
+def _optional_datetime_end(value) -> datetime | None:
+    parsed = _optional_date(value)
+    return datetime.combine(parsed, time.max) if parsed else None
 
 
 def _optional_date(value) -> date | None:

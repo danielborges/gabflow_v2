@@ -13,6 +13,7 @@ from app.models import (
     User,
     UserStatus,
 )
+from app.modules import DEFAULT_MODULES
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -58,8 +59,19 @@ def test_tenant_admin_cannot_access_platform_admin(client):
     assert response.status_code == 403
 
 
-def test_platform_admin_creates_and_updates_tenant(app, client):
+def test_platform_admin_searches_and_updates_existing_tenant(app, client):
     csrf = _login_platform(app, client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant.name = "Gabinete Plataforma"
+        tenant.plan = "professional"
+        tenant.user_limit = 999
+        tenant.jurisdiction_name = "Juiz de Fora/MG"
+        tenant.jurisdiction_city = "Juiz de Fora"
+        tenant.jurisdiction_state = "MG"
+        tenant.representative_info = {"nomeParlamentar": "Vereadora Teste"}
+        db.session.commit()
+        tenant_id = str(tenant.id)
 
     created = client.post(
         "/api/v1/platform/gabinetes",
@@ -74,20 +86,32 @@ def test_platform_admin_creates_and_updates_tenant(app, client):
         },
     )
 
-    assert created.status_code == 201
-    assert created.json["slug"] == "gabinete-plataforma"
-    assert created.json["plano"] == "professional"
-    assert created.json["limiteUsuarios"] == 15
+    assert created.status_code == 405
+    assert created.json["error"] == "tenant_creation_locked"
+
+    listed = client.get(
+        "/api/v1/platform/gabinetes",
+        query_string={
+            "q": "Plataforma",
+            "plano": "professional",
+            "jurisdicao": "Juiz",
+            "parlamentar": "Vereadora",
+        },
+    )
+    assert listed.status_code == 200
+    assert listed.json["content"][0]["id"] == tenant_id
+    assert listed.json["content"][0]["limiteUsuarios"] == 15
+    assert "limiteArmazenamentoMb" not in listed.json["content"][0]
 
     missing_reason = client.patch(
-        f"/api/v1/platform/gabinetes/{created.json['id']}",
+        f"/api/v1/platform/gabinetes/{tenant_id}",
         headers={"X-CSRF-TOKEN": csrf},
         json={"contrato": "suspended", "limiteUsuarios": 20},
     )
     assert missing_reason.status_code == 422
 
     updated = client.post(
-        f"/api/v1/platform/gabinetes/{created.json['id']}/contrato",
+        f"/api/v1/platform/gabinetes/{tenant_id}/contrato",
         headers={"X-CSRF-TOKEN": csrf},
         json={"contrato": "suspended", "motivo": "Inadimplencia formalizada"},
     )
@@ -105,23 +129,15 @@ def test_platform_admin_creates_and_updates_tenant(app, client):
 def test_platform_admin_user_limit_follows_plan_and_blocks_downgrade(app, client):
     csrf = _login_platform(app, client)
 
-    created = client.post(
-        "/api/v1/platform/gabinetes",
-        headers={"X-CSRF-TOKEN": csrf},
-        json={
-            "nome": "Gabinete Plano",
-            "slug": "gabinete-plano",
-            "plano": "professional",
-            "limiteUsuarios": 2,
-        },
-    )
-    assert created.status_code == 201
-    assert created.json["limiteUsuarios"] == 15
-
     with app.app_context():
-        tenant = db.session.execute(
-            select(Tenant).where(Tenant.slug == "gabinete-plano")
-        ).scalar_one()
+        tenant = Tenant(
+            name="Gabinete Plano",
+            slug="gabinete-plano",
+            plan="professional",
+            enabled_modules=DEFAULT_MODULES,
+        )
+        db.session.add(tenant)
+        db.session.flush()
         db.session.add_all(
             [
                 User(
@@ -144,6 +160,30 @@ def test_platform_admin_user_limit_follows_plan_and_blocks_downgrade(app, client
     )
     assert downgraded.status_code == 422
     assert downgraded.json["error"] == "plan_user_limit_conflict"
+
+
+def test_platform_admin_renamed_tenant_updates_office_profile(app, client):
+    csrf = _login_platform(app, client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant_id = str(tenant.id)
+
+    updated = client.patch(
+        f"/api/v1/platform/gabinetes/{tenant_id}",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"nome": "Gabinete 01 Matias"},
+    )
+    assert updated.status_code == 200
+    assert updated.json["nome"] == "Gabinete 01 Matias"
+
+    _login_tenant_admin(client)
+    profile = client.get("/api/v1/admin/perfil-gabinete")
+    assert profile.status_code == 200
+    assert profile.json["dadosInstitucionais"]["nomeGabinete"] == "Gabinete 01 Matias"
+    assert (
+        profile.json["identidadeVisual"]["dadosInstitucionais"]["nomeGabinete"]
+        == "Gabinete 01 Matias"
+    )
 
 
 def test_platform_reset_admin_respects_plan_user_limit(app, client):
@@ -186,6 +226,94 @@ def test_platform_reset_admin_respects_plan_user_limit(app, client):
 
     assert reset.status_code == 422
     assert reset.json["error"] == "user_limit_reached"
+
+
+def test_platform_admin_manages_tenant_users(app, client):
+    csrf = _login_platform(app, client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant.plan = "starter"
+        tenant.user_limit = 999
+        db.session.commit()
+        tenant_id = str(tenant.id)
+
+    created = client.post(
+        f"/api/v1/platform/gabinetes/{tenant_id}/usuarios",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nome": "Usuario Plataforma",
+            "email": "usuario-plataforma@teste.local",
+            "cpf": "529.982.247-25",
+            "telefone": "(32) 99999-0000",
+            "senha": PASSWORD,
+            "perfil": "staff",
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json["email"] == "usuario-plataforma@teste.local"
+    assert created.json["cpf"] == "529.982.247-25"
+
+    listed = client.get(f"/api/v1/platform/gabinetes/{tenant_id}/usuarios")
+    assert listed.status_code == 200
+    assert any(item["email"] == "usuario-plataforma@teste.local" for item in listed.json["content"])
+
+    updated = client.patch(
+        f"/api/v1/platform/gabinetes/{tenant_id}/usuarios/{created.json['id']}",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"nome": "Usuario Plataforma Editado", "status": "blocked", "senha": "NovaSenha123!"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json["nome"] == "Usuario Plataforma Editado"
+    assert updated.json["status"] == "blocked"
+
+    blocked = client.delete(
+        f"/api/v1/platform/gabinetes/{tenant_id}/usuarios/{created.json['id']}",
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert blocked.status_code == 200
+    assert blocked.json["status"] == "blocked"
+
+
+def test_platform_admin_tenant_user_creation_respects_plan_limit(app, client):
+    csrf = _login_platform(app, client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant.plan = "starter"
+        tenant.user_limit = 999
+        db.session.add_all(
+            [
+                User(
+                    tenant_id=tenant.id,
+                    name=f"Usuario Limite {index}",
+                    email=f"limite{index}@teste.local",
+                    cpf=f"0000000000{index}",
+                    password_hash=hash_password(PASSWORD),
+                    role=Role.STAFF,
+                    status=UserStatus.ACTIVE,
+                )
+                for index in range(4)
+            ]
+        )
+        db.session.commit()
+        tenant_id = str(tenant.id)
+
+    response = client.post(
+        f"/api/v1/platform/gabinetes/{tenant_id}/usuarios",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nome": "Usuario Excedente",
+            "email": "excedente@teste.local",
+            "cpf": "529.982.247-25",
+            "senha": PASSWORD,
+            "perfil": "staff",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json["error"] == "user_limit_reached"
 
 
 def test_platform_usage_is_aggregated_without_internal_content(app, client):
@@ -312,6 +440,7 @@ def test_platform_admin_manages_contracting_interests(app, client):
     )
     assert converted.status_code == 201
     assert converted.json["tenant"]["slug"] == "gabinete-modelo-convertido"
+    assert converted.json["tenant"]["modulosHabilitados"] == DEFAULT_MODULES
     assert converted.json["interesse"]["status"] == "converted"
 
 

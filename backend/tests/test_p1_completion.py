@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models import AuditLog, ServiceRequest
+from app.models import AuditLog, ServiceRequest, Tenant
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -261,12 +261,27 @@ def test_tenant_jurisdiction_can_be_configured_and_feeds_dashboard(app, client, 
         },
     }
 
-    updated = patch(client, "/api/v1/admin/jurisdicao", csrf, payload)
-    assert updated.status_code == 200
-    assert updated.json["nome"] == "Juiz de Fora/MG"
-    assert updated.json["uf"] == "MG"
-    assert updated.json["codigoIbge"] == "3136702"
-    assert updated.json["limites"]["minLatitude"] == -21.92
+    locked = patch(client, "/api/v1/admin/jurisdicao", csrf, payload)
+    assert locked.status_code == 403
+
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant.chamber_type = payload["tipoCasa"]
+        tenant.jurisdiction_name = payload["nome"]
+        tenant.jurisdiction_city = payload["municipio"]
+        tenant.jurisdiction_state = payload["uf"]
+        tenant.jurisdiction_ibge_code = payload["codigoIbge"]
+        tenant.jurisdiction_center_latitude = payload["centro"]["latitude"]
+        tenant.jurisdiction_center_longitude = payload["centro"]["longitude"]
+        tenant.jurisdiction_bounds = payload["limites"]
+        db.session.commit()
+
+    current = client.get("/api/v1/admin/jurisdicao")
+    assert current.status_code == 200
+    assert current.json["nome"] == "Juiz de Fora/MG"
+    assert current.json["uf"] == "MG"
+    assert current.json["codigoIbge"] == "3136702"
+    assert current.json["limites"]["minLatitude"] == -21.92
 
     monkeypatch.setattr("app.admin.routes._fetch_ibge_geojson", lambda scope, code: geojson)
     imported = post(
@@ -287,7 +302,6 @@ def test_tenant_jurisdiction_can_be_configured_and_feeds_dashboard(app, client, 
 
     with app.app_context():
         actions = db.session.execute(select(AuditLog.action)).scalars().all()
-        assert "tenant.jurisdiction.updated" in actions
         assert "tenant.jurisdiction.ibge_imported" in actions
 
 

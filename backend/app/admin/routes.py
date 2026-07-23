@@ -10,8 +10,8 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity
 from sqlalchemy import String, cast, func, select
 
-from app.audit import add_audit
 from app.agency_suggestions import reload_suggested_agencies
+from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.auth.security import hash_password
 from app.default_categories import ensure_default_request_categories
@@ -88,12 +88,15 @@ def _jurisdiction_data(item: Tenant) -> dict:
 
 
 def _office_profile_data(item: Tenant) -> dict:
-    visual_identity = item.visual_identity or {}
+    visual_identity = dict(item.visual_identity or {})
+    institutional = dict(visual_identity.get("dadosInstitucionais") or {})
+    institutional["nomeGabinete"] = item.name
+    visual_identity["dadosInstitucionais"] = institutional
     user_limit = user_limit_for_plan(item.plan)
     return {
         "vereador": item.representative_info or {},
         "mandato": item.mandate_info or {},
-        "dadosInstitucionais": visual_identity.get("dadosInstitucionais") or {},
+        "dadosInstitucionais": institutional,
         "redesSociais": visual_identity.get("redesSociais") or {},
         "identidadeVisual": visual_identity,
         "chefeGabineteId": str(item.chief_of_staff_id) if item.chief_of_staff_id else None,
@@ -224,7 +227,11 @@ def _audit_record_label(item: AuditLog) -> str:
         if value:
             return str(value)
     if item.entity_type == "user":
-        user = db.session.get(User, item.entity_id) if item.entity_id else None
+        try:
+            user_id = uuid.UUID(item.entity_id) if item.entity_id else None
+        except ValueError:
+            user_id = None
+        user = db.session.get(User, user_id) if user_id else None
         if user:
             return user.name
     return "Registro interno"
@@ -643,7 +650,10 @@ def update_jurisdiction():
     return (
         jsonify(
             error="jurisdiction_locked",
-            message="A jurisdição e o tipo do gabinete são definidos na contratação e não podem ser alterados.",
+            message=(
+                "A jurisdição e o tipo do gabinete são definidos na contratação "
+                "e não podem ser alterados."
+            ),
         ),
         403,
     )
@@ -660,16 +670,24 @@ def import_ibge_jurisdiction():
     requested_chamber_type = str(payload.get("tipoCasa", chamber_type)).strip().upper()
     if requested_chamber_type and requested_chamber_type != chamber_type:
         return (
-            jsonify(error="jurisdiction_locked", message="O tipo do gabinete não pode ser alterado."),
+            jsonify(
+                error="jurisdiction_locked",
+                message="O tipo do gabinete não pode ser alterado.",
+            ),
             403,
         )
     if chamber_type and chamber_type not in CHAMBER_TYPES:
         return jsonify(error="validation_error", message="Tipo de casa legislativa invÃ¡lido."), 422
-    requested_ibge_code = str(payload.get("codigoIbge", tenant.jurisdiction_ibge_code or "")).strip()
+    requested_ibge_code = str(
+        payload.get("codigoIbge", tenant.jurisdiction_ibge_code or "")
+    ).strip()
     current_ibge_code = str(tenant.jurisdiction_ibge_code or "").strip()
     if current_ibge_code and requested_ibge_code and requested_ibge_code != current_ibge_code:
         return (
-            jsonify(error="jurisdiction_locked", message="A jurisdição do gabinete não pode ser alterada."),
+            jsonify(
+                error="jurisdiction_locked",
+                message="A jurisdição do gabinete não pode ser alterada.",
+            ),
             403,
         )
     ibge_code = current_ibge_code or requested_ibge_code
@@ -1458,7 +1476,13 @@ def update_agency(agency_id: uuid.UUID):
     if "telefone" in payload:
         phone = str(payload["telefone"]).strip()
         if phone and not BR_PHONE_RE.match(phone):
-            return jsonify(error="validation_error", message="Informe um telefone valido com DDD."), 422
+            return (
+                jsonify(
+                    error="validation_error",
+                    message="Informe um telefone valido com DDD.",
+                ),
+                422,
+            )
         item.phone = _phone_digits(phone) or None
     if "ativa" in payload:
         item.active = bool(payload["ativa"])

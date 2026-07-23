@@ -191,9 +191,12 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             rolled_back_tenant_columns = {
                 column["name"] for column in inspector.get_columns("tenants")
             }
+            rolled_back_external_agency_columns = {
+                column["name"] for column in inspector.get_columns("external_agencies")
+            }
 
         assert rolled_back_heads == {previous_head}
-        assert "political_parties" not in rolled_back_tables
+        assert "political_parties" in rolled_back_tables
         assert "legislative_drafts" in rolled_back_tables
         assert "legislative_tramitations" in rolled_back_tables
         assert "normative_sources" in rolled_back_tables
@@ -204,6 +207,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "location_geography" in rolled_back_service_columns
         assert "jurisdiction_name" in rolled_back_tenant_columns
         assert "jurisdiction_geojson" in rolled_back_tenant_columns
+        assert "responsible" not in rolled_back_external_agency_columns
+        assert "phone" not in rolled_back_external_agency_columns
+        assert "source" not in rolled_back_external_agency_columns
 
         upgrade(directory="migrations")
 
@@ -216,6 +222,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             }
             reapplied_tenant_columns = {
                 column["name"] for column in inspector.get_columns("tenants")
+            }
+            reapplied_external_agency_columns = {
+                column["name"] for column in inspector.get_columns("external_agencies")
             }
             political_parties_count = connection.execute(
                 text("SELECT count(*) FROM political_parties")
@@ -236,6 +245,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "location_geography" in reapplied_service_columns
         assert "jurisdiction_name" in reapplied_tenant_columns
         assert "jurisdiction_geojson" in reapplied_tenant_columns
+        assert "responsible" in reapplied_external_agency_columns
+        assert "phone" in reapplied_external_agency_columns
+        assert "source" in reapplied_external_agency_columns
         assert political_parties_count == 30
         assert pt_number == 13
 

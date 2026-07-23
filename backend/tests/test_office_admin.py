@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 
 from app.auth.security import hash_password
@@ -267,7 +269,7 @@ def test_office_admin_reloads_edits_and_logically_deletes_suggested_territories(
     assert deleted.json["ativa"] is False
 
     with app.app_context():
-        stored = db.session.get(Territory, names["Juiz de Fora"]["id"])
+        stored = db.session.get(Territory, uuid.UUID(names["Juiz de Fora"]["id"]))
         assert stored.active is False
 
 
@@ -313,7 +315,8 @@ def test_office_admin_reloads_edits_and_logically_deletes_suggested_agencies(app
 
     with app.app_context():
         stored = db.session.get(
-            ExternalAgency, names["Prefeitura Municipal de Juiz de Fora"]["id"]
+            ExternalAgency,
+            uuid.UUID(names["Prefeitura Municipal de Juiz de Fora"]["id"]),
         )
         assert stored.active is False
 

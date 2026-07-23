@@ -99,6 +99,8 @@ def reload_suggested_agencies(tenant: Tenant) -> tuple[list[ExternalAgency], lis
     if changed:
         db.session.flush()
     items = db.session.execute(
-        select(ExternalAgency).where(ExternalAgency.tenant_id == tenant.id).order_by(ExternalAgency.name)
+        select(ExternalAgency)
+        .where(ExternalAgency.tenant_id == tenant.id)
+        .order_by(ExternalAgency.name)
     ).scalars().all()
     return items, suggestions

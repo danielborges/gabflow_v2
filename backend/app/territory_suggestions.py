@@ -1,5 +1,5 @@
-import json
 import gzip
+import json
 import urllib.error
 import urllib.request
 
@@ -9,12 +9,21 @@ from app.extensions import db
 from app.models import Tenant, Territory
 
 IBGE_LOCALIDADES_URL = "https://servicodados.ibge.gov.br/api/v1/localidades"
-DEFAULT_MUNICIPAL_TERRITORIES = ["Centro", "Zona Norte", "Zona Sul", "Zona Leste", "Zona Oeste", "Zona Rural"]
+DEFAULT_MUNICIPAL_TERRITORIES = [
+    "Centro",
+    "Zona Norte",
+    "Zona Sul",
+    "Zona Leste",
+    "Zona Oeste",
+    "Zona Rural",
+]
 
 
 def suggested_territory_names(tenant: Tenant) -> list[str]:
     if tenant.chamber_type == "ASSEMBLEIA_LEGISLATIVA" and tenant.jurisdiction_state:
-        rows = _fetch_ibge_json(f"{IBGE_LOCALIDADES_URL}/estados/{tenant.jurisdiction_state}/municipios")
+        rows = _fetch_ibge_json(
+            f"{IBGE_LOCALIDADES_URL}/estados/{tenant.jurisdiction_state}/municipios"
+        )
         return _unique_sorted(row.get("nome") for row in rows)
     if tenant.jurisdiction_ibge_code:
         rows = _fetch_ibge_json(
@@ -56,14 +65,22 @@ def reload_suggested_territories(tenant: Tenant) -> tuple[list[Territory], list[
 
 def _fetch_ibge_json(url: str) -> list[dict]:
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "GabFlow/1.0"})
-        with urllib.request.urlopen(request, timeout=12) as response:
+        request = urllib.request.Request(url, headers={"User-Agent": "GabFlow/1.0"})  # noqa: S310
+        with urllib.request.urlopen(request, timeout=12) as response:  # noqa: S310
             body = response.read()
-            if response.headers.get("Content-Encoding") == "gzip" or body.startswith(b"\x1f\x8b"):
+            if response.headers.get("Content-Encoding") == "gzip" or body.startswith(
+                b"\x1f\x8b"
+            ):
                 body = gzip.decompress(body)
             payload = json.loads(body.decode("utf-8"))
             return payload if isinstance(payload, list) else []
-    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+    except (
+        OSError,
+        TimeoutError,
+        urllib.error.URLError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ):
         return []
 
 

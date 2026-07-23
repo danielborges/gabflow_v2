@@ -12,7 +12,6 @@
   LockKeyhole,
   LogOut,
   PhoneCall,
-  Plus,
   Save,
   Settings2,
   ShieldCheck,
@@ -20,6 +19,7 @@
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api";
+import { formatBrazilianCpf, formatBrazilianPhone } from "../contactValidation";
 
 const availableModules = [
   "solicitacoes",
@@ -34,8 +34,12 @@ const availableModules = [
   "integracoes",
 ];
 
-const plans = ["starter", "professional", "premium"];
 const planUserLimits = { starter: 5, professional: 15, premium: 9999 };
+const plans = [
+  ["starter", "Starter - até 5 usuários"],
+  ["professional", "Professional - até 15 usuários"],
+  ["premium", "Premium - usuários ilimitados"],
+];
 const leadStatuses = [
   ["new", "Novo"],
   ["contacting", "Em contato"],
@@ -60,6 +64,21 @@ const settingTypes = [
   "FEATURE_FLAG",
   "SECURITY_POLICY",
 ];
+const tenantUserRoles = [
+  ["admin", "Administrador"],
+  ["representative", "Parlamentar"],
+  ["staff", "Operacional"],
+];
+const tenantUserStatuses = [
+  ["active", "Ativo"],
+  ["blocked", "Bloqueado"],
+];
+const tenantStatuses = [
+  ["active", "Ativo"],
+  ["inactive", "Inativo"],
+  ["suspended", "Suspenso"],
+  ["cancelled", "Cancelado"],
+];
 
 export function PlatformAdminWorkspace({ user, onLogout }) {
   const [activeView, setActiveView] = useState("overview");
@@ -70,7 +89,7 @@ export function PlatformAdminWorkspace({ user, onLogout }) {
   const [supportAccesses, setSupportAccesses] = useState([]);
   const [audit, setAudit] = useState([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
-  const [usage, setUsage] = useState(null);
+  const [tenantUsers, setTenantUsers] = useState([]);
   const [notice, setNotice] = useState("");
 
   const loadPlatformData = useCallback(async () => {
@@ -97,13 +116,22 @@ export function PlatformAdminWorkspace({ user, onLogout }) {
     loadPlatformData();
   }, [loadPlatformData]);
 
-  async function loadUsage(tenantId) {
+  async function selectTenant(tenantId) {
     setSelectedTenantId(tenantId);
     if (!tenantId) {
-      setUsage(null);
+      setTenantUsers([]);
       return;
     }
-    setUsage(await apiRequest(`/api/v1/platform/gabinetes/${tenantId}/consumo`));
+    await loadTenantUsers(tenantId);
+  }
+
+  async function loadTenantUsers(tenantId = selectedTenantId) {
+    if (!tenantId) {
+      setTenantUsers([]);
+      return;
+    }
+    const data = await apiRequest(`/api/v1/platform/gabinetes/${tenantId}/usuarios`);
+    setTenantUsers(data.content || []);
   }
 
   const selectedTenant = useMemo(
@@ -160,8 +188,9 @@ export function PlatformAdminWorkspace({ user, onLogout }) {
             tenants={tenants}
             selectedTenant={selectedTenant}
             selectedTenantId={selectedTenantId}
-            usage={usage}
-            onLoadUsage={loadUsage}
+            tenantUsers={tenantUsers}
+            onSelectTenant={selectTenant}
+            onLoadTenantUsers={loadTenantUsers}
             onRefresh={loadPlatformData}
             onNotice={setNotice}
           />
@@ -383,151 +412,374 @@ function TenantsPanel({
   tenants,
   selectedTenant,
   selectedTenantId,
-  usage,
-  onLoadUsage,
+  tenantUsers,
+  onSelectTenant,
+  onLoadTenantUsers,
   onRefresh,
   onNotice,
 }) {
-  const [form, setForm] = useState({
-    nome: "",
-    slug: "",
-    plano: "starter",
-    limiteArmazenamentoMb: 1024,
-    modulosHabilitados: ["solicitacoes", "cidadaos", "canais"],
+  const [filters, setFilters] = useState({
+    q: "",
+    criadoDe: "",
+    criadoAte: "",
+    plano: "",
+    jurisdicao: "",
+    parlamentar: "",
   });
-  const [contractForm, setContractForm] = useState({ contrato: "active", motivo: "" });
+  const [editForm, setEditForm] = useState(defaultTenantEditForm());
   const [moduleDraft, setModuleDraft] = useState([]);
 
-  async function createTenant(event) {
-    event.preventDefault();
-    const payload = {
-      nome: form.nome,
-      slug: form.slug,
-      plano: form.plano,
-      limiteArmazenamentoMb: form.limiteArmazenamentoMb,
-      modulosHabilitados: form.modulosHabilitados,
-    };
-    await apiRequest("/api/v1/platform/gabinetes", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    setForm({ ...form, nome: "", slug: "" });
-    onNotice("Gabinete cadastrado.");
-    await onRefresh();
-  }
+  useEffect(() => {
+    if (!selectedTenant) {
+      setEditForm(defaultTenantEditForm());
+      setModuleDraft([]);
+      return;
+    }
+    setEditForm(defaultTenantEditForm(selectedTenant));
+    setModuleDraft(selectedTenant.modulosHabilitados || []);
+  }, [selectedTenant]);
 
-  async function transitionContract(event) {
+  const visibleTenants = useMemo(
+    () => tenants.filter((tenant) => tenantMatchesFilters(tenant, filters)),
+    [tenants, filters],
+  );
+
+  async function saveTenant(event) {
     event.preventDefault();
     if (!selectedTenantId) return;
-    await apiRequest(`/api/v1/platform/gabinetes/${selectedTenantId}/contrato`, {
-      method: "POST",
-      body: JSON.stringify(contractForm),
-    });
-    setContractForm({ ...contractForm, motivo: "" });
-    onNotice("Transicao contratual registrada.");
-    await onRefresh();
-    await onLoadUsage(selectedTenantId);
-  }
-
-  async function saveModules() {
-    if (!selectedTenantId) return;
-    const modules = moduleDraft.length ? moduleDraft : selectedTenant?.modulosHabilitados || [];
     await apiRequest(`/api/v1/platform/gabinetes/${selectedTenantId}`, {
       method: "PATCH",
-      body: JSON.stringify({ modulosHabilitados: modules }),
+      body: JSON.stringify({
+        nome: editForm.nome,
+        status: editForm.status,
+        plano: editForm.plano,
+        observacoesContrato: editForm.observacoesContrato,
+        modulosHabilitados: moduleDraft,
+      }),
     });
-    onNotice("Modulos habilitados atualizados.");
+    onNotice("Gabinete atualizado.");
     await onRefresh();
-    await onLoadUsage(selectedTenantId);
+    await onSelectTenant(selectedTenantId);
+  }
+
+  async function setTenantStatus(status) {
+    if (!selectedTenantId) return;
+    await apiRequest(`/api/v1/platform/gabinetes/${selectedTenantId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+    onNotice(status === "active" ? "Gabinete ativado." : "Gabinete desativado.");
+    await onRefresh();
+    await onSelectTenant(selectedTenantId);
   }
 
   function selectTenant(tenantId) {
     const tenant = tenants.find((item) => item.id === tenantId);
-    setContractForm({ contrato: tenant?.contrato || "active", motivo: "" });
+    setEditForm(defaultTenantEditForm(tenant));
     setModuleDraft(tenant?.modulosHabilitados || []);
-    onLoadUsage(tenantId);
+    onSelectTenant(tenantId);
   }
 
   return (
-    <section className="page-section">
+    <section className="page-section tenant-management-page">
       <p className="eyebrow">Clientes e contratos</p>
-      <h2>Gabinetes contratados</h2>
-      <div className="platform-columns">
-        <form className="compact-form" onSubmit={createTenant}>
-          <h3>Novo gabinete</h3>
-          <label>Nome<input value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} required /></label>
-          <label>Slug<input value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} required /></label>
-          <label>Plano<select value={form.plano} onChange={(event) => setForm({ ...form, plano: event.target.value })}>{plans.map((plan) => <option key={plan}>{plan}</option>)}</select></label>
-          <div className="inline-fields">
-            <label>Limite do plano<input value={planUserLimits[form.plano].toLocaleString("pt-BR")} disabled /></label>
-            <label>Storage MB<input type="number" min="1" value={form.limiteArmazenamentoMb} onChange={(event) => setForm({ ...form, limiteArmazenamentoMb: Number(event.target.value) })} /></label>
-          </div>
-          <ModulePicker value={form.modulosHabilitados} onChange={(modules) => setForm({ ...form, modulosHabilitados: modules })} />
-          <button className="primary-button" type="submit"><Plus size={18} /> Cadastrar</button>
-        </form>
+      <div className="section-title-row">
+        <h2>Gabinetes contratados</h2>
+        <span className="status-pill">Cadastro via Interesses em Contratação</span>
+      </div>
+      <form className="tenant-filter-panel">
+        <label>Nome do gabinete<input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="Nome ou slug" /></label>
+        <label>Cadastrado de<input type="date" value={filters.criadoDe} onChange={(event) => setFilters({ ...filters, criadoDe: event.target.value })} /></label>
+        <label>Cadastrado até<input type="date" value={filters.criadoAte} onChange={(event) => setFilters({ ...filters, criadoAte: event.target.value })} /></label>
+        <label>Plano<select value={filters.plano} onChange={(event) => setFilters({ ...filters, plano: event.target.value })}><option value="">Todos</option>{plans.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Jurisdição<input value={filters.jurisdicao} onChange={(event) => setFilters({ ...filters, jurisdicao: event.target.value })} placeholder="Cidade, UF ou tipo" /></label>
+        <label>Parlamentar<input value={filters.parlamentar} onChange={(event) => setFilters({ ...filters, parlamentar: event.target.value })} placeholder="Opcional" /></label>
+      </form>
 
-        <section>
+      <div className="tenant-management-grid">
+        <div className="tenant-results-panel">
           <div className="list-toolbar">
-            <select value={selectedTenantId} onChange={(event) => selectTenant(event.target.value)}>
-              <option value="">Selecionar gabinete</option>
-              {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.nome}</option>)}
-            </select>
+            <strong>{visibleTenants.length} gabinete(s)</strong>
           </div>
-          <div className="tenant-list">
-            {tenants.map((tenant) => (
-              <article className="tenant-row" key={tenant.id}>
+          <div className="tenant-admin-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Gabinete</th>
+                  <th>Plano</th>
+                  <th>Jurisdição</th>
+                  <th>Parlamentar</th>
+                  <th>Usuários</th>
+                  <th>Status</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleTenants.map((tenant) => (
+                  <tr key={tenant.id} className={selectedTenantId === tenant.id ? "selected" : ""} onClick={() => selectTenant(tenant.id)}>
+                    <td><strong>{tenantName(tenant)}</strong><small>{tenant.slug}</small></td>
+                    <td>{statusLabel(tenant.plano, plans)}</td>
+                    <td>{jurisdictionLabel(tenant)}</td>
+                    <td>{cleanText(tenant.parlamentar?.nome) || "Não cadastrado"}</td>
+                    <td>{tenant.usuariosAtivos || 0}/{userLimitLabel(tenant.plano, tenant.limiteUsuarios)}</td>
+                    <td>{statusLabel(tenant.status, tenantStatuses)}</td>
+                    <td><button className="secondary-button compact" type="button" onClick={(event) => { event.stopPropagation(); selectTenant(tenant.id); }}>Editar</button></td>
+                  </tr>
+                ))}
+                {!visibleTenants.length && <tr><td colSpan={7}>Nenhum gabinete encontrado.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {selectedTenant && (
+          <section className="tenant-detail-panel">
+            <form className="compact-form" onSubmit={saveTenant}>
+              <div className="section-title-row compact-section-title">
                 <div>
-                  <strong>{tenant.nome}</strong>
-                  <small>{tenant.slug} · {tenant.plano} · {tenant.contrato}</small>
+                  <h3>Editar gabinete</h3>
+                  <p>{selectedTenant.slug} · contrato {selectedTenant.contrato}</p>
                 </div>
-                <button className="secondary-button" type="button" onClick={() => selectTenant(tenant.id)}>Editar</button>
-              </article>
-            ))}
-          </div>
-          {selectedTenant && (
-            <div className="usage-panel">
-              <h3>Contrato e modulos</h3>
-              <form className="compact-form compact-form-flat" onSubmit={transitionContract}>
-                <label>Status contratual
-                  <select
-                    value={contractForm.contrato}
-                    onChange={(event) => setContractForm({ ...contractForm, contrato: event.target.value })}
-                  >
-                    <option value="trial">trial</option>
-                    <option value="active">active</option>
-                    <option value="suspended">suspended</option>
-                    <option value="cancelled">cancelled</option>
-                  </select>
-                </label>
-                <label>Motivo
-                  <textarea
-                    value={contractForm.motivo}
-                    onChange={(event) => setContractForm({ ...contractForm, motivo: event.target.value })}
-                    required
-                    rows={3}
-                  />
-                </label>
-                <button className="primary-button" type="submit"><Save size={18} /> Registrar contrato</button>
-              </form>
-              <div className="module-editor">
-                <ModulePicker
-                  value={moduleDraft.length ? moduleDraft : selectedTenant.modulosHabilitados}
-                  onChange={setModuleDraft}
-                />
-                <button className="secondary-button" type="button" onClick={saveModules}>Salvar modulos</button>
+                <div className="tenant-status-actions">
+                  <button type="button" title="Ativar gabinete" disabled={selectedTenant.status === "active"} onClick={() => setTenantStatus("active")}>Ativar</button>
+                  <button type="button" title="Desativar gabinete" disabled={selectedTenant.status !== "active"} onClick={() => setTenantStatus("inactive")}>Desativar</button>
+                </div>
               </div>
-            </div>
-          )}
-          {usage && (
-            <div className="usage-panel">
-              <h3>Consumo sem dados sensiveis</h3>
-              <KeyValueRows rows={usage.consumo} />
-            </div>
-          )}
-        </section>
+              <div className="inline-fields three-fields">
+                <label>Nome<input required value={editForm.nome} onChange={(event) => setEditForm({ ...editForm, nome: event.target.value })} /></label>
+                <label>Plano<select value={editForm.plano} onChange={(event) => setEditForm({ ...editForm, plano: event.target.value })}>{plans.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label>Status<select value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}>{tenantStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              </div>
+              <div className="tenant-readonly-grid">
+                <span><strong>Limite de usuários</strong>{userLimitLabel(editForm.plano, selectedTenant.limiteUsuarios)}</span>
+                <span><strong>Jurisdição</strong>{jurisdictionLabel(selectedTenant)}</span>
+                <span><strong>Parlamentar</strong>{cleanText(selectedTenant.parlamentar?.nome) || "Não cadastrado"}</span>
+              </div>
+              <ModulePicker value={moduleDraft} onChange={setModuleDraft} />
+              <label>Observações contratuais<textarea rows={3} value={editForm.observacoesContrato} onChange={(event) => setEditForm({ ...editForm, observacoesContrato: event.target.value })} /></label>
+              <button className="primary-button" type="submit"><Save size={18} /> Salvar gabinete</button>
+            </form>
+            <TenantUsersManager
+              tenant={selectedTenant}
+              users={tenantUsers}
+              onRefresh={async () => {
+                await onRefresh();
+                await onLoadTenantUsers(selectedTenant.id);
+              }}
+              onNotice={onNotice}
+            />
+          </section>
+        )}
       </div>
     </section>
   );
+}
+
+function defaultTenantEditForm(tenant = {}) {
+  return {
+    nome: cleanText(tenant.nome) || "",
+    plano: tenant.plano || "starter",
+    status: tenant.status || "active",
+    observacoesContrato: tenant.observacoesContrato || "",
+  };
+}
+
+function tenantMatchesFilters(tenant, filters) {
+  const createdAt = tenant.criadoEm ? tenant.criadoEm.slice(0, 10) : "";
+  return (
+    containsText([tenantName(tenant), tenant.slug], filters.q)
+    && (!filters.criadoDe || createdAt >= filters.criadoDe)
+    && (!filters.criadoAte || createdAt <= filters.criadoAte)
+    && (!filters.plano || tenant.plano === filters.plano)
+    && containsText([
+      tenant.jurisdicao?.nome,
+      tenant.jurisdicao?.municipio,
+      tenant.jurisdicao?.uf,
+      tenant.jurisdicao?.tipoCasa,
+    ], filters.jurisdicao)
+    && containsText([
+      tenant.parlamentar?.nome,
+      tenant.parlamentar?.partido,
+      tenant.parlamentar?.statusMandato,
+    ], filters.parlamentar)
+  );
+}
+
+function containsText(values, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return values.filter(Boolean).some((value) => cleanText(value).toLowerCase().includes(normalized));
+}
+
+function jurisdictionLabel(tenant) {
+  const jurisdiction = tenant.jurisdicao || {};
+  return cleanText(
+    jurisdiction.nome || [jurisdiction.municipio, jurisdiction.uf].filter(Boolean).join("/"),
+  ) || "Não cadastrada";
+}
+
+function userLimitLabel(plan, fallback) {
+  if (plan === "premium") return "Ilimitado";
+  return (planUserLimits[plan] || fallback || 0).toLocaleString("pt-BR");
+}
+
+function tenantName(tenant) {
+  return cleanText(tenant.nome);
+}
+
+function cleanText(value) {
+  return String(value || "")
+    .replaceAll("C?mara", "Câmara")
+    .replaceAll("c?mara", "câmara")
+    .replaceAll("S?o", "São")
+    .replaceAll("s?o", "são")
+    .replaceAll("Ã¡", "á")
+    .replaceAll("Ã¢", "â")
+    .replaceAll("Ã£", "ã")
+    .replaceAll("Ã©", "é")
+    .replaceAll("Ãª", "ê")
+    .replaceAll("Ã­", "í")
+    .replaceAll("Ã³", "ó")
+    .replaceAll("Ã´", "ô")
+    .replaceAll("Ãµ", "õ")
+    .replaceAll("Ãº", "ú")
+    .replaceAll("Ã§", "ç")
+    .replaceAll("Ã", "Á")
+    .replaceAll("Ã‚", "Â")
+    .replaceAll("Ãƒ", "Ã")
+    .replaceAll("Ã‰", "É")
+    .replaceAll("ÃŠ", "Ê")
+    .replaceAll("Ã“", "Ó")
+    .replaceAll("Ã”", "Ô")
+    .replaceAll("Ãš", "Ú")
+    .replaceAll("Ã‡", "Ç");
+}
+
+function TenantUsersManager({ tenant, users, onRefresh, onNotice }) {
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const selectedUser = users.find((item) => item.id === selectedUserId);
+  const [form, setForm] = useState(defaultTenantUserForm());
+
+  useEffect(() => {
+    if (!selectedUser) {
+      if (selectedUserId) setSelectedUserId("");
+      return;
+    }
+    setForm(defaultTenantUserForm(selectedUser));
+  }, [selectedUser, selectedUserId]);
+
+  function selectUser(user) {
+    setSelectedUserId(user.id);
+    setForm(defaultTenantUserForm(user));
+  }
+
+  function startNewUser() {
+    setSelectedUserId("");
+    setForm(defaultTenantUserForm());
+  }
+
+  async function submitUser(event) {
+    event.preventDefault();
+    const payload = {
+      nome: form.nome,
+      email: form.email,
+      cpf: form.cpf,
+      telefone: form.telefone,
+      perfil: form.perfil,
+    };
+    if (form.senha) payload.senha = form.senha;
+    if (selectedUser) payload.status = form.status;
+    await apiRequest(
+      selectedUser
+        ? `/api/v1/platform/gabinetes/${tenant.id}/usuarios/${selectedUser.id}`
+        : `/api/v1/platform/gabinetes/${tenant.id}/usuarios`,
+      { method: selectedUser ? "PATCH" : "POST", body: JSON.stringify(payload) },
+    );
+    onNotice(selectedUser ? "Usuário do gabinete atualizado." : "Usuário do gabinete criado.");
+    setForm((current) => ({ ...current, senha: "" }));
+    await onRefresh();
+  }
+
+  async function blockUser(user) {
+    await apiRequest(`/api/v1/platform/gabinetes/${tenant.id}/usuarios/${user.id}`, {
+      method: "DELETE",
+    });
+    onNotice("Usuário bloqueado no gabinete.");
+    await onRefresh();
+  }
+
+  const activeUsers = users.filter((item) => item.status === "active").length;
+  const limit = userLimitLabel(tenant.plano, tenant.limiteUsuarios);
+
+  return (
+    <div className="usage-panel tenant-users-panel">
+      <div className="section-title-row compact-section-title">
+        <div>
+          <h3>Usuários do gabinete</h3>
+          <p>{activeUsers} de {limit} usuário(s) ativo(s)</p>
+        </div>
+        {selectedUser && <button className="secondary-button" type="button" onClick={startNewUser}>Novo usuário</button>}
+      </div>
+      <form className="compact-form compact-form-flat" onSubmit={submitUser}>
+        <div className="inline-fields">
+          <label>Nome<input required value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} /></label>
+          <label>E-mail<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value.toLowerCase() })} /></label>
+        </div>
+        <div className="inline-fields three-fields">
+          <label>CPF<input required value={form.cpf} maxLength={14} onChange={(event) => setForm({ ...form, cpf: formatBrazilianCpf(event.target.value) })} /></label>
+          <label>Telefone<input value={form.telefone} maxLength={15} onChange={(event) => setForm({ ...form, telefone: formatBrazilianPhone(event.target.value) })} /></label>
+          <label>Perfil<select value={form.perfil} onChange={(event) => setForm({ ...form, perfil: event.target.value })}>{tenantUserRoles.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        </div>
+        <div className="inline-fields">
+          <label>{selectedUser ? "Nova senha" : "Senha inicial"}<input required={!selectedUser} type="password" minLength={8} value={form.senha} onChange={(event) => setForm({ ...form, senha: event.target.value })} placeholder={selectedUser ? "Manter senha atual" : ""} /></label>
+          <label>Status<select disabled={!selectedUser} value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{tenantUserStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        </div>
+        <button className="primary-button" type="submit"><Save size={18} /> {selectedUser ? "Salvar usuário" : "Criar usuário"}</button>
+      </form>
+      <div className="platform-users-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>E-mail</th>
+              <th>Perfil</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((user) => (
+              <tr key={user.id} className={selectedUserId === user.id ? "selected" : ""} onClick={() => selectUser(user)}>
+                <td><strong>{user.nome}</strong>{user.chefeGabinete && <small>Chefe de Gabinete</small>}</td>
+                <td>{user.email}</td>
+                <td>{statusLabel(user.perfil, tenantUserRoles)}</td>
+                <td>{statusLabel(user.status, tenantUserStatuses)}</td>
+                <td>
+                  <div className="row-actions">
+                    <button type="button" title="Editar usuário" onClick={(event) => { event.stopPropagation(); selectUser(user); }}><UserPlus size={15} /></button>
+                    <button type="button" title="Bloquear usuário" disabled={user.status === "blocked"} onClick={(event) => { event.stopPropagation(); blockUser(user); }}><LockKeyhole size={15} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!users.length && <tr><td colSpan={5}>Nenhum usuário cadastrado neste gabinete.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function defaultTenantUserForm(user = {}) {
+  return {
+    nome: user.nome || "",
+    email: user.email || "",
+    cpf: user.cpf || "",
+    telefone: user.telefone || "",
+    perfil: user.perfil || "staff",
+    status: user.status || "active",
+    senha: "",
+  };
 }
 
 function SettingsPanel({ settings, onRefresh, onNotice }) {
