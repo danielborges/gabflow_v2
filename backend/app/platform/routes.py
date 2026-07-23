@@ -1,13 +1,15 @@
+import re
 import uuid
 from datetime import date
-import re
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import func, select
 
 from app.audit import add_audit
+from app.agency_suggestions import reload_suggested_agencies
 from app.auth.permissions import platform_admin_required
+from app.default_categories import ensure_default_request_categories
 from app.extensions import db
 from app.models import (
     AgendaEvent,
@@ -33,10 +35,11 @@ from app.models import (
     UserStatus,
 )
 from app.modules import AVAILABLE_MODULES, DEFAULT_MODULES, normalize_modules, validate_modules
+from app.plans import USER_LIMIT_REACHED_MESSAGE, normalize_plan, user_limit_for_plan
+from app.territory_suggestions import reload_suggested_territories
 
 platform_bp = Blueprint("platform", __name__)
 
-PLANS = {"starter", "professional", "premium"}
 LEAD_STATUSES = {
     "new",
     "contacting",
@@ -62,7 +65,7 @@ def _tenant_data(item: Tenant) -> dict:
         "status": item.status.value,
         "plano": item.plan,
         "contrato": item.contract_status.value,
-        "limiteUsuarios": item.user_limit,
+        "limiteUsuarios": user_limit_for_plan(item.plan),
         "limiteArmazenamentoMb": item.storage_limit_mb,
         "modulosHabilitados": normalize_modules(item.enabled_modules),
         "observacoesContrato": item.contract_notes,
@@ -199,7 +202,13 @@ def list_contracting_interests():
 def update_contracting_interest(lead_id: uuid.UUID):
     item = db.session.get(PublicLead, lead_id)
     if item is None:
-        return jsonify(error="resource_not_found", message="Interesse em contratacao nao encontrado."), 404
+        return (
+            jsonify(
+                error="resource_not_found",
+                message="Interesse em contratacao nao encontrado.",
+            ),
+            404,
+        )
     payload = request.get_json(silent=True) or {}
     before = _lead_data(item)
     if "status" in payload:
@@ -261,7 +270,13 @@ def update_contracting_interest(lead_id: uuid.UUID):
 def convert_contracting_interest(lead_id: uuid.UUID):
     item = db.session.get(PublicLead, lead_id)
     if item is None:
-        return jsonify(error="resource_not_found", message="Interesse em contratacao nao encontrado."), 404
+        return (
+            jsonify(
+                error="resource_not_found",
+                message="Interesse em contratacao nao encontrado.",
+            ),
+            404,
+        )
     if item.converted_tenant_id:
         return jsonify(error="conflict", message="Interesse ja convertido em gabinete."), 409
     payload = request.get_json(silent=True) or {}
@@ -269,27 +284,57 @@ def convert_contracting_interest(lead_id: uuid.UUID):
     if db.session.execute(select(Tenant.id).where(Tenant.slug == slug)).scalar_one_or_none():
         return jsonify(error="conflict", message="Slug de gabinete ja cadastrado."), 409
     try:
+        jurisdiction_city = str(payload.get("municipio", "")).strip() or None
+        jurisdiction_state = str(payload.get("uf", "")).strip().upper() or None
         tenant = Tenant(
             name=item.organization,
             slug=slug,
             status=TenantStatus.ACTIVE,
             contract_status=ContractStatus.TRIAL,
-            plan=_plan(payload.get("plano", item.plan)),
-            user_limit=_positive_int(payload.get("limiteUsuarios", _default_user_limit(item.plan)), "Limite de usuarios"),
-            storage_limit_mb=_positive_int(payload.get("limiteArmazenamentoMb", 1024), "Limite de armazenamento"),
+            plan=normalize_plan(payload.get("plano", item.plan)),
+            user_limit=user_limit_for_plan(payload.get("plano", item.plan)),
+            storage_limit_mb=_positive_int(
+                payload.get("limiteArmazenamentoMb", 1024),
+                "Limite de armazenamento",
+            ),
             enabled_modules=_modules(payload.get("modulosHabilitados", DEFAULT_MODULES)),
-            contract_notes=str(payload.get("observacoesContrato", item.contract_notes or "")).strip() or None,
+            contract_notes=str(
+                payload.get("observacoesContrato", item.contract_notes or "")
+            ).strip()
+            or None,
+            chamber_type="CAMARA_MUNICIPAL",
+            jurisdiction_name=_jurisdiction_name(item.city, item.state),
+            jurisdiction_city=item.city,
+            jurisdiction_state=item.state,
+            jurisdiction_ibge_code=str(item.municipality_ibge_id)
+            if item.municipality_ibge_id
+            else None,
         )
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     before = _lead_data(item)
     db.session.add(tenant)
     db.session.flush()
+    ensure_default_request_categories(tenant.id)
+    reload_suggested_territories(tenant)
+    reload_suggested_agencies(tenant)
     item.converted_tenant_id = tenant.id
     item.status = "converted"
-    _append_lead_action(item, "tenant.converted", {"tenantId": str(tenant.id), "slug": tenant.slug})
+    _append_lead_action(
+        item,
+        "tenant.converted",
+        {"tenantId": str(tenant.id), "slug": tenant.slug},
+    )
     after = _lead_data(item)
-    add_audit(None, _actor_id(), "platform.contracting_interest.converted", "public_lead", item.id, before, {"lead": after, "tenant": _tenant_data(tenant)})
+    add_audit(
+        None,
+        _actor_id(),
+        "platform.contracting_interest.converted",
+        "public_lead",
+        item.id,
+        before,
+        {"lead": after, "tenant": _tenant_data(tenant)},
+    )
     db.session.commit()
     return jsonify(interesse=after, tenant=_tenant_data(tenant)), 201
 
@@ -310,18 +355,28 @@ def create_tenant():
             slug=slug,
             status=TenantStatus.ACTIVE,
             contract_status=ContractStatus.TRIAL,
-            plan=_plan(payload.get("plano", "starter")),
-            user_limit=_positive_int(payload.get("limiteUsuarios", 5), "Limite de usuarios"),
+            plan=normalize_plan(payload.get("plano", "starter")),
+            user_limit=user_limit_for_plan(payload.get("plano", "starter")),
             storage_limit_mb=_positive_int(
                 payload.get("limiteArmazenamentoMb", 1024), "Limite de armazenamento"
             ),
             enabled_modules=_modules(payload.get("modulosHabilitados", DEFAULT_MODULES)),
             contract_notes=str(payload.get("observacoesContrato", "")).strip() or None,
+            chamber_type=str(payload.get("tipoCasa", "CAMARA_MUNICIPAL")).strip()
+            or "CAMARA_MUNICIPAL",
+            jurisdiction_name=str(payload.get("jurisdicaoNome", "")).strip()
+            or _jurisdiction_name(jurisdiction_city, jurisdiction_state),
+            jurisdiction_city=jurisdiction_city,
+            jurisdiction_state=jurisdiction_state,
+            jurisdiction_ibge_code=str(payload.get("codigoIbge", "")).strip() or None,
         )
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     db.session.add(tenant)
     db.session.flush()
+    ensure_default_request_categories(tenant.id)
+    reload_suggested_territories(tenant)
+    reload_suggested_agencies(tenant)
     add_audit(
         None,
         _actor_id(),
@@ -352,9 +407,24 @@ def update_tenant(tenant_id: uuid.UUID):
         if "contrato" in payload:
             contract_transition = ContractStatus(str(payload["contrato"]).lower())
         if "plano" in payload:
-            tenant.plan = _plan(payload["plano"])
-        if "limiteUsuarios" in payload:
-            tenant.user_limit = _positive_int(payload["limiteUsuarios"], "Limite de usuarios")
+            plan = normalize_plan(payload["plano"])
+            plan_limit = user_limit_for_plan(plan)
+            active_users = _active_tenant_users(tenant.id)
+            if active_users > plan_limit:
+                return (
+                    jsonify(
+                        error="plan_user_limit_conflict",
+                        message=(
+                            "O plano selecionado permite menos usuarios ativos "
+                            "do que o gabinete possui hoje."
+                        ),
+                        usuariosAtivos=active_users,
+                        limiteUsuarios=plan_limit,
+                    ),
+                    422,
+                )
+            tenant.plan = plan
+            tenant.user_limit = plan_limit
         if "limiteArmazenamentoMb" in payload:
             tenant.storage_limit_mb = _positive_int(
                 payload["limiteArmazenamentoMb"], "Limite de armazenamento"
@@ -469,6 +539,11 @@ def reset_tenant_admin(tenant_id: uuid.UUID):
             404,
         )
     before = {"role": user.role.value, "status": user.status.value}
+    if (
+        user.status != UserStatus.ACTIVE
+        and _active_tenant_users(tenant_id) >= user_limit_for_plan(tenant.plan)
+    ):
+        return jsonify(error="user_limit_reached", message=USER_LIMIT_REACHED_MESSAGE), 422
     user.role = Role.ADMIN
     user.status = UserStatus.ACTIVE
     after = {"role": user.role.value, "status": user.status.value}
@@ -610,6 +685,18 @@ def _tenant_count(model, tenant_id: uuid.UUID) -> int:
     return db.session.scalar(select(func.count(model.id)).where(model.tenant_id == tenant_id)) or 0
 
 
+def _active_tenant_users(tenant_id: uuid.UUID) -> int:
+    return (
+        db.session.scalar(
+            select(func.count(User.id)).where(
+                User.tenant_id == tenant_id,
+                User.status == UserStatus.ACTIVE,
+            )
+        )
+        or 0
+    )
+
+
 def _count_by(column) -> dict:
     rows = db.session.execute(select(column, func.count()).group_by(column))
     return {str(key): value for key, value in rows}
@@ -712,8 +799,12 @@ def _append_lead_action(item: PublicLead, action: str, payload: dict) -> None:
     item.action_history = [event, *(item.action_history or [])][:100]
 
 
-def _default_user_limit(plan: str) -> int:
-    return {"starter": 5, "professional": 15, "premium": 9999}.get(plan, 5)
+def _jurisdiction_name(city: str | None, state: str | None) -> str | None:
+    if city and state:
+        return f"{city}/{state}"
+    if state:
+        return state
+    return None
 
 
 def _slugify(value: str) -> str:
@@ -748,13 +839,6 @@ def _platform_alerts() -> list[dict]:
             }
         )
     return alerts
-
-
-def _plan(value) -> str:
-    plan = str(value or "starter").strip().lower()
-    if plan not in PLANS:
-        raise ValueError("Plano contratado invalido.")
-    return plan
 
 
 def _positive_int(value, label: str) -> int:

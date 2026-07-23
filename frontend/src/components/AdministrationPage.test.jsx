@@ -28,6 +28,7 @@ function mockAdminApi(path, options = {}) {
       redesSociais: {},
       identidadeVisual: {},
       chefeGabineteId: "",
+      contrato: { plano: "professional", limiteUsuarios: 15, usuariosAtivos: 3 },
     },
     "/api/v1/admin/parlamentar": null,
     "/api/v1/admin/usuarios": emptyCollection,
@@ -50,27 +51,14 @@ describe("AdministrationPage office settings", () => {
     apiRequest.mockImplementation(mockAdminApi);
   });
 
-  it("usa estados cadastrados e filtra municipios pelo estado selecionado", async () => {
+  it("exibe jurisdição como informação bloqueada da contratação", async () => {
     render(<AdministrationPage />);
 
-    const stateSelect = await screen.findByLabelText("Estado");
-    expect(stateSelect).toHaveValue("MG");
-    expect(screen.getByRole("option", { name: "São Paulo - SP" })).toBeInTheDocument();
-
-    const cityInput = screen.getByRole("combobox", { name: "Município" });
-    fireEvent.focus(cityInput);
-    fireEvent.change(cityInput, { target: { value: "Juiz" } });
-
-    const minasOptions = await screen.findByRole("listbox");
-    expect(within(minasOptions).getByRole("option", { name: /Juiz de Fora/ })).toBeInTheDocument();
-    expect(within(minasOptions).queryByRole("option", { name: /São Paulo/ })).not.toBeInTheDocument();
-
-    fireEvent.change(stateSelect, { target: { value: "SP" } });
-    expect(cityInput).toHaveValue("");
-
-    fireEvent.focus(cityInput);
-    fireEvent.change(cityInput, { target: { value: "Sao Paulo" } });
-    fireEvent.click(await within(screen.getByRole("listbox")).findByRole("option", { name: /São Paulo/ }));
+    expect(await screen.findByText("Câmara Municipal")).toBeInTheDocument();
+    expect(screen.getByText("Minas Gerais - MG")).toBeInTheDocument();
+    expect(screen.getByText("Juiz de Fora")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Estado" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Município" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Salvar gabinete/ }));
 
@@ -83,12 +71,72 @@ describe("AdministrationPage office settings", () => {
         }),
       );
     });
+    expect(apiRequest).not.toHaveBeenCalledWith(
+      "/api/v1/admin/jurisdicao",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+  });
 
-    const [, saveOptions] = apiRequest.mock.calls.find(([path, options]) => (
-      path === "/api/v1/admin/perfil-gabinete" && options?.method === "PATCH"
-    ));
-    const payload = JSON.parse(saveOptions.body);
-    expect(payload.dadosInstitucionais.estado).toBe("SP");
-    expect(payload.dadosInstitucionais.municipio).toBe("São Paulo");
+  it("mostra plano contratado e restringe perfis disponiveis para usuarios", async () => {
+    render(<AdministrationPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Usuários" }));
+
+    expect(await screen.findByText("Plano contratado: Professional")).toBeInTheDocument();
+    expect(screen.getByText("3 de 15 usuário(s) ativo(s)")).toBeInTheDocument();
+
+    const profile = screen.getByLabelText("Perfil");
+    expect(within(profile).getByRole("option", { name: "Administrador" })).toBeInTheDocument();
+    expect(within(profile).getByRole("option", { name: "Parlamentar" })).toBeInTheDocument();
+    expect(within(profile).getByRole("option", { name: "Operacional" })).toBeInTheDocument();
+    expect(within(profile).queryByRole("option", { name: "Gestor" })).not.toBeInTheDocument();
+    expect(
+      within(profile).queryByRole("option", { name: "Vereador / Deputado Estadual" }),
+    ).not.toBeInTheDocument();
+
+    const email = screen.getByLabelText("E-mail");
+    expect(email).toHaveAttribute("type", "email");
+    expect(email).toHaveAttribute("placeholder", "nome@dominio.com.br");
+
+    const cpf = screen.getByLabelText("CPF");
+    fireEvent.change(cpf, { target: { value: "52998224725" } });
+    expect(cpf).toHaveValue("529.982.247-25");
+
+    const phone = screen.getByLabelText("Telefone");
+    fireEvent.change(phone, { target: { value: "32999990000" } });
+    expect(phone).toHaveValue("(32) 99999-0000");
+  });
+
+  it("edita usuario selecionado na tabela usando o mesmo formulario", async () => {
+    apiRequest.mockImplementation((path, options = {}) => {
+      if (path === "/api/v1/admin/usuarios") {
+        return Promise.resolve({
+          content: [{
+            id: "user-1",
+            nome: "Ana Operacional",
+            email: "ana@gabinete.com.br",
+            cpf: "529.982.247-25",
+            telefone: "(32) 99999-0000",
+            perfil: "staff",
+            status: "active",
+          }],
+        });
+      }
+      return mockAdminApi(path, options);
+    });
+
+    render(<AdministrationPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Usuários" }));
+
+    expect(await screen.findByRole("columnheader", { name: "Nome" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Status" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Acesso" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("row", { name: /Ana Operacional/ }));
+
+    expect(screen.getByText("Editar usuário")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nome")).toHaveValue("Ana Operacional");
+    expect(screen.getByLabelText("E-mail")).toHaveValue("ana@gabinete.com.br");
+    expect(screen.getByRole("button", { name: /Salvar usuário/ })).toBeInTheDocument();
   });
 });

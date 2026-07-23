@@ -1,3 +1,5 @@
+import uuid
+
 import sentry_sdk
 from flask import Flask, jsonify
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -16,6 +18,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
+    _init_jwt_session_guard()
     limiter.init_app(app)
     register_http_hooks(app)
 
@@ -90,3 +93,28 @@ def _init_sentry(app: Flask) -> None:
         traces_sample_rate=app.config["SENTRY_TRACES_SAMPLE_RATE"],
         send_default_pii=False,
     )
+
+
+def _init_jwt_session_guard() -> None:
+    @jwt.token_verification_loader
+    def verify_single_session(_jwt_header, jwt_payload) -> bool:
+        session_id = jwt_payload.get("session_id")
+        user_id = jwt_payload.get("sub")
+        if not session_id or not user_id:
+            return False
+
+        from app.models import User
+
+        try:
+            user_uuid = uuid.UUID(str(user_id))
+        except (TypeError, ValueError):
+            return False
+        user = db.session.get(User, user_uuid)
+        return bool(user and user.current_session_id == session_id)
+
+    @jwt.token_verification_failed_loader
+    def invalid_session(_jwt_header, _jwt_payload):
+        return (
+            jsonify(error="session_invalidated", message="Sessao encerrada em outro acesso."),
+            401,
+        )

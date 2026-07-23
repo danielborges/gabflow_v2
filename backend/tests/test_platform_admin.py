@@ -11,6 +11,7 @@ from app.models import (
     ServiceRequest,
     Tenant,
     User,
+    UserStatus,
 )
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
@@ -76,7 +77,7 @@ def test_platform_admin_creates_and_updates_tenant(app, client):
     assert created.status_code == 201
     assert created.json["slug"] == "gabinete-plataforma"
     assert created.json["plano"] == "professional"
-    assert created.json["limiteUsuarios"] == 12
+    assert created.json["limiteUsuarios"] == 15
 
     missing_reason = client.patch(
         f"/api/v1/platform/gabinetes/{created.json['id']}",
@@ -99,6 +100,92 @@ def test_platform_admin_creates_and_updates_tenant(app, client):
     with app.app_context():
         event = db.session.execute(select(PlatformContractEvent)).scalar_one()
         assert event.new_status == ContractStatus.SUSPENDED
+
+
+def test_platform_admin_user_limit_follows_plan_and_blocks_downgrade(app, client):
+    csrf = _login_platform(app, client)
+
+    created = client.post(
+        "/api/v1/platform/gabinetes",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nome": "Gabinete Plano",
+            "slug": "gabinete-plano",
+            "plano": "professional",
+            "limiteUsuarios": 2,
+        },
+    )
+    assert created.status_code == 201
+    assert created.json["limiteUsuarios"] == 15
+
+    with app.app_context():
+        tenant = db.session.execute(
+            select(Tenant).where(Tenant.slug == "gabinete-plano")
+        ).scalar_one()
+        db.session.add_all(
+            [
+                User(
+                    tenant_id=tenant.id,
+                    name=f"Usuario {index}",
+                    email=f"usuario{index}@plano.local",
+                    password_hash=hash_password(PASSWORD),
+                    role=Role.STAFF,
+                )
+                for index in range(6)
+            ]
+        )
+        db.session.commit()
+        tenant_id = str(tenant.id)
+
+    downgraded = client.patch(
+        f"/api/v1/platform/gabinetes/{tenant_id}",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"plano": "starter"},
+    )
+    assert downgraded.status_code == 422
+    assert downgraded.json["error"] == "plan_user_limit_conflict"
+
+
+def test_platform_reset_admin_respects_plan_user_limit(app, client):
+    csrf = _login_platform(app, client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant.plan = "starter"
+        tenant.user_limit = 999
+        blocked = User(
+            tenant_id=tenant.id,
+            name="Admin Bloqueado",
+            email="admin-bloqueado@teste.local",
+            password_hash=hash_password(PASSWORD),
+            role=Role.STAFF,
+            status=UserStatus.BLOCKED,
+        )
+        db.session.add_all(
+            [
+                *[
+                    User(
+                        tenant_id=tenant.id,
+                        name=f"Usuario Ativo {index}",
+                        email=f"ativo{index}@reset.local",
+                        password_hash=hash_password(PASSWORD),
+                        role=Role.STAFF,
+                    )
+                    for index in range(4)
+                ],
+                blocked,
+            ]
+        )
+        db.session.commit()
+        tenant_id = str(tenant.id)
+
+    reset = client.post(
+        f"/api/v1/platform/gabinetes/{tenant_id}/reset-admin",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"email": "admin-bloqueado@teste.local"},
+    )
+
+    assert reset.status_code == 422
+    assert reset.json["error"] == "user_limit_reached"
 
 
 def test_platform_usage_is_aggregated_without_internal_content(app, client):

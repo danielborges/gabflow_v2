@@ -19,6 +19,29 @@ export function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
 }
 
+export function formatBrazilianCpf(value) {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+export function isValidBrazilianCpf(value) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length !== 11 || /^(\d)\1+$/.test(digits)) return false;
+  const numbers = digits.split("").map(Number);
+  for (const position of [9, 10]) {
+    const total = numbers.slice(0, position).reduce((sum, digit, index) => (
+      sum + digit * (position + 1 - index)
+    ), 0);
+    let check = (total * 10) % 11;
+    if (check === 10) check = 0;
+    if (numbers[position] !== check) return false;
+  }
+  return true;
+}
+
 export function normalizeWebsiteUrl(value) {
   const trimmed = value.trim();
   if (!trimmed) return "";

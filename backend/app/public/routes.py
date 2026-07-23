@@ -5,10 +5,10 @@ from flask import Blueprint, jsonify, request
 
 from app.extensions import db, limiter
 from app.models import PublicLead
+from app.plans import PLANS
 
 public_site_bp = Blueprint("public_site", __name__)
 
-PLANS = {"starter", "professional", "premium"}
 AUDIENCES = {"camara_municipal", "assembleia"}
 PREFERRED_CONTACTS = {"email", "telefone", "whatsapp"}
 DISCOVERY_SOURCES = {
@@ -47,7 +47,10 @@ def create_public_lead():
     if str(payload.get("website", "")).strip() or str(payload.get("empresa", "")).strip():
         return jsonify(error="validation_error", message="Solicitacao rejeitada."), 422
     if not _passes_timing_check(started_at):
-        return jsonify(error="validation_error", message="Revise o formulario e envie novamente."), 422
+        return (
+            jsonify(error="validation_error", message="Revise o formulario e envie novamente."),
+            422,
+        )
     if len(name) < 2 or len(organization) < 2:
         return jsonify(error="validation_error", message="Informe nome e instituicao."), 422
     if not EMAIL_RE.match(email):
@@ -61,7 +64,13 @@ def create_public_lead():
     if audience not in AUDIENCES:
         return jsonify(error="validation_error", message="Selecione o tipo de jurisdicao."), 422
     if preferred_contact not in PREFERRED_CONTACTS:
-        return jsonify(error="validation_error", message="Selecione a forma preferencial de contato."), 422
+        return (
+            jsonify(
+                error="validation_error",
+                message="Selecione a forma preferencial de contato.",
+            ),
+            422,
+        )
     if discovery_source not in DISCOVERY_SOURCES:
         return jsonify(error="validation_error", message="Selecione como encontrou o GabFlow."), 422
     try:

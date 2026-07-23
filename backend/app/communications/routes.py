@@ -913,6 +913,35 @@ def update_template(template_id: uuid.UUID):
     return jsonify(template_data(item))
 
 
+@communications_bp.delete("/admin/templates-resposta/<uuid:template_id>")
+@roles_required("admin")
+def delete_template(template_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(ResponseTemplate).where(
+            ResponseTemplate.id == template_id,
+            ResponseTemplate.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Template não encontrado."), 404
+    before = template_data(item)
+    item.active = False
+    item.version += 1
+    after = template_data(item)
+    add_audit(
+        tenant_id,
+        user_id,
+        "response_template.deactivated",
+        "response_template",
+        item.id,
+        before=before,
+        after=after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
 @communications_bp.post("/solicitacoes/<uuid:request_id>/respostas/preview")
 @jwt_required()
 def preview_response(request_id: uuid.UUID):

@@ -363,7 +363,11 @@ class PoliticalParty(db.Model):
 
 class User(db.Model):
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("tenant_id", "email"),)
+    __table_args__ = (
+        UniqueConstraint("email"),
+        UniqueConstraint("cpf"),
+        UniqueConstraint("tenant_id", "email"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -371,12 +375,15 @@ class User(db.Model):
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     email: Mapped[str] = mapped_column(String(254), nullable=False)
+    cpf: Mapped[str | None] = mapped_column(String(11), index=True)
+    phone: Mapped[str | None] = mapped_column(String(20))
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[Role] = mapped_column(Enum(Role, name="user_role"), default=Role.STAFF)
     status: Mapped[UserStatus] = mapped_column(
         Enum(UserStatus, name="user_status"), default=UserStatus.ACTIVE
     )
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    current_session_id: Mapped[str | None] = mapped_column(String(64))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -705,6 +712,9 @@ class ExternalAgency(db.Model):
     )
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(254))
+    responsible: Mapped[str | None] = mapped_column(String(160))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    source: Mapped[str | None] = mapped_column(String(80))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False

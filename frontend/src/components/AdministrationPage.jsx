@@ -1,6 +1,10 @@
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Building2,
   Clock3,
+  Eye,
   ExternalLink,
   FileText,
   MapPinned,
@@ -17,9 +21,17 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../api";
-import { formatBrazilianPhone, isValidBrazilianPhone, isValidEmail, isValidWebsiteUrl, normalizeWebsiteUrl } from "../contactValidation";
+import {
+  formatBrazilianCpf,
+  formatBrazilianPhone,
+  isValidBrazilianCpf,
+  isValidBrazilianPhone,
+  isValidEmail,
+  isValidWebsiteUrl,
+  normalizeWebsiteUrl,
+} from "../contactValidation";
 import brazilLocations from "../data/brazilLocations.json";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
@@ -42,6 +54,8 @@ const initialForm = {
   nome: "",
   slaHoras: 72,
   emailContato: "",
+  responsavelOrgao: "",
+  telefoneOrgao: "",
   canal: "WHATSAPP",
   categoriaId: "",
   assunto: "",
@@ -52,6 +66,8 @@ const initialForm = {
   segredo: "",
   nomeUsuario: "",
   emailUsuario: "",
+  cpfUsuario: "",
+  telefoneUsuario: "",
   senhaUsuario: "",
   perfilUsuario: "staff",
 };
@@ -61,11 +77,13 @@ const emptyOffice = {
   redesSociais: {},
   identidadeVisual: {},
   chefeGabineteId: "",
+  contrato: { plano: "starter", limiteUsuarios: 5, usuariosAtivos: 0 },
 };
 
 const emptyParliamentarian = {
   nomeCompleto: "",
   nomeParlamentar: "",
+  cpf: "",
   fotografiaUrl: "",
   partidoId: "",
   partido: "",
@@ -77,23 +95,31 @@ const emptyParliamentarian = {
   email: "",
   telefoneInstitucional: "",
   biografia: "",
+  dadosOficiais: "",
   areasPrioritarias: [],
   redesSociais: {},
   statusMandato: "ATIVO",
   mandatos: [],
   insightsOficiais: {},
+  arquivosCampanha: [],
 };
 
 const userRoleLabels = {
-  admin: "Administrador do Gabinete",
-  representative: "Vereador / Deputado Estadual",
-  manager: "Gestor",
+  admin: "Administrador",
+  representative: "Parlamentar",
   staff: "Operacional",
 };
 
-const userStatusLabels = {
-  active: "Ativo",
-  blocked: "Bloqueado",
+const userRoleOptions = [
+  ["admin", "Administrador"],
+  ["representative", "Parlamentar"],
+  ["staff", "Operacional"],
+];
+
+const commercialPlanLabels = {
+  starter: "Starter",
+  professional: "Professional",
+  premium: "Premium",
 };
 
 const defaultOfficeHours = {
@@ -134,7 +160,7 @@ export function AdministrationPage() {
   const [officeForm, setOfficeForm] = useState(emptyOffice);
   const [officeJurisdictionForm, setOfficeJurisdictionForm] = useState(() => jurisdictionForm(null));
   const [parliamentarianForm, setParliamentarianForm] = useState(emptyParliamentarian);
-  const [error, setError] = useState("");
+  const [error, setError] = useState({ section: "", message: "" });
 
   const load = useCallback(async () => {
     const [categories, territories, agencies, templates, jurisdiction, integrations, office, parliamentarian, users, parties, audit] =
@@ -183,9 +209,22 @@ export function AdministrationPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  function clearError(section = active) {
+    setError({ section, message: "" });
+  }
+
+  function showError(section, message) {
+    setError({ section, message });
+  }
+
+  function sectionError(section) {
+    return error.section === section ? error.message : "";
+  }
+
   async function submit(event) {
     event.preventDefault();
-    setError("");
+    const section = active;
+    clearError(section);
     const paths = {
       categories: "/api/v1/admin/categorias",
       territories: "/api/v1/admin/territorios",
@@ -194,9 +233,9 @@ export function AdministrationPage() {
       integrations: "/api/v1/admin/integracoes",
     };
     const payload = { nome: form.nome };
-    if (active === "categories") payload.slaHoras = Number(form.slaHoras);
-    if (active === "agencies") payload.emailContato = form.emailContato;
-    if (active === "templates") {
+    if (section === "categories") payload.slaHoras = Number(form.slaHoras);
+    if (section === "agencies") payload.emailContato = form.emailContato;
+    if (section === "templates") {
       Object.assign(payload, {
         canal: form.canal,
         categoriaId: form.categoriaId || null,
@@ -204,7 +243,7 @@ export function AdministrationPage() {
         conteudo: form.conteudo,
       });
     }
-    if (active === "integrations") {
+    if (section === "integrations") {
       Object.assign(payload, {
         tipo: form.tipoIntegracao,
         status: form.statusIntegracao,
@@ -212,17 +251,17 @@ export function AdministrationPage() {
       });
     }
     try {
-      await apiRequest(paths[active], { method: "POST", body: JSON.stringify(payload) });
+      await apiRequest(paths[section], { method: "POST", body: JSON.stringify(payload) });
       setForm(initialForm);
       await load();
     } catch (requestError) {
-      setError(requestError.message);
+      showError(section, requestError.message);
     }
   }
 
   async function saveOffice(event) {
     event.preventDefault();
-    setError("");
+    clearError("office");
     try {
       const officePayload = {
         ...officeForm,
@@ -233,56 +272,63 @@ export function AdministrationPage() {
           redesSociais: {},
         },
       };
-      await apiRequest("/api/v1/admin/jurisdicao", {
-        method: "PATCH",
-        body: JSON.stringify(jurisdictionPayload(officeJurisdictionForm)),
-      });
       await apiRequest("/api/v1/admin/perfil-gabinete", {
         method: "PATCH",
         body: JSON.stringify(officePayload),
       });
       await load();
     } catch (requestError) {
-      setError(requestError.message);
+      showError("office", requestError.message);
     }
   }
 
   async function saveParliamentarian(event) {
     event.preventDefault();
-    setError("");
+    clearError("parliamentarian");
     try {
       await apiRequest("/api/v1/admin/parlamentar", {
         method: "PATCH",
         body: JSON.stringify(parliamentarianForm),
       });
       await load();
+      return true;
     } catch (requestError) {
-      setError(requestError.message);
+      showError("parliamentarian", requestError.message);
+      return false;
     }
   }
 
   async function createUser(event) {
     event.preventDefault();
-    setError("");
+    clearError("users");
     try {
       await apiRequest("/api/v1/admin/usuarios", {
         method: "POST",
         body: JSON.stringify({
           nome: form.nomeUsuario,
           email: form.emailUsuario,
+          cpf: form.cpfUsuario,
+          telefone: form.telefoneUsuario,
           senha: form.senhaUsuario,
           perfil: form.perfilUsuario,
         }),
       });
-      setForm((current) => ({ ...current, nomeUsuario: "", emailUsuario: "", senhaUsuario: "" }));
+      setForm((current) => ({
+        ...current,
+        nomeUsuario: "",
+        emailUsuario: "",
+        cpfUsuario: "",
+        telefoneUsuario: "",
+        senhaUsuario: "",
+      }));
       await load();
     } catch (requestError) {
-      setError(requestError.message);
+      showError("users", requestError.message);
     }
   }
 
   async function updateUser(user, patch) {
-    setError("");
+    clearError("users");
     try {
       await apiRequest(`/api/v1/admin/usuarios/${user.id}`, {
         method: "PATCH",
@@ -290,7 +336,164 @@ export function AdministrationPage() {
       });
       await load();
     } catch (requestError) {
-      setError(requestError.message);
+      showError("users", requestError.message);
+    }
+  }
+
+  async function createTerritory(event) {
+    event.preventDefault();
+    clearError("territories");
+    try {
+      await apiRequest("/api/v1/admin/territorios", {
+        method: "POST",
+        body: JSON.stringify({ nome: form.nome }),
+      });
+      setForm((current) => ({ ...current, nome: "" }));
+      await load();
+    } catch (requestError) {
+      showError("territories", requestError.message);
+    }
+  }
+
+  async function updateTerritory(territory, patch) {
+    clearError("territories");
+    try {
+      await apiRequest(`/api/v1/admin/territorios/${territory.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      await load();
+    } catch (requestError) {
+      showError("territories", requestError.message);
+    }
+  }
+
+  async function deleteTerritory(territory) {
+    clearError("territories");
+    try {
+      await apiRequest(`/api/v1/admin/territorios/${territory.id}`, { method: "DELETE" });
+      await load();
+    } catch (requestError) {
+      showError("territories", requestError.message);
+    }
+  }
+
+  async function reloadTerritorySuggestions() {
+    clearError("territories");
+    try {
+      await apiRequest("/api/v1/admin/territorios/recarregar-sugestoes", { method: "POST" });
+      await load();
+    } catch (requestError) {
+      showError("territories", requestError.message);
+    }
+  }
+
+  async function createAgency(event) {
+    event.preventDefault();
+    clearError("agencies");
+    try {
+      await apiRequest("/api/v1/admin/orgaos", {
+        method: "POST",
+        body: JSON.stringify({
+          nome: form.nome,
+          emailContato: form.emailContato,
+          responsavel: form.responsavelOrgao,
+          telefone: form.telefoneOrgao,
+        }),
+      });
+      setForm((current) => ({
+        ...current,
+        nome: "",
+        emailContato: "",
+        responsavelOrgao: "",
+        telefoneOrgao: "",
+      }));
+      await load();
+    } catch (requestError) {
+      showError("agencies", requestError.message);
+    }
+  }
+
+  async function updateAgency(agency, patch) {
+    clearError("agencies");
+    try {
+      await apiRequest(`/api/v1/admin/orgaos/${agency.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      await load();
+    } catch (requestError) {
+      showError("agencies", requestError.message);
+    }
+  }
+
+  async function deleteAgency(agency) {
+    clearError("agencies");
+    try {
+      await apiRequest(`/api/v1/admin/orgaos/${agency.id}`, { method: "DELETE" });
+      await load();
+    } catch (requestError) {
+      showError("agencies", requestError.message);
+    }
+  }
+
+  async function reloadAgencySuggestions() {
+    clearError("agencies");
+    try {
+      await apiRequest("/api/v1/admin/orgaos/recarregar-sugestoes", { method: "POST" });
+      await load();
+    } catch (requestError) {
+      showError("agencies", requestError.message);
+    }
+  }
+
+  async function createTemplate(event) {
+    event.preventDefault();
+    clearError("templates");
+    try {
+      await apiRequest("/api/v1/admin/templates-resposta", {
+        method: "POST",
+        body: JSON.stringify({
+          nome: form.nome,
+          canal: form.canal,
+          categoriaId: form.categoriaId || null,
+          assunto: form.assunto || null,
+          conteudo: form.conteudo,
+        }),
+      });
+      setForm((current) => ({
+        ...current,
+        nome: "",
+        categoriaId: "",
+        assunto: "",
+        conteudo: "",
+      }));
+      await load();
+    } catch (requestError) {
+      showError("templates", requestError.message);
+    }
+  }
+
+  async function updateTemplate(template, patch) {
+    clearError("templates");
+    try {
+      await apiRequest(`/api/v1/admin/templates-resposta/${template.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      await load();
+    } catch (requestError) {
+      showError("templates", requestError.message);
+    }
+  }
+
+  async function deleteTemplate(template) {
+    clearError("templates");
+    try {
+      await apiRequest(`/api/v1/admin/templates-resposta/${template.id}`, { method: "DELETE" });
+      await load();
+    } catch (requestError) {
+      showError("templates", requestError.message);
     }
   }
 
@@ -307,9 +510,9 @@ export function AdministrationPage() {
   return <>
     <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuração administrativa</h1><p>Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna.</p></div></section>
     <section className="admin-tabs segmented-control">
-      {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => setActive(id)}>{label}</button>)}
+      {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => { setActive(id); clearError(id); }}>{label}</button>)}
     </section>
-    <section className={wideLayout ? "admin-layout admin-layout-wide" : "admin-layout"}>
+    <section className={wideLayout ? "admin-layout admin-layout-wide admin-tab-panel" : "admin-layout admin-tab-panel"}>
       {active === "office" && (
         <OfficeSettings
           data={officeForm}
@@ -320,26 +523,66 @@ export function AdministrationPage() {
           onJurisdictionChange={setOfficeJurisdictionForm}
           onSaved={load}
           onSubmit={saveOffice}
-          error={error}
+          error={sectionError("office")}
         />
       )}
       {active === "parliamentarian" && (
         <ParliamentarianSettings
           data={parliamentarianForm}
           parties={data.parties}
+          jurisdiction={data.jurisdiction}
           onChange={setParliamentarianForm}
           onSubmit={saveParliamentarian}
-          error={error}
+          error={sectionError("parliamentarian")}
         />
       )}
       {active === "users" && (
         <UsersSettings
           form={form}
           users={data.users}
+          contract={data.office.contrato}
           onForm={setForm}
           onSubmit={createUser}
           onUpdate={updateUser}
-          error={error}
+          error={sectionError("users")}
+        />
+      )}
+      {active === "territories" && (
+        <TerritoriesSettings
+          form={form}
+          territories={data.territories}
+          jurisdiction={data.jurisdiction}
+          onForm={setForm}
+          onSubmit={createTerritory}
+          onUpdate={updateTerritory}
+          onDelete={deleteTerritory}
+          onReload={reloadTerritorySuggestions}
+          error={sectionError("territories")}
+        />
+      )}
+      {active === "agencies" && (
+        <AgenciesSettings
+          form={form}
+          agencies={data.agencies}
+          jurisdiction={data.jurisdiction}
+          onForm={setForm}
+          onSubmit={createAgency}
+          onUpdate={updateAgency}
+          onDelete={deleteAgency}
+          onReload={reloadAgencySuggestions}
+          error={sectionError("agencies")}
+        />
+      )}
+      {active === "templates" && (
+        <TemplatesSettings
+          form={form}
+          templates={data.templates}
+          categories={data.categories}
+          onForm={setForm}
+          onSubmit={createTemplate}
+          onUpdate={updateTemplate}
+          onDelete={deleteTemplate}
+          error={sectionError("templates")}
         />
       )}
       {active === "audit" && (
@@ -354,7 +597,7 @@ export function AdministrationPage() {
           }}
         />
       )}
-      {!["office", "parliamentarian", "users", "audit"].includes(active) && <>
+      {!["office", "parliamentarian", "users", "territories", "agencies", "templates", "audit"].includes(active) && <>
         <form className="settings-form" onSubmit={submit}>
           <div className="settings-title"><Settings2 size={21} /><div><strong>{title}</strong><small>{description}</small></div></div>
           <label>Nome<input required value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} /></label>
@@ -388,7 +631,7 @@ export function AdministrationPage() {
             <label>Configuração pública<textarea rows="4" value={form.configuracao} onChange={(event) => setForm((current) => ({ ...current, configuracao: event.target.value }))} placeholder="numero=+5532999999999&#10;webhook=https://..." /></label>
             <label>Token ou segredo<input value={form.segredo} onChange={(event) => setForm((current) => ({ ...current, segredo: event.target.value }))} /></label>
           </>}
-          {error && <p className="form-error">{error}</p>}
+          {sectionError(active) && <p className="form-error">{sectionError(active)}</p>}
           <button className="primary-button compact"><Plus size={18} /> Adicionar</button>
         </form>
         <div className="category-list">
@@ -405,7 +648,6 @@ function OfficeSettings({
   users,
   jurisdiction,
   onChange,
-  onJurisdictionChange,
   onSaved,
   onSubmit,
   error,
@@ -427,54 +669,6 @@ function OfficeSettings({
 
   function update(section, key, value) {
     onChange({ ...data, [section]: { ...data[section], [key]: value } });
-  }
-
-  function updateInstitutional(patch) {
-    onChange({ ...data, dadosInstitucionais: { ...institutional, ...patch } });
-  }
-
-  function nextIbgeCode(type, stateCode, cityName) {
-    if (type === "ASSEMBLEIA_LEGISLATIVA") {
-      return brazilStates.find((state) => state.code === stateCode)?.ibgeId || "";
-    }
-    return (municipalitiesByState[stateCode] || []).find((city) => city.name === cityName)?.id || "";
-  }
-
-  function updateState(state) {
-    const municipalities = municipalitiesByState[state] || [];
-    const currentCityExists = municipalities.some((city) => city.name === selectedMunicipality);
-    const nextCity = currentCityExists ? selectedMunicipality : "";
-    const code = nextIbgeCode(jurisdictionData.tipoCasa, state, nextCity);
-    updateInstitutional({ estado: state, municipio: nextCity });
-    onJurisdictionChange((current) => ({
-      ...current,
-      uf: state,
-      municipio: nextCity,
-      codigoIbge: code ? String(code) : "",
-      nome: defaultJurisdictionName(current.tipoCasa, nextCity, state),
-    }));
-  }
-
-  function updateMunicipality(municipalityName) {
-    const code = nextIbgeCode(jurisdictionData.tipoCasa, selectedState, municipalityName);
-    updateInstitutional({ estado: selectedState, municipio: municipalityName });
-    onJurisdictionChange((current) => ({
-      ...current,
-      uf: selectedState,
-      municipio: municipalityName,
-      codigoIbge: code ? String(code) : "",
-      nome: defaultJurisdictionName(current.tipoCasa, municipalityName, selectedState),
-    }));
-  }
-
-  function updateJurisdictionType(value) {
-    const code = nextIbgeCode(value, selectedState, selectedMunicipality);
-    onJurisdictionChange((current) => ({
-      ...current,
-      tipoCasa: value,
-      codigoIbge: code ? String(code) : current.codigoIbge,
-      nome: defaultJurisdictionName(value, current.municipio || selectedMunicipality, current.uf || selectedState),
-    }));
   }
 
   function updateContactField(section, key, value) {
@@ -550,29 +744,18 @@ function OfficeSettings({
       <section className="office-form-panel">
         <h3>Jurisdição</h3>
         <div className="form-grid">
-          <label>Tipo<select value={jurisdictionData.tipoCasa} onChange={(event) => updateJurisdictionType(event.target.value)}>
-            <option value="CAMARA_MUNICIPAL">Câmara Municipal</option>
-            <option value="ASSEMBLEIA_LEGISLATIVA">Assembleia Legislativa</option>
-          </select></label>
-          <label>Estado<select value={selectedState} onChange={(event) => updateState(event.target.value)}>
-            <option value="">Selecionar estado</option>
-            {brazilStates.map((state) => <option key={state.code} value={state.code}>{state.name} - {state.code}</option>)}
-          </select></label>
-          <MunicipalitySearchSelect
-            stateCode={selectedState}
-            municipalities={stateMunicipalities}
-            value={selectedMunicipality}
-            onChange={updateMunicipality}
-          />
+          <ReadOnlyField label="Tipo" value={chamberTypeLabel(jurisdictionData.tipoCasa)} />
+          <ReadOnlyField label="Estado" value={stateLabel(selectedState)} />
+          <ReadOnlyField label="Município" value={selectedMunicipality || "Não informado"} />
         </div>
         <div className="office-inner-panel">
           <h4>Malha IBGE</h4>
-          {jurisdiction?.geojson && <p className="form-success ibge-status-message">Malha oficial carregada para o mapa territorial.</p>}
           {fieldErrors.ibge && <p className="form-error">{fieldErrors.ibge}</p>}
           <div className="ibge-actions-row">
             <button type="button" className="primary-button compact ibge-load-button" disabled={!canLoadIbge || importing} onClick={importFromIbge}>
               {importing ? "Carregando..." : "Carregar Malha IBGE"}
             </button>
+            {jurisdiction?.geojson && <p className="form-success ibge-status-message">Malha oficial carregada para o mapa territorial.</p>}
           </div>
           <div className="ibge-values-grid" aria-label="Dados da malha IBGE">
             <IbgeValue label="Código IBGE" value={effectiveIbgeCode} />
@@ -870,6 +1053,15 @@ function IbgeValue({ label, value }) {
   );
 }
 
+function ReadOnlyField({ label, value }) {
+  return (
+    <label className="readonly-field">
+      {label}
+      <span>{value || "Não informado"}</span>
+    </label>
+  );
+}
+
 function WhatsAppMark() {
   return (
     <span className="whatsapp-mark" aria-hidden="true">
@@ -962,13 +1154,18 @@ function normalizeSearch(value) {
     .trim();
 }
 
-function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
+function ParliamentarianSettings({ data, parties, jurisdiction, onChange, onSubmit, error }) {
   const [insights, setInsights] = useState(data.insightsOficiais || null);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [successMessage, setSuccessMessage] = useState("");
   const selectedParty = parties.find((party) => (
     party.id === data.partidoId || party.sigla === data.partido
   ));
-  const update = (key, value) => onChange({ ...data, [key]: value });
+  const legislatureOptions = legislatureOptionsFor(jurisdiction?.tipoCasa);
+  const update = (key, value) => {
+    setSuccessMessage("");
+    onChange({ ...data, [key]: value });
+  };
   const updateParty = (party) => onChange({
     ...data,
     partidoId: party?.id || "",
@@ -981,43 +1178,54 @@ function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
   const social = data.redesSociais || {};
 
   function updateSocial(key, value) {
+    setSuccessMessage("");
     update("redesSociais", { ...social, [key]: value });
     if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
   }
 
   function updateField(key, value) {
+    setSuccessMessage("");
     update(key, value);
     if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     const errors = {};
+    const cpfDigits = (data.cpf || "").replace(/\D/g, "");
+    if (cpfDigits.length === 11 && !isValidBrazilianCpf(data.cpf)) errors.cpf = "Informe um CPF válido.";
     if (data.email && !isValidEmail(data.email)) errors.email = "Informe um e-mail válido.";
-    if (data.telefoneInstitucional && !isValidBrazilianPhone(data.telefoneInstitucional)) errors.telefoneInstitucional = "Informe um telefone válido com DDD.";
-    if (data.fotografiaUrl && !isValidWebsiteUrl(data.fotografiaUrl)) errors.fotografiaUrl = "Informe uma URL válida para a fotografia.";
-    if (social.site && !isValidWebsiteUrl(social.site)) errors.site = "Informe um site válido.";
+    ["instagram", "facebook", "twitter", "tiktok", "youtube"].forEach((key) => {
+      if (social[key] && !isValidSocialHandle(social[key])) errors[key] = "Use @usuario ou uma URL válida.";
+    });
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
       event.preventDefault();
       return;
     }
-    onSubmit(event);
+    const saved = await onSubmit(event);
+    if (saved) setSuccessMessage("Parlamentar salvo com sucesso.");
   }
 
   function updateMandate(index, key, value) {
+    setSuccessMessage("");
     const mandates = [...(data.mandatos || [])];
-    mandates[index] = { ...mandates[index], [key]: value };
+    const next = { ...mandates[index], [key]: value };
+    if (key === "legislatura") next.status = mandateStatus(value);
+    mandates[index] = next;
     update("mandatos", mandates);
   }
 
   function addMandate() {
+    setSuccessMessage("");
+    const legislatura = legislatureOptions[0]?.value || "";
     update("mandatos", [
       ...(data.mandatos || []),
-      { legislatura: "", cargo: "Vereador", inicio: "", fim: "", votos: "", status: "HISTORICO" },
+      { legislatura, votos: "", coligacaoFederacao: "", status: mandateStatus(legislatura) },
     ]);
   }
 
   function removeMandate(index) {
+    setSuccessMessage("");
     update("mandatos", (data.mandatos || []).filter((_, current) => current !== index));
   }
 
@@ -1027,69 +1235,289 @@ function ParliamentarianSettings({ data, parties, onChange, onSubmit, error }) {
       body: JSON.stringify({ nome: data.nomeParlamentar || data.nomeCompleto }),
     });
     setInsights(result);
+    onChange({ ...data, dadosOficiais: officialInsightsText(result), insightsOficiais: result });
   }
 
   return (
-    <div className="parliamentarian-admin-panel">
-      <form className="settings-form parliamentarian-form" onSubmit={handleSubmit} noValidate>
-        <div className="settings-title"><Users size={21} /><div><strong>Cadastro do parlamentar</strong><small>Dados do titular, partido, contato, redes, prioridades e histórico de mandatos.</small></div></div>
-        <div className="form-grid">
+    <form className="settings-form parliamentarian-form parliamentarian-redesign" onSubmit={handleSubmit} noValidate>
+      <div className="settings-title"><Users size={21} /><div><strong>Cadastro do parlamentar</strong><small>Dados oficiais, imagem pública, redes sociais, mandatos e acervo de campanha.</small></div></div>
+
+      <section className="parliamentarian-identity-panel">
+        <div className="parliamentarian-photo-preview">
+          <div>{data.fotografiaUrl ? <img src={data.fotografiaUrl} alt="Fotografia oficial do parlamentar" /> : <Users size={42} />}</div>
+          {selectedParty && <span>{selectedParty.logoUrl ? <img src={selectedParty.logoUrl} alt={`Logo ${selectedParty.sigla}`} /> : selectedParty.sigla}</span>}
+        </div>
+        <div className="parliamentarian-main-fields">
           <label>Nome completo<input value={data.nomeCompleto || ""} onChange={(event) => update("nomeCompleto", event.target.value)} /></label>
           <label>Nome parlamentar<input value={data.nomeParlamentar || ""} onChange={(event) => update("nomeParlamentar", event.target.value)} /></label>
-          <label>Fotografia URL<input type="url" inputMode="url" value={data.fotografiaUrl || ""} onBlur={(event) => event.target.value && update("fotografiaUrl", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateField("fotografiaUrl", event.target.value)} placeholder="https://..." aria-invalid={Boolean(fieldErrors.fotografiaUrl)} />{fieldErrors.fotografiaUrl && <small className="field-error">{fieldErrors.fotografiaUrl}</small>}</label>
-          <PartySearchSelect parties={parties} value={selectedParty} onChange={updateParty} />
+          <label>CPF<input inputMode="numeric" maxLength={14} placeholder="000.000.000-00" value={data.cpf ? formatBrazilianCpf(data.cpf) : ""} onChange={(event) => updateField("cpf", formatBrazilianCpf(event.target.value))} aria-invalid={Boolean(fieldErrors.cpf)} />{fieldErrors.cpf && <small className="field-error">{fieldErrors.cpf}</small>}</label>
         </div>
-        <div className="form-grid">
-          <label>Coligação ou federação<input value={data.coligacaoFederacao || ""} onChange={(event) => update("coligacaoFederacao", event.target.value)} /></label>
-          <label>E-mail<input type="email" inputMode="email" autoComplete="email" placeholder="nome@dominio.com.br" value={data.email || ""} onChange={(event) => updateField("email", event.target.value)} aria-invalid={Boolean(fieldErrors.email)} />{fieldErrors.email && <small className="field-error">{fieldErrors.email}</small>}</label>
-          <label>Telefone institucional<input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} value={data.telefoneInstitucional || ""} onChange={(event) => updateField("telefoneInstitucional", formatBrazilianPhone(event.target.value))} aria-invalid={Boolean(fieldErrors.telefoneInstitucional)} />{fieldErrors.telefoneInstitucional && <small className="field-error">{fieldErrors.telefoneInstitucional}</small>}</label>
-          <label>Status no mandato<select value={data.statusMandato || "ATIVO"} onChange={(event) => update("statusMandato", event.target.value)}><option value="ATIVO">Ativo</option><option value="LICENCIADO">Licenciado</option><option value="SUPLENTE">Suplente</option><option value="ENCERRADO">Encerrado</option></select></label>
-        </div>
-        <label>Biografia resumida<textarea rows="5" value={data.biografia || ""} onChange={(event) => update("biografia", event.target.value)} /></label>
-        <label>Áreas prioritárias<input value={(data.areasPrioritarias || []).join(", ")} onChange={(event) => update("areasPrioritarias", event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} placeholder="Saúde, educação, infraestrutura" /></label>
-        <div className="form-grid">
-          <label>Instagram<input value={social.instagram || ""} onChange={(event) => updateSocial("instagram", event.target.value)} /></label>
-          <label>Facebook<input value={social.facebook || ""} onChange={(event) => updateSocial("facebook", event.target.value)} /></label>
-          <label>X / Twitter<input value={social.twitter || ""} onChange={(event) => updateSocial("twitter", event.target.value)} /></label>
-          <label>Site<input type="url" inputMode="url" placeholder="https://..." value={social.site || ""} onBlur={(event) => event.target.value && updateSocial("site", normalizeWebsiteUrl(event.target.value))} onChange={(event) => updateSocial("site", event.target.value)} aria-invalid={Boolean(fieldErrors.site)} />{fieldErrors.site && <small className="field-error">{fieldErrors.site}</small>}</label>
-        </div>
-
-        <section className="mandate-history">
-          <header>
-            <div><strong>Legislaturas e mandatos</strong><small>Mantenha o mandato atual e histórico de mandatos anteriores, incluindo votos recebidos.</small></div>
-            <button type="button" className="secondary-button compact" onClick={addMandate}><Plus size={17} /> Adicionar mandato</button>
-          </header>
-          {(data.mandatos || []).map((mandate, index) => (
-            <article key={`${index}-${mandate.legislatura || "mandato"}`} className="mandate-row">
-              <label>Legislatura<input value={mandate.legislatura || ""} onChange={(event) => updateMandate(index, "legislatura", event.target.value)} placeholder="2025-2028" /></label>
-              <label>Cargo<input value={mandate.cargo || ""} onChange={(event) => updateMandate(index, "cargo", event.target.value)} /></label>
-              <label>Início<input type="date" value={mandate.inicio || ""} onChange={(event) => updateMandate(index, "inicio", event.target.value)} /></label>
-              <label>Fim<input type="date" value={mandate.fim || ""} onChange={(event) => updateMandate(index, "fim", event.target.value)} /></label>
-              <label>Votos<input type="number" min="0" value={mandate.votos || ""} onChange={(event) => updateMandate(index, "votos", event.target.value)} /></label>
-              <label>Status<select value={mandate.status || "HISTORICO"} onChange={(event) => updateMandate(index, "status", event.target.value)}><option value="ATUAL">Atual</option><option value="HISTORICO">Histórico</option><option value="ENCERRADO">Encerrado</option></select></label>
-              <button type="button" className="icon-button" title="Remover mandato" onClick={() => removeMandate(index)}><Trash2 size={17} /></button>
-            </article>
-          ))}
-          {!data.mandatos?.length && <p className="table-message">Nenhum mandato cadastrado.</p>}
-        </section>
-        {error && <p className="form-error">{error}</p>}
-        <button className="primary-button compact"><Save size={18} /> Salvar parlamentar</button>
-      </form>
-
-      <section className="official-insights-panel">
-        <div className="settings-title"><Sparkles size={21} /><div><strong>Agente de dados oficiais</strong><small>Use fontes oficiais como TSE e TRE para apoiar conferências e insights.</small></div></div>
-        <button type="button" className="secondary-button compact" onClick={requestInsights}><Sparkles size={17} /> Buscar fontes oficiais</button>
-        {insights?.fontes?.map((source) => (
-          <a key={source.nome} href={source.url} target="_blank" rel="noreferrer">
-            <ExternalLink size={16} />
-            <span><strong>{source.nome}</strong><small>{source.uso}</small></span>
-          </a>
-        ))}
-        {insights?.insightsSugeridos?.length > 0 && (
-          <ul>{insights.insightsSugeridos.map((item) => <li key={item}>{item}</li>)}</ul>
-        )}
       </section>
-    </div>
+
+      <OfficialPhotoDropzone value={data.fotografiaUrl || ""} onChange={(value) => updateField("fotografiaUrl", value)} onError={(message) => setFieldErrors((current) => ({ ...current, fotografiaUrl: message }))} />
+      {fieldErrors.fotografiaUrl && <p className="form-error">{fieldErrors.fotografiaUrl}</p>}
+
+      <div className="form-grid">
+        <PartySearchSelect parties={parties} value={selectedParty} onChange={updateParty} />
+        <label>Email oficial<input type="email" inputMode="email" autoComplete="email" placeholder="nome@dominio.com.br" value={data.email || ""} onChange={(event) => updateField("email", event.target.value)} aria-invalid={Boolean(fieldErrors.email)} />{fieldErrors.email && <small className="field-error">{fieldErrors.email}</small>}</label>
+      </div>
+
+      <RichTextEditor label="Biografia resumida" value={data.biografia || ""} onChange={(value) => update("biografia", value)} />
+
+      <label className="official-data-field">
+        <span>Dados oficiais (Agente IA)<button type="button" className="secondary-button compact" onClick={requestInsights}><Sparkles size={17} /> Buscar fontes oficiais</button></span>
+        <small>Use fontes oficiais como TSE e TRE para apoiar conferências e insights.</small>
+        <textarea rows="7" value={data.dadosOficiais || ""} onChange={(event) => update("dadosOficiais", event.target.value)} placeholder="As fontes oficiais consultadas e observações do Agente IA aparecerão aqui." />
+      </label>
+      {insights?.fontes?.length > 0 && (
+        <div className="official-source-list">
+          {insights.fontes.map((source) => (
+            <a key={source.nome} href={source.url} target="_blank" rel="noreferrer">
+              <ExternalLink size={16} />
+              <span><strong>{source.nome}</strong><small>{source.uso}</small></span>
+            </a>
+          ))}
+        </div>
+      )}
+
+      <label>Áreas prioritárias<input value={(data.areasPrioritarias || []).join(", ")} onChange={(event) => update("areasPrioritarias", event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} placeholder="Saúde, educação, infraestrutura" /></label>
+
+      <section className="social-panel">
+        <header><strong>Redes Sociais</strong></header>
+        <div className="form-grid">
+          <SocialInput label="Instagram" network="instagram" value={social.instagram || ""} error={fieldErrors.instagram} onChange={(value) => updateSocial("instagram", value)} />
+          <SocialInput label="Facebook" network="facebook" value={social.facebook || ""} error={fieldErrors.facebook} onChange={(value) => updateSocial("facebook", value)} />
+          <SocialInput label="X / Twitter" network="twitter" value={social.twitter || ""} error={fieldErrors.twitter} onChange={(value) => updateSocial("twitter", value)} />
+          <SocialInput label="TikTok" network="tiktok" value={social.tiktok || ""} error={fieldErrors.tiktok} onChange={(value) => updateSocial("tiktok", value)} />
+          <SocialInput label="YouTube" network="youtube" value={social.youtube || ""} error={fieldErrors.youtube} onChange={(value) => updateSocial("youtube", value)} />
+        </div>
+      </section>
+
+      <section className="mandate-history">
+        <header>
+          <div><strong>Mandatos</strong><small>Inclua, edite ou exclua mandatos vinculados às legislaturas oficiais.</small></div>
+          <button type="button" className="secondary-button compact" onClick={addMandate}><Plus size={17} /> Adicionar mandato</button>
+        </header>
+        {(data.mandatos || []).map((mandate, index) => (
+          <article key={`${index}-${mandate.legislatura || "mandato"}`} className="mandate-row">
+            <label>Legislatura<select value={mandate.legislatura || ""} onChange={(event) => updateMandate(index, "legislatura", event.target.value)}><option value="">Selecionar</option>{legislatureOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+            <label>Quant. votos<input type="number" min="0" value={mandate.votos || ""} onChange={(event) => updateMandate(index, "votos", event.target.value)} /></label>
+            <label>Coligação ou federação<input value={mandate.coligacaoFederacao || ""} onChange={(event) => updateMandate(index, "coligacaoFederacao", event.target.value)} /></label>
+            <ReadOnlyField label="Status" value={mandateStatusLabel(mandate.status || mandateStatus(mandate.legislatura))} />
+            <button type="button" className="icon-button danger-soft" title="Excluir mandato" onClick={() => removeMandate(index)}><Trash2 size={17} /></button>
+          </article>
+        ))}
+        {!data.mandatos?.length && <p className="table-message">Nenhum mandato cadastrado.</p>}
+      </section>
+
+      <CampaignFilesDropzone files={data.arquivosCampanha || []} onChange={(files) => update("arquivosCampanha", files)} onError={(message) => setFieldErrors((current) => ({ ...current, arquivosCampanha: message }))} />
+      {fieldErrors.arquivosCampanha && <p className="form-error">{fieldErrors.arquivosCampanha}</p>}
+      {error && <p className="form-error">{error}</p>}
+      {successMessage && <p className="form-success parliamentarian-success">{successMessage}</p>}
+      <div className="parliamentarian-form-actions">
+        <button className="primary-button compact"><Save size={18} /> Salvar parlamentar</button>
+      </div>
+    </form>
+  );
+}
+
+const officialPhotoMaxBytes = 4 * 1024 * 1024;
+const campaignFileMaxBytes = 25 * 1024 * 1024;
+const campaignFileTypes = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "video/mp4",
+  "video/quicktime",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/ogg",
+];
+
+function OfficialPhotoDropzone({ value, onChange, onError }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef(null);
+
+  function selectFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      onError("A fotografia oficial deve ser uma imagem.");
+      return;
+    }
+    if (file.size > officialPhotoMaxBytes) {
+      onError("A fotografia oficial deve ter no máximo 4 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new window.Image();
+      image.onload = () => {
+        const ratio = image.width / image.height;
+        if (image.width < 600 || image.height < 600) {
+          onError("Use uma imagem com pelo menos 600 x 600 px.");
+          return;
+        }
+        if (ratio < 0.65 || ratio > 1.35) {
+          onError("Use uma foto oficial em proporção próxima de retrato/quadrada.");
+          return;
+        }
+        onError("");
+        onChange(String(reader.result || ""));
+      };
+      image.onerror = () => onError("Não foi possível ler a imagem selecionada.");
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <section className="parliamentarian-upload-section">
+      <label>Fotografia</label>
+      <input ref={inputRef} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => selectFile(event.target.files?.[0])} />
+      <div
+        className={`attachment-dropzone parliamentarian-photo-dropzone ${dragging ? "is-dragging" : ""}`}
+        role="button"
+        tabIndex="0"
+        aria-label="Selecionar ou arrastar fotografia oficial"
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          selectFile(event.dataTransfer.files?.[0]);
+        }}
+      >
+        <span className="attachment-drop-icon"><Upload size={21} /></span>
+        <span><strong>{value ? "Trocar fotografia oficial" : "Arraste a fotografia oficial para cá"}</strong><small>PNG, JPG ou WEBP · mínimo 600 x 600 px · máximo 4 MB</small></span>
+      </div>
+    </section>
+  );
+}
+
+function RichTextEditor({ label, value, onChange }) {
+  function wrap(prefix, suffix = prefix) {
+    const selection = window.getSelection?.()?.toString?.() || "";
+    onChange(`${value}${value ? "\n" : ""}${prefix}${selection || "texto"}${suffix}`);
+  }
+  return (
+    <label className="rich-text-field">
+      {label}
+      <div className="rich-text-toolbar" aria-label={`${label} - formatação`}>
+        <button type="button" title="Negrito" onClick={() => wrap("<strong>", "</strong>")}>B</button>
+        <button type="button" title="Itálico" onClick={() => wrap("<em>", "</em>")}>I</button>
+        <button type="button" title="Lista" onClick={() => wrap("<ul><li>", "</li></ul>")}>•</button>
+      </div>
+      <textarea rows="7" value={value} onChange={(event) => onChange(event.target.value)} placeholder="Escreva uma biografia resumida para uso institucional." />
+    </label>
+  );
+}
+
+function SocialInput({ label, network, value, error, onChange }) {
+  return (
+    <label className="social-input-label">
+      {label}
+      <span className="social-input">
+        <SocialIcon network={network} />
+        <input value={value} onChange={(event) => onChange(event.target.value)} onBlur={(event) => onChange(normalizeSocialHandle(event.target.value))} placeholder="@usuario ou https://..." aria-invalid={Boolean(error)} />
+      </span>
+      {error && <small className="field-error">{error}</small>}
+    </label>
+  );
+}
+
+function SocialIcon({ network }) {
+  return <span className={`social-brand social-brand-${network}`} aria-hidden="true">{socialBrandText[network]}</span>;
+}
+
+const socialBrandText = {
+  instagram: "◎",
+  facebook: "f",
+  twitter: "X",
+  tiktok: "♪",
+  youtube: "▶",
+};
+
+function CampaignFilesDropzone({ files, onChange, onError }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef(null);
+
+  function addFiles(fileList) {
+    const selected = Array.from(fileList || []);
+    if (!selected.length) return;
+    const accepted = [];
+    for (const file of selected) {
+      if (file.size > campaignFileMaxBytes) {
+        onError(`${file.name} excede o limite de 25 MB.`);
+        return;
+      }
+      if (file.type && !campaignFileTypes.includes(file.type)) {
+        onError(`${file.name} não é um tipo permitido.`);
+        return;
+      }
+      accepted.push({ id: `${Date.now()}-${file.name}`, nome: file.name, tipo: file.type || "arquivo", tamanho: file.size, carregadoEm: new Date().toISOString() });
+    }
+    onError("");
+    onChange([...(files || []), ...accepted]);
+  }
+
+  return (
+    <section className="campaign-files-section">
+      <header><strong>Documentos e materiais de campanha</strong><small>PDF, DOC, DOCX, ODT, PPT, PPTX, imagens, vídeos e áudios.</small></header>
+      <input ref={inputRef} className="visually-hidden" type="file" multiple accept={campaignFileTypes.join(",")} onChange={(event) => addFiles(event.target.files)} />
+      <div
+        className={`attachment-dropzone ${dragging ? "is-dragging" : ""}`}
+        role="button"
+        tabIndex="0"
+        aria-label="Selecionar ou arrastar arquivos de campanha"
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          addFiles(event.dataTransfer.files);
+        }}
+      >
+        <span className="attachment-drop-icon"><Upload size={21} /></span>
+        <span><strong>Arraste arquivos de campanha para cá</strong><small>ou clique para selecionar · máximo de 25 MB por arquivo</small></span>
+      </div>
+      <div className="campaign-file-list">
+        {(files || []).map((file) => (
+          <article key={file.id || file.nome}>
+            <FileText size={17} />
+            <span><strong>{file.nome}</strong><small>{formatBytes(file.tamanho || 0)} · {file.tipo}</small></span>
+            <button type="button" className="icon-button danger-soft" title="Excluir arquivo" onClick={() => onChange(files.filter((item) => item !== file))}><Trash2 size={16} /></button>
+          </article>
+        ))}
+        {!files?.length && <p className="table-message">Nenhum material de campanha carregado.</p>}
+      </div>
+    </section>
   );
 }
 
@@ -1170,11 +1598,369 @@ function partyLabel(party) {
   return `${party.sigla} · ${party.numero} · ${party.nome}`;
 }
 
-function UsersSettings({ form, users, onForm, onSubmit, onUpdate, error }) {
+function legislatureOptionsFor(chamberType) {
+  const currentYear = new Date().getFullYear();
+  const span = chamberType === "ASSEMBLEIA_LEGISLATIVA" ? 4 : 4;
+  const currentStart = chamberType === "ASSEMBLEIA_LEGISLATIVA"
+    ? 2023 + Math.floor((currentYear - 2023) / span) * span
+    : 2025 + Math.floor((currentYear - 2025) / span) * span;
+  return Array.from({ length: 6 }, (_, index) => {
+    const start = currentStart - index * span;
+    const end = start + span;
+    const value = `${start}-${end}`;
+    return { value, label: `${start} a ${end}` };
+  });
+}
+
+function mandateStatus(legislature) {
+  const [start, end] = String(legislature || "").split("-").map(Number);
+  const year = new Date().getFullYear();
+  if (start && end && year >= start && year <= end) return "ATUAL";
+  return "HISTORICO";
+}
+
+function mandateStatusLabel(status) {
+  return status === "ATUAL" ? "Atual" : "Histórico";
+}
+
+function normalizeSocialHandle(value) {
+  const trimmed = value.trim();
+  if (!trimmed || /^https?:\/\//i.test(trimmed)) return trimmed;
+  const clean = trimmed.replace(/^@+/, "").replace(/\s+/g, "");
+  return clean ? `@${clean}` : "";
+}
+
+function isValidSocialHandle(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  if (/^https?:\/\//i.test(trimmed)) return isValidWebsiteUrl(trimmed);
+  return /^@[A-Za-z0-9._-]{2,60}$/.test(trimmed);
+}
+
+function officialInsightsText(insights) {
+  const lines = [];
+  if (insights?.consulta) lines.push(`Consulta sugerida: ${insights.consulta}`);
+  if (insights?.fontes?.length) {
+    lines.push("", "Fontes oficiais sugeridas:");
+    insights.fontes.forEach((source) => lines.push(`- ${source.nome}: ${source.url}`));
+  }
+  if (insights?.insightsSugeridos?.length) {
+    lines.push("", "Pontos para conferência:");
+    insights.insightsSugeridos.forEach((item) => lines.push(`- ${item}`));
+  }
+  return lines.join("\n").trim();
+}
+
+function formatBytes(value) {
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const amount = value / (1024 ** exponent);
+  return `${amount.toFixed(amount >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+}
+
+function TemplatesSettings({ form, templates, categories, onForm, onSubmit, onUpdate, onDelete, error }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [editForm, setEditForm] = useState({
+    nome: "",
+    canal: "WHATSAPP",
+    categoriaId: "",
+    assunto: "",
+    conteudo: "",
+  });
+  const selected = templates.find((item) => item.id === selectedId);
+  const templateForm = selected
+    ? editForm
+    : {
+        nome: form.nome,
+        canal: form.canal,
+        categoriaId: form.categoriaId,
+        assunto: form.assunto,
+        conteudo: form.conteudo,
+      };
+
+  function selectTemplate(item) {
+    setSelectedId(item.id);
+    setEditForm({
+      nome: item.nome,
+      canal: item.canal,
+      categoriaId: item.categoriaId || "",
+      assunto: item.assunto || "",
+      conteudo: item.conteudo || "",
+    });
+  }
+
+  function clearSelection() {
+    setSelectedId("");
+    setEditForm({ nome: "", canal: "WHATSAPP", categoriaId: "", assunto: "", conteudo: "" });
+    onForm((current) => ({ ...current, nome: "", canal: "WHATSAPP", categoriaId: "", assunto: "", conteudo: "" }));
+  }
+
+  function updateField(field, value) {
+    if (selected) {
+      setEditForm((current) => ({ ...current, [field]: value }));
+      return;
+    }
+    onForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (selected) {
+      await onUpdate(selected, { ...templateForm, ativa: selected.ativa });
+      return;
+    }
+    await onSubmit(event);
+  }
+
+  return <>
+    <form className="settings-form" onSubmit={submit}>
+      <div className="settings-title"><FileText size={21} /><div><strong>{selected ? "Editar template" : "Novo template"}</strong><small>Inclua mensagens reutilizáveis com variáveis seguras.</small></div></div>
+      <label>Nome<input required value={templateForm.nome} onChange={(event) => updateField("nome", event.target.value)} /></label>
+      <div className="form-grid">
+        <label>Canal<select value={templateForm.canal} onChange={(event) => updateField("canal", event.target.value)}><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">E-mail</option><option value="TELEFONE">Telefone</option><option value="PRESENCIAL">Presencial</option><option value="INTERNO">Interno</option></select></label>
+        <label>Categoria<select value={templateForm.categoriaId} onChange={(event) => updateField("categoriaId", event.target.value)}><option value="">Todas</option>{categories.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+      </div>
+      <label>Assunto<input value={templateForm.assunto} onChange={(event) => updateField("assunto", event.target.value)} /></label>
+      <label>Conteúdo<textarea required rows="7" value={templateForm.conteudo} onChange={(event) => updateField("conteudo", event.target.value)} placeholder="Olá, {{cidadao}}. A solicitação {{protocolo}} está com status {{status}}." /></label>
+      <small className="template-help">Variáveis permitidas: {"{{cidadao}}"}, {"{{protocolo}}"} e {"{{status}}"}</small>
+      {error && <p className="form-error">{error}</p>}
+      <div className="form-actions">
+        <button className="primary-button compact">{selected ? <Save size={18} /> : <Plus size={18} />} {selected ? "Salvar template" : "Adicionar template"}</button>
+        {selected && <button type="button" className="secondary-button compact" onClick={clearSelection}><X size={18} /> Novo template</button>}
+      </div>
+    </form>
+    <section className="settings-form users-datatable-section">
+      <div className="settings-title"><FileText size={21} /><div><strong>Templates cadastrados</strong><small>Visualize exemplos, edite ou desative templates de resposta.</small></div></div>
+      <div className="users-datatable templates-datatable" role="region" aria-label="Templates cadastrados">
+        <table>
+          <thead><tr><th>Template</th><th>Canal</th><th>Categoria</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>
+            {templates.map((item) => (
+              <tr key={item.id} className={selectedId === item.id ? "selected" : ""} onClick={() => selectTemplate(item)} tabIndex={0}>
+                <td><strong>{item.nome}</strong><small>v{item.versao}</small></td>
+                <td>{item.canal}</td>
+                <td>{item.categoria || "Todas"}</td>
+                <td>{item.ativa ? "Ativo" : "Inativo"}</td>
+                <td>
+                  <div className="row-actions">
+                    <button type="button" title="Visualizar exemplo" onClick={(event) => { event.stopPropagation(); setPreview(item); }}><Eye size={15} /></button>
+                    <button type="button" className={item.ativa ? "danger-soft" : ""} title={item.ativa ? "Desativar template" : "Reativar template"} onClick={(event) => { event.stopPropagation(); item.ativa ? onDelete(item) : onUpdate(item, { ativa: true }); }}>
+                      {item.ativa ? <Trash2 size={15} /> : <Save size={15} />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!templates.length && <tr><td colSpan={5} className="empty-table-cell">Nenhum template cadastrado.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {preview && (
+      <div className="modal-backdrop" role="presentation" onClick={() => setPreview(null)}>
+        <section className="template-preview-modal" role="dialog" aria-modal="true" aria-label="Visualização do template" onClick={(event) => event.stopPropagation()}>
+          <header><div><strong>{preview.nome}</strong><small>{preview.canal} · {preview.categoria || "Todas as categorias"} · v{preview.versao}</small></div><button type="button" className="icon-button" onClick={() => setPreview(null)} aria-label="Fechar"><X size={18} /></button></header>
+          {preview.assunto && <div className="template-preview-subject"><span>Assunto</span><strong>{renderTemplateExample(preview.assunto)}</strong></div>}
+          <pre>{renderTemplateExample(preview.conteudo)}</pre>
+        </section>
+      </div>
+    )}
+  </>;
+}
+
+function renderTemplateExample(value = "") {
+  return value
+    .replaceAll("{{cidadao}}", "Maria Silva")
+    .replaceAll("{{protocolo}}", "GAB-2026-000123")
+    .replaceAll("{{status}}", "Em atendimento");
+}
+
+function TerritoriesSettings({ form, territories, jurisdiction, onForm, onSubmit, onUpdate, onDelete, onReload, error }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [editName, setEditName] = useState("");
+  const selected = territories.find((item) => item.id === selectedId);
+  const jurisdictionLabel = jurisdiction?.nome || [jurisdiction?.municipio, jurisdiction?.uf].filter(Boolean).join("/") || "Jurisdição não configurada";
+
+  function selectTerritory(item) {
+    setSelectedId(item.id);
+    setEditName(item.nome);
+  }
+
+  function clearSelection() {
+    setSelectedId("");
+    setEditName("");
+    onForm((current) => ({ ...current, nome: "" }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (selected) {
+      await onUpdate(selected, { nome: editName, ativa: selected.ativa });
+      return;
+    }
+    await onSubmit(event);
+  }
+
+  return <>
+    <section className="user-plan-summary territory-suggestion-summary" aria-label="Jurisdição dos territórios">
+      <MapPinned size={18} />
+      <strong>{jurisdictionLabel}</strong>
+      <span>{territories.filter((item) => item.ativa).length} território(s) ativo(s)</span>
+      <button type="button" className="secondary-button compact" onClick={onReload}><Save size={16} /> Recarregar sugestões</button>
+    </section>
+    <form className="settings-form" onSubmit={submit}>
+      <div className="settings-title"><MapPinned size={21} /><div><strong>{selected ? "Editar território" : "Novo território"}</strong><small>Use os territórios reais sugeridos para a jurisdição e ajuste quando necessário.</small></div></div>
+      <label>Nome<input required value={selected ? editName : form.nome} onChange={(event) => selected ? setEditName(event.target.value) : onForm((current) => ({ ...current, nome: event.target.value }))} /></label>
+      {error && <p className="form-error">{error}</p>}
+      <div className="form-actions">
+        <button className="primary-button compact">{selected ? <Save size={18} /> : <Plus size={18} />} {selected ? "Salvar território" : "Adicionar território"}</button>
+        {selected && <button type="button" className="secondary-button compact" onClick={clearSelection}><X size={18} /> Novo território</button>}
+      </div>
+    </form>
+    <section className="settings-form users-datatable-section">
+      <div className="settings-title"><MapPinned size={21} /><div><strong>Territórios cadastrados</strong><small>Itens excluídos ficam inativos e podem ser restaurados pela recarga de sugestões.</small></div></div>
+      <div className="users-datatable territories-datatable" role="region" aria-label="Territórios cadastrados">
+        <table>
+          <thead><tr><th>Território</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>
+            {territories.map((item) => (
+              <tr key={item.id} className={selectedId === item.id ? "selected" : ""} onClick={() => selectTerritory(item)} tabIndex={0}>
+                <td><strong>{item.nome}</strong></td>
+                <td>{item.ativa ? "Ativo" : "Inativo"}</td>
+                <td>
+                  <div className="row-actions">
+                    <button type="button" className={item.ativa ? "danger-soft" : ""} title={item.ativa ? "Excluir território" : "Reativar território"} onClick={(event) => { event.stopPropagation(); item.ativa ? onDelete(item) : onUpdate(item, { ativa: true }); }}>
+                      {item.ativa ? <Trash2 size={15} /> : <Save size={15} />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!territories.length && <tr><td colSpan={3} className="empty-table-cell">Nenhum território cadastrado.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </>;
+}
+
+function AgenciesSettings({ form, agencies, jurisdiction, onForm, onSubmit, onUpdate, onDelete, onReload, error }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [editForm, setEditForm] = useState({ nome: "", emailContato: "", responsavel: "", telefone: "" });
+  const selected = agencies.find((item) => item.id === selectedId);
+  const jurisdictionLabel = jurisdiction?.nome || [jurisdiction?.municipio, jurisdiction?.uf].filter(Boolean).join("/") || "Jurisdição não configurada";
+  const agencyForm = selected
+    ? editForm
+    : {
+        nome: form.nome,
+        emailContato: form.emailContato,
+        responsavel: form.responsavelOrgao,
+        telefone: form.telefoneOrgao,
+      };
+
+  function selectAgency(item) {
+    setSelectedId(item.id);
+    setEditForm({
+      nome: item.nome,
+      emailContato: item.emailContato || "",
+      responsavel: item.responsavel || "",
+      telefone: item.telefone || "",
+    });
+  }
+
+  function clearSelection() {
+    setSelectedId("");
+    setEditForm({ nome: "", emailContato: "", responsavel: "", telefone: "" });
+    onForm((current) => ({
+      ...current,
+      nome: "",
+      emailContato: "",
+      responsavelOrgao: "",
+      telefoneOrgao: "",
+    }));
+  }
+
+  function updateField(field, value) {
+    if (selected) {
+      setEditForm((current) => ({ ...current, [field]: value }));
+      return;
+    }
+    const map = {
+      nome: "nome",
+      emailContato: "emailContato",
+      responsavel: "responsavelOrgao",
+      telefone: "telefoneOrgao",
+    };
+    onForm((current) => ({ ...current, [map[field]]: value }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (selected) {
+      await onUpdate(selected, { ...agencyForm, ativa: selected.ativa });
+      return;
+    }
+    await onSubmit(event);
+  }
+
+  return <>
+    <section className="user-plan-summary territory-suggestion-summary" aria-label="Jurisdição dos órgãos">
+      <Building2 size={18} />
+      <strong>{jurisdictionLabel}</strong>
+      <span>{agencies.filter((item) => item.ativa).length} órgão(s) ativo(s)</span>
+      <button type="button" className="secondary-button compact" onClick={onReload}><Save size={16} /> Recarregar sugestões</button>
+    </section>
+    <form className="settings-form" onSubmit={submit}>
+      <div className="settings-title"><Building2 size={21} /><div><strong>{selected ? "Editar órgão" : "Novo órgão"}</strong><small>Cadastre órgãos vinculados à jurisdição para encaminhamento e acompanhamento.</small></div></div>
+      <label>Nome<input required value={agencyForm.nome} onChange={(event) => updateField("nome", event.target.value)} /></label>
+      <div className="form-grid">
+        <label>Responsável<input value={agencyForm.responsavel} onChange={(event) => updateField("responsavel", event.target.value)} placeholder="A definir" /></label>
+        <label>Telefone<input type="tel" inputMode="numeric" maxLength={15} value={agencyForm.telefone} onChange={(event) => updateField("telefone", formatBrazilianPhone(event.target.value))} placeholder="(00) 00000-0000" /></label>
+      </div>
+      <label>E-mail de contato<input type="email" inputMode="email" value={agencyForm.emailContato} onChange={(event) => updateField("emailContato", event.target.value.toLowerCase())} placeholder="contato@orgao.gov.br" /></label>
+      {error && <p className="form-error">{error}</p>}
+      <div className="form-actions">
+        <button className="primary-button compact">{selected ? <Save size={18} /> : <Plus size={18} />} {selected ? "Salvar órgão" : "Adicionar órgão"}</button>
+        {selected && <button type="button" className="secondary-button compact" onClick={clearSelection}><X size={18} /> Novo órgão</button>}
+      </div>
+    </form>
+    <section className="settings-form users-datatable-section">
+      <div className="settings-title"><Building2 size={21} /><div><strong>Órgãos cadastrados</strong><small>Itens excluídos ficam inativos e podem ser restaurados pela recarga de sugestões.</small></div></div>
+      <div className="users-datatable agencies-datatable" role="region" aria-label="Órgãos cadastrados">
+        <table>
+          <thead><tr><th>Órgão</th><th>Contato</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>
+            {agencies.map((item) => (
+              <tr key={item.id} className={selectedId === item.id ? "selected" : ""} onClick={() => selectAgency(item)} tabIndex={0}>
+                <td><strong>{item.nome}</strong><small>{item.origem || "Manual"}</small></td>
+                <td><strong>{item.responsavel || "A definir"}</strong><small>{[item.telefone, item.emailContato].filter(Boolean).join(" · ") || "Contato não informado"}</small></td>
+                <td>{item.ativa ? "Ativo" : "Inativo"}</td>
+                <td>
+                  <div className="row-actions">
+                    <button type="button" className={item.ativa ? "danger-soft" : ""} title={item.ativa ? "Excluir órgão" : "Reativar órgão"} onClick={(event) => { event.stopPropagation(); item.ativa ? onDelete(item) : onUpdate(item, { ativa: true }); }}>
+                      {item.ativa ? <Trash2 size={15} /> : <Save size={15} />}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!agencies.length && <tr><td colSpan={4} className="empty-table-cell">Nenhum órgão cadastrado.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </>;
+}
+
+function UsersSettings({ form, users, contract, onForm, onSubmit, onUpdate, error }) {
   const [selectedUserId, setSelectedUserId] = useState("");
   const [editForm, setEditForm] = useState({
     nome: "",
     email: "",
+    cpf: "",
+    telefone: "",
     perfil: "staff",
     status: "active",
     senha: "",
@@ -1189,6 +1975,8 @@ function UsersSettings({ form, users, onForm, onSubmit, onUpdate, error }) {
     setEditForm((current) => ({
       nome: selectedUser.nome,
       email: selectedUser.email,
+      cpf: selectedUser.cpf || "",
+      telefone: selectedUser.telefone || "",
       perfil: selectedUser.perfil,
       status: selectedUser.status,
       senha: current.senha,
@@ -1200,8 +1988,23 @@ function UsersSettings({ form, users, onForm, onSubmit, onUpdate, error }) {
     setEditForm({
       nome: user.nome,
       email: user.email,
+      cpf: user.cpf || "",
+      telefone: user.telefone || "",
       perfil: user.perfil,
       status: user.status,
+      senha: "",
+    });
+  }
+
+  function clearSelection() {
+    setSelectedUserId("");
+    setEditForm({
+      nome: "",
+      email: "",
+      cpf: "",
+      telefone: "",
+      perfil: "staff",
+      status: "active",
       senha: "",
     });
   }
@@ -1212,6 +2015,8 @@ function UsersSettings({ form, users, onForm, onSubmit, onUpdate, error }) {
     const patch = {
       nome: editForm.nome,
       email: editForm.email,
+      cpf: editForm.cpf,
+      telefone: editForm.telefone,
       perfil: editForm.perfil,
       status: editForm.status,
     };
@@ -1220,78 +2025,137 @@ function UsersSettings({ form, users, onForm, onSubmit, onUpdate, error }) {
     setEditForm((current) => ({ ...current, senha: "" }));
   }
 
+  function handleSubmit(event) {
+    if (selectedUser) {
+      saveUser(event);
+      return;
+    }
+    onSubmit(event);
+  }
+
+  function updateCurrentUserField(field, value) {
+    if (selectedUser) {
+      setEditForm((current) => ({ ...current, [field]: value }));
+      return;
+    }
+    const createFieldMap = {
+      nome: "nomeUsuario",
+      email: "emailUsuario",
+      cpf: "cpfUsuario",
+      telefone: "telefoneUsuario",
+      perfil: "perfilUsuario",
+      senha: "senhaUsuario",
+    };
+    onForm((current) => ({ ...current, [createFieldMap[field]]: value }));
+  }
+
   async function changeStatus(event, user, status) {
     event.stopPropagation();
     if (user.status === status) return;
     await onUpdate(user, { status });
   }
 
+  const activeUsers = contract?.usuariosAtivos ?? users.filter((user) => user.status === "active").length;
+  const userLimit = contract?.limiteUsuarios ?? activeUsers;
+  const plan = contract?.plano || "starter";
+  const planLabel = commercialPlanLabels[plan] || plan;
+  const userForm = selectedUser
+    ? editForm
+    : {
+        nome: form.nomeUsuario,
+        email: form.emailUsuario,
+        cpf: form.cpfUsuario,
+        telefone: form.telefoneUsuario,
+        perfil: form.perfilUsuario,
+        status: "active",
+        senha: form.senhaUsuario,
+      };
+  const cpfDigits = userForm.cpf.replace(/\D/g, "");
+
   return <>
-    <form className="settings-form" onSubmit={onSubmit}>
-      <div className="settings-title"><Users size={21} /><div><strong>Novo usuario</strong><small>Crie assessores e atribua perfis internos.</small></div></div>
-      <label>Nome<input required value={form.nomeUsuario} onChange={(event) => onForm((current) => ({ ...current, nomeUsuario: event.target.value }))} /></label>
-      <label>E-mail<input required type="email" value={form.emailUsuario} onChange={(event) => onForm((current) => ({ ...current, emailUsuario: event.target.value }))} /></label>
-      <label>Senha inicial<input required type="password" minLength={8} value={form.senhaUsuario} onChange={(event) => onForm((current) => ({ ...current, senhaUsuario: event.target.value }))} /></label>
-      <label>Perfil<select value={form.perfilUsuario} onChange={(event) => onForm((current) => ({ ...current, perfilUsuario: event.target.value }))}><option value="admin">Administrador do Gabinete</option><option value="representative">Vereador / Deputado Estadual</option><option value="manager">Gestor</option><option value="staff">Operacional</option></select></label>
+    <section className="user-plan-summary" aria-label="Plano contratado">
+      <ShieldCheck size={18} />
+      <strong>Plano contratado: {planLabel}</strong>
+      <span>{activeUsers} de {userLimit.toLocaleString("pt-BR")} usuário(s) ativo(s)</span>
+    </section>
+    <form className="settings-form" onSubmit={handleSubmit}>
+      <div className="settings-title"><Users size={21} /><div><strong>{selectedUser ? "Editar usuário" : "Novo usuário"}</strong><small>{selectedUser ? "Atualize dados, perfil, senha opcional e status de acesso." : "Crie assessores e atribua perfis internos."}</small></div></div>
+      <label>Nome<input required value={userForm.nome} onChange={(event) => updateCurrentUserField("nome", event.target.value)} /></label>
+      <label>E-mail<input required type="email" inputMode="email" autoComplete="email" pattern="^[^@\s]+@[^@\s]+\.[^@\s]{2,}$" placeholder="nome@dominio.com.br" value={userForm.email} onChange={(event) => updateCurrentUserField("email", event.target.value.toLowerCase())} /></label>
+      <div className="form-grid">
+        <label>CPF<input required inputMode="numeric" autoComplete="off" maxLength={14} placeholder="000.000.000-00" value={userForm.cpf} onChange={(event) => updateCurrentUserField("cpf", formatBrazilianCpf(event.target.value))} aria-invalid={cpfDigits.length === 11 && !isValidBrazilianCpf(userForm.cpf)} />{cpfDigits.length === 11 && !isValidBrazilianCpf(userForm.cpf) && <small className="field-error">CPF inválido.</small>}</label>
+        <label>Telefone<input type="tel" inputMode="numeric" autoComplete="tel" maxLength={15} placeholder="(00) 00000-0000" value={userForm.telefone} onChange={(event) => updateCurrentUserField("telefone", formatBrazilianPhone(event.target.value))} /></label>
+      </div>
+      <div className="form-grid">
+        <label>{selectedUser ? "Nova senha" : "Senha inicial"}<input required={!selectedUser} type="password" minLength={8} value={userForm.senha} onChange={(event) => updateCurrentUserField("senha", event.target.value)} placeholder={selectedUser ? "Manter senha atual" : ""} /></label>
+        <label>Perfil<select value={userForm.perfil} onChange={(event) => updateCurrentUserField("perfil", event.target.value)}>{userRoleOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      </div>
+      {selectedUser && (
+        <UserStatusSwitch
+          checked={userForm.status === "active"}
+          onChange={(checked) => setEditForm((current) => ({ ...current, status: checked ? "active" : "blocked" }))}
+          label="Acesso do usuário"
+        />
+      )}
       {error && <p className="form-error">{error}</p>}
-      <button className="primary-button compact"><Plus size={18} /> Criar usuario</button>
+      <div className="form-actions">
+        <button className="primary-button compact">{selectedUser ? <Save size={18} /> : <Plus size={18} />} {selectedUser ? "Salvar usuário" : "Criar usuário"}</button>
+        {selectedUser && <button type="button" className="secondary-button compact" onClick={clearSelection}><X size={18} /> Novo usuário</button>}
+      </div>
     </form>
 
-    {selectedUser && (
-      <form className="settings-form user-edit-form" onSubmit={saveUser}>
-        <div className="settings-title">
-          <Users size={21} />
-          <div><strong>Editar usuario</strong><small>Atualize dados, perfil, senha opcional e status de acesso.</small></div>
-        </div>
-        <div className="form-grid">
-          <label>Nome<input required value={editForm.nome} onChange={(event) => setEditForm((current) => ({ ...current, nome: event.target.value }))} /></label>
-          <label>E-mail<input required type="email" value={editForm.email} onChange={(event) => setEditForm((current) => ({ ...current, email: event.target.value }))} /></label>
-        </div>
-        <div className="form-grid">
-          <label>Perfil<select value={editForm.perfil} onChange={(event) => setEditForm((current) => ({ ...current, perfil: event.target.value }))}><option value="admin">Administrador do Gabinete</option><option value="representative">Vereador / Deputado Estadual</option><option value="manager">Gestor</option><option value="staff">Operacional</option></select></label>
-          <label>Nova senha<input type="password" minLength={8} value={editForm.senha} onChange={(event) => setEditForm((current) => ({ ...current, senha: event.target.value }))} placeholder="Manter senha atual" /></label>
-        </div>
-        <UserStatusSwitch
-          checked={editForm.status === "active"}
-          onChange={(checked) => setEditForm((current) => ({ ...current, status: checked ? "active" : "blocked" }))}
-          label="Acesso do usuario"
-        />
-        <div className="form-actions">
-          <button className="primary-button compact"><Save size={18} /> Salvar usuario</button>
-          <button type="button" className="secondary-button compact" onClick={() => setSelectedUserId("")}><X size={18} /> Fechar</button>
-        </div>
-      </form>
-    )}
-
-    <div className="category-list user-card-list">
-      {users.map((user) => (
-        <article
-          key={user.id}
-          className={selectedUserId === user.id ? "user-card active" : "user-card"}
-          role="button"
-          tabIndex={0}
-          onClick={() => selectUser(user)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              selectUser(user);
-            }
-          }}
-        >
-          <span className="entity-icon"><Users size={19} /></span>
-          <div>
-            <strong>{user.nome}{user.chefeGabinete ? " · Chefe de Gabinete" : ""}</strong>
-            <small>{user.email} · {userRoleLabels[user.perfil] || user.perfil} · {userStatusLabels[user.status] || user.status}</small>
-          </div>
-          <UserStatusSwitch
-            checked={user.status === "active"}
-            onChange={(checked, event) => changeStatus(event, user, checked ? "active" : "blocked")}
-            compact
-            label={`Acesso de ${user.nome}`}
-          />
-        </article>
-      ))}
-    </div>
+    <section className="settings-form users-datatable-section">
+      <div className="settings-title"><Users size={21} /><div><strong>Usuários cadastrados</strong><small>Clique em uma linha para editar no formulário acima.</small></div></div>
+      <div className="users-datatable" role="region" aria-label="Usuários cadastrados">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>E-mail</th>
+              <th>CPF</th>
+              <th>Telefone</th>
+              <th>Perfil</th>
+              <th>Acesso</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((user) => (
+              <tr
+                key={user.id}
+                className={selectedUserId === user.id ? "selected" : ""}
+                tabIndex={0}
+                onClick={() => selectUser(user)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    selectUser(user);
+                  }
+                }}
+              >
+                <td><strong>{user.nome}</strong>{user.chefeGabinete && <small>Chefe de Gabinete</small>}</td>
+                <td>{user.email}</td>
+                <td>{user.cpf || "-"}</td>
+                <td>{user.telefone || "-"}</td>
+                <td>{userRoleLabels[user.perfil] || user.perfil}</td>
+                <td>
+                  <UserStatusSwitch
+                    checked={user.status === "active"}
+                    onChange={(checked, event) => changeStatus(event, user, checked ? "active" : "blocked")}
+                    compact
+                    label={`Acesso de ${user.nome}`}
+                  />
+                </td>
+              </tr>
+            ))}
+            {!users.length && (
+              <tr>
+                <td colSpan={6} className="empty-table-cell">Nenhum usuário cadastrado.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </>;
 }
 
@@ -1328,7 +2192,7 @@ function LegacyUsersSettings({ form, users, onForm, onSubmit, onUpdate, error })
       <label>Nome<input required value={form.nomeUsuario} onChange={(event) => onForm((current) => ({ ...current, nomeUsuario: event.target.value }))} /></label>
       <label>E-mail<input required type="email" value={form.emailUsuario} onChange={(event) => onForm((current) => ({ ...current, emailUsuario: event.target.value }))} /></label>
       <label>Senha inicial<input required type="password" minLength={8} value={form.senhaUsuario} onChange={(event) => onForm((current) => ({ ...current, senhaUsuario: event.target.value }))} /></label>
-      <label>Perfil<select value={form.perfilUsuario} onChange={(event) => onForm((current) => ({ ...current, perfilUsuario: event.target.value }))}><option value="admin">Administrador do Gabinete</option><option value="representative">Vereador / Deputado Estadual</option><option value="manager">Gestor</option><option value="staff">Operacional</option></select></label>
+      <label>Perfil<select value={form.perfilUsuario} onChange={(event) => onForm((current) => ({ ...current, perfilUsuario: event.target.value }))}>{userRoleOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       {error && <p className="form-error">{error}</p>}
       <button className="primary-button compact"><Plus size={18} /> Criar usuario</button>
     </form>
@@ -1339,6 +2203,40 @@ function LegacyUsersSettings({ form, users, onForm, onSubmit, onUpdate, error })
 }
 
 function AuditSettings({ items, pagination, perPage, onPage, onPerPage }) {
+  const [sort, setSort] = useState({ key: "quando", direction: "desc" });
+  const columns = [
+    ["quem", "Quem fez"],
+    ["oQue", "O que foi feito"],
+    ["onde", "Onde"],
+    ["quando", "Quando"],
+  ];
+  const rows = useMemo(() => items.map((item) => {
+    const when = new Date(item.criadoEm);
+    return {
+      ...item,
+      quem: item.usuarioNome || "Sistema",
+      quemDetalhe: item.usuarioEmail || "Ação automática",
+      oQue: item.acaoAmigavel || humanizeAuditAction(item.acao),
+      onde: item.entidadeAmigavel || humanizeAuditEntity(item.entidade),
+      registro: item.registro || "Registro interno",
+      quando: when,
+      quandoTexto: when.toLocaleString("pt-BR"),
+    };
+  }), [items]);
+  const sortedRows = useMemo(() => [...rows].sort((left, right) => {
+    const leftValue = auditSortValue(left, sort.key);
+    const rightValue = auditSortValue(right, sort.key);
+    const result = leftValue.localeCompare(rightValue, "pt-BR", { numeric: true, sensitivity: "base" });
+    return sort.direction === "asc" ? result : -result;
+  }), [rows, sort]);
+
+  function changeSort(key) {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  }
+
   return (
     <div className="audit-admin-panel">
       <header className="audit-admin-toolbar">
@@ -1352,25 +2250,27 @@ function AuditSettings({ items, pagination, perPage, onPage, onPerPage }) {
         <table>
           <thead>
             <tr>
-              <th>Acao</th>
-              <th>Entidade</th>
-              <th>ID da entidade</th>
-              <th>Usuario</th>
-              <th>Data e hora</th>
+              {columns.map(([key, label]) => (
+                <th key={key}>
+                  <button type="button" onClick={() => changeSort(key)} aria-sort={sort.key === key ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
+                    {label}
+                    {sort.key === key ? (sort.direction === "asc" ? <ArrowUp size={14} /> : <ArrowDown size={14} />) : <ArrowUpDown size={14} />}
+                  </button>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
+            {sortedRows.map((item) => (
               <tr key={item.id}>
-                <td><strong>{item.acao}</strong></td>
-                <td>{item.entidade}</td>
-                <td><code>{item.entidadeId || "-"}</code></td>
-                <td><code>{item.usuarioId || "-"}</code></td>
-                <td>{new Date(item.criadoEm).toLocaleString("pt-BR")}</td>
+                <td><strong>{item.quem}</strong><small>{item.quemDetalhe}</small></td>
+                <td><strong>{item.oQue}</strong><small>{item.resumo || item.acao}</small></td>
+                <td><strong>{item.onde}</strong><small>{item.registro}</small></td>
+                <td><strong>{item.quandoTexto}</strong><small>{relativeAuditDate(item.quando)}</small></td>
               </tr>
             ))}
             {!items.length && (
-              <tr><td colSpan="5" className="audit-empty">Nenhum evento encontrado.</td></tr>
+              <tr><td colSpan="4" className="audit-empty">Nenhum evento encontrado.</td></tr>
             )}
           </tbody>
         </table>
@@ -1384,6 +2284,48 @@ function AuditSettings({ items, pagination, perPage, onPage, onPerPage }) {
       </footer>
     </div>
   );
+}
+
+function auditSortValue(item, key) {
+  if (key === "quando") return item.quando?.toISOString?.() || "";
+  return String(item[key] || "");
+}
+
+function humanizeAuditAction(action = "") {
+  const labels = {
+    "auth.login": "Acessou o sistema",
+    "response_template.created": "Template de resposta criado",
+    "response_template.updated": "Template de resposta editado",
+    "response_template.deactivated": "Template de resposta desativado",
+    "territory.suggestions.reloaded": "Sugestões de territórios recarregadas",
+    "agency.suggestions.reloaded": "Sugestões de órgãos recarregadas",
+  };
+  if (labels[action]) return labels[action];
+  return action.replace(/[._]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Evento registrado";
+}
+
+function humanizeAuditEntity(entity = "") {
+  const labels = {
+    external_agency: "Órgão",
+    integration_setting: "Integração",
+    request_category: "Categoria",
+    response_template: "Template de resposta",
+    territory: "Território",
+    user: "Usuário",
+  };
+  if (labels[entity]) return labels[entity];
+  return entity.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Registro";
+}
+
+function relativeAuditDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "agora";
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `há ${hours} h`;
+  const days = Math.round(hours / 24);
+  return `há ${days} dia(s)`;
 }
 
 // eslint-disable-next-line no-unused-vars
@@ -1510,35 +2452,25 @@ function jurisdictionForm(data) {
   };
 }
 
-function jurisdictionPayload(form) {
-  const payload = {
-    tipoCasa: form.tipoCasa,
-    nome: form.nome || defaultJurisdictionName(form.tipoCasa, form.municipio, form.uf),
-    municipio: form.municipio,
-    uf: form.uf,
-    codigoIbge: form.codigoIbge,
-    centro: {
-      latitude: form.latitude,
-      longitude: form.longitude,
-    },
-  };
-  const hasBounds = ["minLatitude", "maxLatitude", "minLongitude", "maxLongitude"].every((key) => form[key] !== "");
-  if (hasBounds) {
-    payload.limites = {
-      minLatitude: form.minLatitude,
-      maxLatitude: form.maxLatitude,
-      minLongitude: form.minLongitude,
-      maxLongitude: form.maxLongitude,
-    };
-  }
-  return payload;
-}
-
 function defaultJurisdictionName(type, city, state) {
   if (type === "ASSEMBLEIA_LEGISLATIVA") {
     return state ? `Estado de ${state}` : "";
   }
   return city ? `Município de ${city}` : "";
+}
+
+function chamberTypeLabel(type) {
+  const labels = {
+    CAMARA_MUNICIPAL: "Câmara Municipal",
+    ASSEMBLEIA_LEGISLATIVA: "Assembleia Legislativa",
+  };
+  return labels[type] || type || "Não informado";
+}
+
+function stateLabel(stateCode) {
+  const state = brazilStates.find((item) => item.code === stateCode);
+  if (!state) return stateCode || "Não informado";
+  return `${state.name} - ${state.code}`;
 }
 
 function parseOfficeHours(value) {
@@ -1582,6 +2514,7 @@ function normalizeOffice(data) {
     redesSociais: data?.redesSociais || visual.redesSociais || {},
     identidadeVisual: visual,
     chefeGabineteId: data?.chefeGabineteId || "",
+    contrato: data?.contrato || emptyOffice.contrato,
   };
 }
 

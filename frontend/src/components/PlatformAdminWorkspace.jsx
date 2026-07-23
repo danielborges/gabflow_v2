@@ -35,6 +35,7 @@ const availableModules = [
 ];
 
 const plans = ["starter", "professional", "premium"];
+const planUserLimits = { starter: 5, professional: 15, premium: 9999 };
 const leadStatuses = [
   ["new", "Novo"],
   ["contacting", "Em contato"],
@@ -391,7 +392,6 @@ function TenantsPanel({
     nome: "",
     slug: "",
     plano: "starter",
-    limiteUsuarios: 5,
     limiteArmazenamentoMb: 1024,
     modulosHabilitados: ["solicitacoes", "cidadaos", "canais"],
   });
@@ -400,7 +400,17 @@ function TenantsPanel({
 
   async function createTenant(event) {
     event.preventDefault();
-    await apiRequest("/api/v1/platform/gabinetes", { method: "POST", body: JSON.stringify(form) });
+    const payload = {
+      nome: form.nome,
+      slug: form.slug,
+      plano: form.plano,
+      limiteArmazenamentoMb: form.limiteArmazenamentoMb,
+      modulosHabilitados: form.modulosHabilitados,
+    };
+    await apiRequest("/api/v1/platform/gabinetes", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
     setForm({ ...form, nome: "", slug: "" });
     onNotice("Gabinete cadastrado.");
     await onRefresh();
@@ -449,7 +459,7 @@ function TenantsPanel({
           <label>Slug<input value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} required /></label>
           <label>Plano<select value={form.plano} onChange={(event) => setForm({ ...form, plano: event.target.value })}>{plans.map((plan) => <option key={plan}>{plan}</option>)}</select></label>
           <div className="inline-fields">
-            <label>Usuários<input type="number" min="1" value={form.limiteUsuarios} onChange={(event) => setForm({ ...form, limiteUsuarios: Number(event.target.value) })} /></label>
+            <label>Limite do plano<input value={planUserLimits[form.plano].toLocaleString("pt-BR")} disabled /></label>
             <label>Storage MB<input type="number" min="1" value={form.limiteArmazenamentoMb} onChange={(event) => setForm({ ...form, limiteArmazenamentoMb: Number(event.target.value) })} /></label>
           </div>
           <ModulePicker value={form.modulosHabilitados} onChange={(modules) => setForm({ ...form, modulosHabilitados: modules })} />

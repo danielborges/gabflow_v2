@@ -311,7 +311,11 @@ function RequestForm({ references, onClose, onCreated }) {
             <label>Urgência<select name="urgencia" value={form.urgencia} onChange={change}><LevelOptions /></select></label>
           </div>
           <div className="form-grid">
-            <label>Cidadão<select name="cidadaoId" value={form.cidadaoId} onChange={change}><option value="">Não informado</option>{references.citizens.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+            <CitizenSearchSelect
+              citizens={references.citizens}
+              value={form.cidadaoId}
+              onChange={(cidadaoId) => setForm((current) => ({ ...current, cidadaoId }))}
+            />
             <label>Organização<select name="organizacaoId" value={form.organizacaoId} onChange={change}><option value="">Não informada</option>{references.organizations.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
           </div>
           <label>Responsável<select name="responsavelId" value={form.responsavelId} onChange={change}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
@@ -322,6 +326,116 @@ function RequestForm({ references, onClose, onCreated }) {
           <footer><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button compact" disabled={saving}><Plus size={18} />{saving ? "Salvando..." : "Registrar"}</button></footer>
         </form>
       </section>
+    </div>
+  );
+}
+
+function CitizenSearchSelect({ citizens = [], value, onChange }) {
+  const inputId = useId();
+  const listboxId = useId();
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const selected = citizens.find((item) => item.id === value);
+  const filteredCitizens = citizens
+    .filter((citizen) => citizenMatchesQuery(citizen, query))
+    .slice(0, 12);
+  const options = [{ id: "", nome: "Não informado", empty: true }, ...filteredCitizens];
+
+  function selectCitizen(citizen) {
+    onChange(citizen.id);
+    setQuery("");
+    setOpen(false);
+    setActiveIndex(-1);
+  }
+
+  function changeQuery(event) {
+    if (selected) onChange("");
+    setQuery(event.target.value);
+    setOpen(true);
+    setActiveIndex(-1);
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => Math.min(current + 1, options.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(current - 1, 0));
+    } else if (event.key === "Enter" && open && activeIndex >= 0) {
+      event.preventDefault();
+      selectCitizen(options[activeIndex]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  }
+
+  const displayValue = selected ? selected.nome : query;
+
+  return (
+    <div
+      className="request-search-select citizen-search-select"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setOpen(false);
+          setActiveIndex(-1);
+        }
+      }}
+    >
+      <label htmlFor={inputId}>Cidadão</label>
+      <div className={`search-select-control ${open ? "is-open" : ""}`}>
+        <Search size={17} aria-hidden="true" />
+        <input
+          id={inputId}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={open}
+          aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+          autoComplete="off"
+          placeholder="Busque por nome, CPF ou contato"
+          value={displayValue}
+          onChange={changeQuery}
+          onFocus={(event) => {
+            setOpen(true);
+            if (selected) event.currentTarget.select();
+          }}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          type="button"
+          className="search-select-toggle"
+          aria-label={open ? "Fechar opções" : "Abrir opções"}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <ChevronDown size={17} aria-hidden="true" />
+        </button>
+      </div>
+      {open && (
+        <div className="search-select-menu citizen-search-menu" id={listboxId} role="listbox">
+          {options.length === 1 ? (
+            <p>Nenhum cidadão encontrado.</p>
+          ) : options.map((option, index) => (
+            <div
+              id={`${listboxId}-${index}`}
+              key={option.id || "empty"}
+              className={index === activeIndex ? "is-active" : ""}
+              role="option"
+              aria-selected={option.id === value}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => selectCitizen(option)}
+            >
+              <strong>{option.empty ? "Sem cidadão" : option.nome}</strong>
+              <span>{option.empty ? "Registrar sem vincular pessoa" : citizenContactSummary(option)}</span>
+              <small>{option.empty ? "" : option.canalPreferencial || "Contato"}</small>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1822,6 +1936,35 @@ function slaLabel(value) {
 
 function removeEmpty(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== ""));
+}
+
+function normalizeSearchValue(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function citizenSearchHaystack(citizen) {
+  return normalizeSearchValue([
+    citizen.nome,
+    citizen.nomeSocial,
+    citizen.cpf,
+    citizen.canalPreferencial,
+    ...(citizen.contatos || []).flatMap((contact) => [contact.tipo, contact.valor]),
+  ].filter(Boolean).join(" "));
+}
+
+function citizenMatchesQuery(citizen, query) {
+  const normalizedQuery = normalizeSearchValue(query.trim());
+  if (!normalizedQuery) return true;
+  return citizenSearchHaystack(citizen).includes(normalizedQuery);
+}
+
+function citizenContactSummary(citizen) {
+  const contacts = citizen.contatos || [];
+  const preferred = contacts.find((contact) => contact.tipo === citizen.canalPreferencial) || contacts[0];
+  return [citizen.nomeSocial, preferred?.valor, citizen.cpf].filter(Boolean).join(" · ") || "Sem contato cadastrado";
 }
 
 function LevelOptions() {

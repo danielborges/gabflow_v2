@@ -92,6 +92,8 @@ def login():
     ):
         return jsonify(error="invalid_credentials", message="Credenciais inválidas."), 401
 
+    session_id = uuid.uuid4().hex
+    user.current_session_id = session_id
     user.last_login_at = datetime.now(UTC)
     _audit(user, "auth.login")
     db.session.commit()
@@ -102,6 +104,7 @@ def login():
             "tenant_id": str(user.tenant_id) if user.tenant_id else None,
             "role": user.role.value,
             "is_chief_of_staff": _is_chief_of_staff(user),
+            "session_id": session_id,
         },
     )
     response = jsonify(user=_serialize_user(user))
@@ -125,6 +128,9 @@ def logout():
             user_agent=request.user_agent.string[:512],
         )
     )
+    user = db.session.get(User, user_id)
+    if user is not None:
+        user.current_session_id = None
     db.session.commit()
     response = jsonify(message="Sessão encerrada.")
     unset_jwt_cookies(response)

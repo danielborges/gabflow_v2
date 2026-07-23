@@ -75,3 +75,21 @@ def test_platform_admin_login_does_not_require_tenant(app, client):
 def test_protected_endpoint_rejects_anonymous_access(client):
     response = client.get("/api/v1/auth/me")
     assert response.status_code == 401
+
+
+def test_second_login_invalidates_previous_browser_session(app):
+    first_browser = app.test_client()
+    second_browser = app.test_client()
+    credentials = {"email": "admin@teste.local", "password": "SenhaForte123!"}
+
+    first_login = first_browser.post("/api/v1/auth/login", json=credentials)
+    assert first_login.status_code == 200
+    assert first_browser.get("/api/v1/auth/me").status_code == 200
+
+    second_login = second_browser.post("/api/v1/auth/login", json=credentials)
+    assert second_login.status_code == 200
+
+    invalidated = first_browser.get("/api/v1/auth/me")
+    assert invalidated.status_code == 401
+    assert invalidated.json["error"] == "session_invalidated"
+    assert second_browser.get("/api/v1/auth/me").status_code == 200

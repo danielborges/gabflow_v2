@@ -2,10 +2,13 @@ import click
 from flask import Flask, current_app
 from sqlalchemy import select
 
+from app.agency_suggestions import reload_suggested_agencies
 from app.auth.security import hash_password
+from app.default_categories import ensure_default_request_categories
 from app.extensions import db
 from app.models import ExternalAgency, RequestCategory, Role, Tenant, Territory, User
 from app.outbox.worker import run_worker
+from app.territory_suggestions import reload_suggested_territories
 
 
 def register_commands(app: Flask) -> None:
@@ -84,6 +87,7 @@ def register_commands(app: Flask) -> None:
                     ),
                 ]
             )
+        ensure_default_request_categories(existing.id)
         has_territories = db.session.execute(
             select(Territory.id).where(Territory.tenant_id == existing.id).limit(1)
         ).scalar_one_or_none()
@@ -95,6 +99,7 @@ def register_commands(app: Flask) -> None:
                     Territory(tenant_id=existing.id, name="Zona Sul"),
                 ]
             )
+        reload_suggested_territories(existing)
         has_agencies = db.session.execute(
             select(ExternalAgency.id).where(ExternalAgency.tenant_id == existing.id).limit(1)
         ).scalar_one_or_none()
@@ -106,6 +111,7 @@ def register_commands(app: Flask) -> None:
                     ExternalAgency(tenant_id=existing.id, name="Secretaria de Mobilidade"),
                 ]
             )
+        reload_suggested_agencies(existing)
         db.session.commit()
         click.echo(f"Seed do tenant {tenant} aplicado para {email}.")
 
