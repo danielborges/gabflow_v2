@@ -37,6 +37,17 @@
 - Avaliação de relevância e confiança.
 - Proteção contra prompt injection documental.
 
+### Evolução RAG hierárquica
+
+- Catálogo RAG Geral e administração global.
+- RAG Privado alimentado por fontes autorizadas dos módulos.
+- RLS, roles segregadas e constraints compostas.
+- Políticas de distribuição e jurisdição.
+- Recuperação federada global + privada.
+- Versão fixada e fork privado.
+- Conectores de APIs globais homologadas.
+- Pipeline tenant-scoped de avaliação e melhoria por feedback.
+
 ## Release 5 — Inteligência territorial
 
 - Geocodificação.

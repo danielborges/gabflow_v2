@@ -8,6 +8,31 @@ servers:
 security:
   - cookieAuth: []
 paths:
+  /health/rag:
+    get:
+      summary: Estado operacional e SLO da fila RAG
+      security:
+        - metricsBearer: []
+      responses:
+        "200": { description: Pipeline saudável }
+        "503": { description: Pipeline degradado }
+  /metrics:
+    get:
+      summary: Métricas Prometheus do pipeline RAG
+      security:
+        - metricsBearer: []
+      responses:
+        "200":
+          description: Métricas operacionais sem conteúdo privado
+          content:
+            text/plain:
+              schema: { type: string }
+  /assistente/metricas:
+    get:
+      summary: Métricas de qualidade RAG do tenant
+      responses:
+        "200":
+          description: Qualidade, feedback, fallback, latência p95 e SLO
   /solicitacoes:
     get:
       summary: Lista solicitações
@@ -1343,12 +1368,262 @@ paths:
       responses:
         "200":
           description: Eventos paginados
+  /platform/rag-global/colecoes:
+    get:
+      summary: Lista as coleções do catálogo RAG Geral
+      description: Requer o papel `global_knowledge_admin`.
+      responses:
+        "200":
+          description: Coleções globais
+    post:
+      summary: Cria uma coleção do catálogo RAG Geral
+      description: Requer o papel `global_knowledge_admin`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, politicaDistribuicao, jurisdicao]
+              properties:
+                nome:
+                  type: string
+                descricao:
+                  type: string
+                politicaDistribuicao:
+                  type: string
+                  enum:
+                    - OBRIGATORIA
+                    - PADRAO
+                    - OPCIONAL
+                    - DIRECIONADA
+                    - RESTRITA_JURISDICAO
+                    - PRIVADA_PLATAFORMA
+                jurisdicao:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Coleção global criada
+        "403":
+          description: Papel de curadoria global ausente
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/documentos:
+    post:
+      summary: Cadastra um documento em uma coleção global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [titulo, tipo, proveniencia, jurisdicao]
+              properties:
+                titulo:
+                  type: string
+                tipo:
+                  type: string
+                orgao:
+                  type: string
+                proveniencia:
+                  type: string
+                jurisdicao:
+                  type: object
+                  additionalProperties: true
+                nivelConfianca:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+      responses:
+        "201":
+          description: Documento global criado
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/documentos/{documentoId}/versoes:
+    post:
+      summary: Envia uma versão imutável para ingestão global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: documentoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo, versao]
+              properties:
+                arquivo:
+                  type: string
+                  format: binary
+                versao:
+                  type: string
+                vigenteDesde:
+                  type: string
+                  format: date
+                vigenteAte:
+                  type: string
+                  format: date
+                urlFonte:
+                  type: string
+                  format: uri
+      responses:
+        "202":
+          description: Versão global enfileirada para ingestão
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/documentos/{documentoId}/versoes/{versaoId}/estado:
+    patch:
+      summary: Publica, suspende ou revoga uma versão global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: documentoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: versaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado]
+              properties:
+                estado:
+                  type: string
+                  enum: [PUBLICADA, SUSPENSA, REVOGADA]
+      responses:
+        "200":
+          description: Estado atualizado e auditado
+        "409":
+          description: Transição inválida ou versão ainda não indexada
+
+  /rag/catalogo-global:
+    get:
+      summary: Lista coleções globais disponíveis para o tenant
+      description: Aplica política, concessão, vigência e jurisdição.
+      responses:
+        "200":
+          description: Catálogo global resolvido para o gabinete autenticado
+  /rag/catalogo-global/colecoes/{colecaoId}/adesao:
+    patch:
+      summary: Configura adesão e versão de uma coleção global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [habilitada, modoAtualizacao]
+              properties:
+                habilitada:
+                  type: boolean
+                modoAtualizacao:
+                  type: string
+                  enum: [AUTOMATICA, FIXADA]
+                versaoFixadaId:
+                  type: string
+                  format: uuid
+                justificativa:
+                  type: string
+      responses:
+        "200":
+          description: Concessão do tenant atualizada
+        "403":
+          description: Política não permite adesão direta
+        "409":
+          description: Coleção obrigatória ou concessão direcionada
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/concessoes/{tenantId}:
+    put:
+      summary: Concede ou revoga acesso direcionado
+      description: Requer o papel `global_knowledge_admin`.
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: tenantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado, justificativa]
+              properties:
+                estado:
+                  type: string
+                  enum: [ATIVA, DESATIVADA, REVOGADA]
+                justificativa:
+                  type: string
+                vigenteDesde:
+                  type: string
+                  format: date
+                vigenteAte:
+                  type: string
+                  format: date
+      responses:
+        "200":
+          description: Concessão direcionada atualizada e auditada
+        "409":
+          description: Coleção não utiliza política direcionada
+
 components:
   securitySchemes:
     cookieAuth:
       type: apiKey
       in: cookie
       name: access_token_cookie
+    metricsBearer:
+      type: http
+      scheme: bearer
   parameters:
     Id:
       in: path
@@ -1951,7 +2226,27 @@ components:
                 nullable: true
               nivelAcesso:
                 type: string
-                enum: [INTERNO, RESTRITO]
+                enum: [INTERNO, RESTRITO, GLOBAL_PUBLICADO]
+              fonteModulo:
+                type: string
+                nullable: true
+              entidadeOrigemTipo:
+                type: string
+                nullable: true
+              entidadeOrigemId:
+                type: string
+                format: uuid
+                nullable: true
+              finalidade:
+                type: string
+                nullable: true
+              baseLegal:
+                type: string
+                nullable: true
+              retencaoAte:
+                type: string
+                format: date
+                nullable: true
               trecho:
                 type: string
               paginaInicio:

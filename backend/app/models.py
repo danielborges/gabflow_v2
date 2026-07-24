@@ -6,11 +6,13 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -39,6 +41,7 @@ class UserStatus(str, enum.Enum):
 
 class Role(str, enum.Enum):
     PLATFORM_ADMIN = "platform_admin"
+    GLOBAL_KNOWLEDGE_ADMIN = "global_knowledge_admin"
     ADMIN = "admin"
     MANAGER = "manager"
     REPRESENTATIVE = "representative"
@@ -159,10 +162,51 @@ class RagIngestionStatus(str, enum.Enum):
     FALHOU = "FALHOU"
 
 
+class RagKnowledgeSourceStatus(str, enum.Enum):
+    ATIVA = "ATIVA"
+    INELEGIVEL = "INELEGIVEL"
+    EXPIRADA = "EXPIRADA"
+
+
 class RagQueryFeedbackRating(str, enum.Enum):
     POSITIVA = "POSITIVA"
     NEGATIVA = "NEGATIVA"
     CORRIGIDA = "CORRIGIDA"
+
+
+class GlobalDistributionPolicy(str, enum.Enum):
+    OBRIGATORIA = "OBRIGATORIA"
+    PADRAO = "PADRAO"
+    OPCIONAL = "OPCIONAL"
+    DIRECIONADA = "DIRECIONADA"
+    RESTRITA_JURISDICAO = "RESTRITA_JURISDICAO"
+    PRIVADA_PLATAFORMA = "PRIVADA_PLATAFORMA"
+
+
+class GlobalCatalogStatus(str, enum.Enum):
+    RASCUNHO = "RASCUNHO"
+    PUBLICADA = "PUBLICADA"
+    SUSPENSA = "SUSPENSA"
+    ARQUIVADA = "ARQUIVADA"
+
+
+class GlobalVersionStatus(str, enum.Enum):
+    RASCUNHO = "RASCUNHO"
+    PUBLICADA = "PUBLICADA"
+    SUSPENSA = "SUSPENSA"
+    SUBSTITUIDA = "SUBSTITUIDA"
+    REVOGADA = "REVOGADA"
+
+
+class GlobalEntitlementStatus(str, enum.Enum):
+    ATIVA = "ATIVA"
+    DESATIVADA = "DESATIVADA"
+    REVOGADA = "REVOGADA"
+
+
+class GlobalUpdateMode(str, enum.Enum):
+    AUTOMATICA = "AUTOMATICA"
+    FIXADA = "FIXADA"
 
 
 class NotificationType(str, enum.Enum):
@@ -367,6 +411,7 @@ class User(db.Model):
         UniqueConstraint("email"),
         UniqueConstraint("cpf"),
         UniqueConstraint("tenant_id", "email"),
+        UniqueConstraint("tenant_id", "id", name="uq_users_tenant_id_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -387,9 +432,7 @@ class User(db.Model):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    tenant: Mapped[Tenant | None] = relationship(
-        back_populates="users", foreign_keys=[tenant_id]
-    )
+    tenant: Mapped[Tenant | None] = relationship(back_populates="users", foreign_keys=[tenant_id])
 
 
 class AuditLog(db.Model):
@@ -1251,9 +1294,7 @@ class LegislativeTemplate(db.Model):
 
 class NormativeSource(db.Model):
     __tablename__ = "normative_sources"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "title", "reference", "version"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "title", "reference", "version"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -1286,7 +1327,16 @@ class NormativeSource(db.Model):
 
 class RagDocument(db.Model):
     __tablename__ = "rag_documents"
-    __table_args__ = (UniqueConstraint("tenant_id", "title"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "title"),
+        UniqueConstraint("tenant_id", "id", name="uq_rag_documents_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_documents_tenant_creator",
+            ondelete="RESTRICT",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -1299,9 +1349,7 @@ class RagDocument(db.Model):
         Enum(RagDocumentAccess, name="rag_document_access"), nullable=False, index=True
     )
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
-    created_by_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
@@ -1317,17 +1365,28 @@ class RagDocument(db.Model):
 class RagDocumentVersion(db.Model):
     __tablename__ = "rag_document_versions"
     __table_args__ = (
-        UniqueConstraint("document_id", "version_number"),
-        UniqueConstraint("document_id", "version_label"),
+        UniqueConstraint("tenant_id", "id", name="uq_rag_document_versions_tenant_id_id"),
+        UniqueConstraint("tenant_id", "document_id", "version_number"),
+        UniqueConstraint("tenant_id", "document_id", "version_label"),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id"],
+            ["rag_documents.tenant_id", "rag_documents.id"],
+            name="fk_rag_document_versions_tenant_document",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_document_versions_tenant_creator",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("rag_documents.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     version_label: Mapped[str] = mapped_column(String(80), nullable=False)
     lifecycle_status: Mapped[RagDocumentLifecycle] = mapped_column(
@@ -1356,9 +1415,7 @@ class RagDocumentVersion(db.Model):
     embedding_model: Mapped[str | None] = mapped_column(String(120))
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
-    created_by_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -1373,17 +1430,21 @@ class RagDocumentVersion(db.Model):
 
 class RagChunk(db.Model):
     __tablename__ = "rag_chunks"
-    __table_args__ = (UniqueConstraint("version_id", "position"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "version_id", "position"),
+        ForeignKeyConstraint(
+            ["tenant_id", "version_id"],
+            ["rag_document_versions.tenant_id", "rag_document_versions.id"],
+            name="fk_rag_chunks_tenant_version",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    version_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("rag_document_versions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    version_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -1399,16 +1460,86 @@ class RagChunk(db.Model):
     version: Mapped[RagDocumentVersion] = relationship(back_populates="chunks")
 
 
+class RagKnowledgeSource(db.Model):
+    __tablename__ = "rag_knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "source_module",
+            "entity_type",
+            "entity_id",
+            name="uq_rag_knowledge_sources_origin",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id"],
+            ["rag_documents.tenant_id", "rag_documents.id"],
+            name="fk_rag_knowledge_sources_tenant_document",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "latest_version_id"],
+            ["rag_document_versions.tenant_id", "rag_document_versions.id"],
+            name="fk_rag_knowledge_sources_tenant_version",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_module: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    entity_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(120), nullable=False)
+    legal_basis: Mapped[str] = mapped_column(String(160), nullable=False)
+    access_level: Mapped[RagDocumentAccess] = mapped_column(
+        Enum(RagDocumentAccess, name="rag_document_access", create_type=False),
+        nullable=False,
+    )
+    retention_until: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[RagKnowledgeSourceStatus] = mapped_column(
+        Enum(RagKnowledgeSourceStatus, name="rag_knowledge_source_status"),
+        default=RagKnowledgeSourceStatus.ATIVA,
+        nullable=False,
+        index=True,
+    )
+    eligibility_reason: Mapped[str | None] = mapped_column(String(120))
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    source_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    latest_version_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    last_projected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class RagAssistantQuery(db.Model):
     __tablename__ = "rag_assistant_queries"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_assistant_queries_tenant_user",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "reviewed_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_assistant_queries_tenant_reviewer",
+            ondelete="RESTRICT",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     query_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     response: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1419,18 +1550,258 @@ class RagAssistantQuery(db.Model):
     evidence_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
     feedback_rating: Mapped[RagQueryFeedbackRating | None] = mapped_column(
         Enum(RagQueryFeedbackRating, name="rag_query_feedback_rating"), index=True
     )
     feedback_comment: Mapped[str | None] = mapped_column(Text)
     corrected_response: Mapped[str | None] = mapped_column(Text)
-    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), index=True
-    )
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
+
+
+class GlobalKnowledgeCollection(db.Model):
+    __tablename__ = "collections"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_rag_global_collections_name"),
+        {"schema": "rag_global"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    distribution_policy: Mapped[GlobalDistributionPolicy] = mapped_column(
+        Enum(GlobalDistributionPolicy, name="rag_global_distribution_policy"),
+        nullable=False,
+        index=True,
+    )
+    jurisdiction: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[GlobalCatalogStatus] = mapped_column(
+        Enum(GlobalCatalogStatus, name="rag_global_catalog_status"),
+        default=GlobalCatalogStatus.RASCUNHO,
+        nullable=False,
+        index=True,
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    documents: Mapped[list["GlobalKnowledgeDocument"]] = relationship(
+        back_populates="collection", cascade="all, delete-orphan"
+    )
+
+
+class GlobalKnowledgeDocument(db.Model):
+    __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_id",
+            "title",
+            name="uq_rag_global_documents_collection_title",
+        ),
+        {"schema": "rag_global"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rag_global.collections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    document_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    agency: Mapped[str | None] = mapped_column(String(180), index=True)
+    jurisdiction: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    provenance: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence_level: Mapped[float | None] = mapped_column(Float)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    collection: Mapped[GlobalKnowledgeCollection] = relationship(back_populates="documents")
+    versions: Mapped[list["GlobalKnowledgeDocumentVersion"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+
+
+class GlobalKnowledgeDocumentVersion(db.Model):
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "version_number",
+            name="uq_rag_global_document_versions_number",
+        ),
+        UniqueConstraint(
+            "document_id",
+            "version_label",
+            name="uq_rag_global_document_versions_label",
+        ),
+        {"schema": "rag_global"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rag_global.documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    storage_key: Mapped[str] = mapped_column(String(400), unique=True, nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    language: Mapped[str] = mapped_column(String(20), default="pt", nullable=False)
+    embedding_model: Mapped[str | None] = mapped_column(String(120))
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ingestion_status: Mapped[RagIngestionStatus] = mapped_column(
+        Enum(RagIngestionStatus, name="rag_ingestion_status", create_type=False),
+        default=RagIngestionStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    publication_status: Mapped[GlobalVersionStatus] = mapped_column(
+        Enum(GlobalVersionStatus, name="rag_global_version_status"),
+        default=GlobalVersionStatus.RASCUNHO,
+        nullable=False,
+        index=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    published_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    document: Mapped[GlobalKnowledgeDocument] = relationship(back_populates="versions")
+    chunks: Mapped[list["GlobalKnowledgeChunk"]] = relationship(
+        back_populates="version", cascade="all, delete-orphan"
+    )
+
+
+class GlobalKnowledgeChunk(db.Model):
+    __tablename__ = "chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id",
+            "position",
+            name="uq_rag_global_chunks_version_position",
+        ),
+        {"schema": "rag_global"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rag_global.document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    page_start: Mapped[int | None] = mapped_column(Integer)
+    page_end: Mapped[int | None] = mapped_column(Integer)
+    section: Mapped[str | None] = mapped_column(String(240))
+    embedding: Mapped[list] = mapped_column(JSON, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+    version: Mapped[GlobalKnowledgeDocumentVersion] = relationship(back_populates="chunks")
+
+
+class GlobalKnowledgeEntitlement(db.Model):
+    __tablename__ = "rag_global_entitlements"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "collection_id",
+            name="uq_rag_global_entitlements_tenant_collection",
+        ),
+        CheckConstraint(
+            "(update_mode = 'AUTOMATICA' AND pinned_version_id IS NULL) "
+            "OR (update_mode = 'FIXADA' AND pinned_version_id IS NOT NULL)",
+            name="ck_rag_global_entitlements_update_mode",
+        ),
+        CheckConstraint(
+            "valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from",
+            name="ck_rag_global_entitlements_validity",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rag_global.collections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[GlobalEntitlementStatus] = mapped_column(
+        Enum(GlobalEntitlementStatus, name="rag_global_entitlement_status"),
+        nullable=False,
+        default=GlobalEntitlementStatus.ATIVA,
+        index=True,
+    )
+    update_mode: Mapped[GlobalUpdateMode] = mapped_column(
+        Enum(GlobalUpdateMode, name="rag_global_update_mode"),
+        nullable=False,
+        default=GlobalUpdateMode.AUTOMATICA,
+    )
+    pinned_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("rag_global.document_versions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    grant_source: Mapped[str] = mapped_column(String(40), nullable=False)
+    justification: Mapped[str | None] = mapped_column(Text)
+    granted_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    collection: Mapped[GlobalKnowledgeCollection] = relationship()
+    pinned_version: Mapped[GlobalKnowledgeDocumentVersion | None] = relationship()
 
 
 class LegislativeDraft(db.Model):
@@ -1780,8 +2151,8 @@ class OutboxEvent(db.Model):
     __tablename__ = "outbox_events"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     event_type: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     aggregate_type: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -1799,6 +2170,7 @@ class OutboxEvent(db.Model):
     last_error: Mapped[str | None] = mapped_column(Text)
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    processing_duration_ms: Mapped[int | None] = mapped_column(Integer)
 
 
 class AIExecution(db.Model):

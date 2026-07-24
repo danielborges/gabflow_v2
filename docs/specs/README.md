@@ -24,6 +24,9 @@ Este repositório contém a documentação de especificação utilizada para evo
 5. Indicadores não podem ser utilizados como mecanismo automático de discriminação política.
 6. Toda inferência deve apresentar evidências, período e grau de confiança.
 7. Regras municipais devem ser configuráveis por Câmara ou gabinete.
+8. Conhecimento global e conhecimento privado devem possuir fronteiras explícitas.
+9. Nenhum dado privado de tenant pode melhorar outro tenant sem autorização e governança.
+10. Toda citação RAG deve informar escopo, versão e proveniência.
 
 ## Estrutura do repositório
 
@@ -64,7 +67,8 @@ gabflow-spec-driven/
 │   ├── ADR-003-rag-with-citations.md
 │   ├── ADR-004-human-in-the-loop.md
 │   ├── ADR-005-multi-tenant.md
-│   └── ADR-006-geospatial-analytics.md
+│   ├── ADR-006-geospatial-analytics.md
+│   └── ADR-007-hierarchical-rag.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md

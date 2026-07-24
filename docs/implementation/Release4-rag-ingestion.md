@@ -40,3 +40,25 @@ Os vetores são armazenados em JSON nesta fatia para manter os testes SQLite e a
 4. O retorno informa `promptInjectionDetectado`, fontes com risco, instruções ignoradas e a política aplicada.
 5. `PATCH /api/v1/assistente/consultas/{consultaId}/avaliacao` registra avaliação `POSITIVA`, `NEGATIVA` ou `CORRIGIDA`.
 6. Correções humanas preservam comentário, resposta corrigida, revisor e data de revisão para auditoria e melhoria futura.
+
+## Limites da entrega
+
+Esta release representa a primeira implementação do RAG Privado, não a arquitetura
+hierárquica completa.
+
+- O isolamento inicial por filtros foi reforçado na Release 4.1 com contexto
+  transacional, RLS forçado, roles segregadas, constraints compostas e namespace
+  canônico de arquivos.
+- Não existe catálogo RAG Geral nem política de distribuição global.
+- A consulta não executa recuperação federada global + privada.
+- Solicitações, interações e documentos legislativos elegíveis ainda não são
+  ingeridos automaticamente no RAG Privado.
+- A resposta atual resume a evidência principal; geração substantiva, reranking e
+  verificação de citações permanecem evoluções.
+- O feedback é persistido e auditado, mas ainda não participa do ranking, dataset de
+  avaliação ou pipeline de melhoria.
+- A proteção contra prompt injection é inicial e baseada em padrões; quarentena,
+  classificador dedicado e red team ampliado permanecem pendentes.
+
+O alvo aprovado está descrito em `docs/specs/architecture/rag-architecture.md` e no
+ADR-007.

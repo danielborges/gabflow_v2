@@ -62,7 +62,40 @@ services:
       retries: 10
     restart: unless-stopped
 
-  api:
+  db-roles:
+    image: postgres:17-alpine
+    environment:
+      PGHOST: db
+      PGDATABASE: ${POSTGRES_DB:-gabflow}
+      PGUSER: ${POSTGRES_USER:-gabflow}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_USER: ${APP_DB_USER:-gabflow_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      WORKER_DB_USER: ${WORKER_DB_USER:-gabflow_worker}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      BACKUP_DB_USER: ${BACKUP_DB_USER:-gabflow_backup}
+      BACKUP_DB_PASSWORD: ${BACKUP_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+    volumes:
+      - ./backend/db-bootstrap-roles.sql:/bootstrap/db-bootstrap-roles.sql:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        psql
+        -v database_name="$$PGDATABASE"
+        -v migrator_role="$$PGUSER"
+        -v app_role="$$APP_DB_USER"
+        -v app_password="$$APP_DB_PASSWORD"
+        -v worker_role="$$WORKER_DB_USER"
+        -v worker_password="$$WORKER_DB_PASSWORD"
+        -v backup_role="$$BACKUP_DB_USER"
+        -v backup_password="$$BACKUP_DB_PASSWORD"
+        -f /bootstrap/db-bootstrap-roles.sql
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
     build:
       context: ./backend
     environment:
@@ -71,9 +104,37 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-gabflow}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gabflow}
       SECRET_KEY: ${SECRET_KEY:?Defina SECRET_KEY no arquivo .env}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Defina JWT_SECRET_KEY no arquivo .env}
+      RUN_MIGRATIONS_ON_START: "true"
+      RUN_SEEDS_ON_START: "true"
+      SEED_ADMIN_ON_START: ${SEED_ADMIN_ON_START:-true}
+      SEED_TENANT: ${SEED_TENANT:-gabinete-demo}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@gabflow.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Defina SEED_ADMIN_PASSWORD no arquivo .env}
+      SEED_PLATFORM_ADMIN_ON_START: ${SEED_PLATFORM_ADMIN_ON_START:-false}
+      SEED_PLATFORM_ADMIN_EMAIL: ${SEED_PLATFORM_ADMIN_EMAIL:-platform@gabflow.local}
+      SEED_PLATFORM_ADMIN_PASSWORD: ${SEED_PLATFORM_ADMIN_PASSWORD:-}
+      APP_DB_USER: ${APP_DB_USER:-gabflow_app}
+      WORKER_DB_USER: ${WORKER_DB_USER:-gabflow_worker}
+    command: ["true"]
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_RELEASE: ${APP_RELEASE:-local}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-gabflow_app}:${APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}@db:5432/${POSTGRES_DB:-gabflow}
+      DB_ENFORCE_RUNTIME_ROLE: "true"
+      SECRET_KEY: ${SECRET_KEY:?Defina SECRET_KEY no arquivo .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Defina JWT_SECRET_KEY no arquivo .env}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
       RESEND_TIMEOUT_SECONDS: ${RESEND_TIMEOUT_SECONDS:-10}
@@ -132,26 +193,24 @@ services:
       ATTACHMENT_TOKEN_MAX_AGE: ${ATTACHMENT_TOKEN_MAX_AGE:-300}
       RAG_STORAGE_PATH: /app/data/rag
       RAG_MAX_DOCUMENT_BYTES: ${RAG_MAX_DOCUMENT_BYTES:-26214400}
+      RAG_DOWNLOAD_TOKEN_MAX_AGE: ${RAG_DOWNLOAD_TOKEN_MAX_AGE:-300}
+      RAG_ALLOW_LEGACY_STORAGE_KEYS: ${RAG_ALLOW_LEGACY_STORAGE_KEYS:-true}
       RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-ollama}
       RAG_INGESTION_TIMEOUT_SECONDS: ${RAG_INGESTION_TIMEOUT_SECONDS:-120}
       RAG_CHUNK_SIZE_CHARS: ${RAG_CHUNK_SIZE_CHARS:-1200}
       RAG_CHUNK_OVERLAP_CHARS: ${RAG_CHUNK_OVERLAP_CHARS:-150}
       RAG_MIN_TEXT_CHARS: ${RAG_MIN_TEXT_CHARS:-20}
-      SEED_ADMIN_ON_START: ${SEED_ADMIN_ON_START:-true}
-      SEED_TENANT: ${SEED_TENANT:-gabinete-demo}
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@gabflow.local}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Defina SEED_ADMIN_PASSWORD no arquivo .env}
-      SEED_PLATFORM_ADMIN_ON_START: ${SEED_PLATFORM_ADMIN_ON_START:-false}
-      SEED_PLATFORM_ADMIN_EMAIL: ${SEED_PLATFORM_ADMIN_EMAIL:-platform@gabflow.local}
-      SEED_PLATFORM_ADMIN_PASSWORD: ${SEED_PLATFORM_ADMIN_PASSWORD:-}
+      RAG_OPERATIONAL_MEMORY_ENABLED: ${RAG_OPERATIONAL_MEMORY_ENABLED:-true}
+      RUN_MIGRATIONS_ON_START: "false"
+      RUN_SEEDS_ON_START: "false"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - attachment_data:/app/data/attachments
       - rag_data:/app/data/rag
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/ready')"]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -164,7 +223,8 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_RELEASE: ${APP_RELEASE:-local}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-gabflow}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gabflow}
+      DATABASE_URL: postgresql+psycopg://${WORKER_DB_USER:-gabflow_worker}:${WORKER_DB_PASSWORD:-${POSTGRES_PASSWORD}}@db:5432/${POSTGRES_DB:-gabflow}
+      DB_ENFORCE_RUNTIME_ROLE: "true"
       SECRET_KEY: ${SECRET_KEY:?Defina SECRET_KEY no arquivo .env}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Defina JWT_SECRET_KEY no arquivo .env}
       SENTRY_DSN: ${SENTRY_DSN:-}
@@ -178,6 +238,8 @@ services:
       WORKER_RETRY_BASE_SECONDS: ${WORKER_RETRY_BASE_SECONDS:-30}
       WORKER_RETRY_MAX_SECONDS: ${WORKER_RETRY_MAX_SECONDS:-3600}
       WORKER_LOCK_TIMEOUT_SECONDS: ${WORKER_LOCK_TIMEOUT_SECONDS:-300}
+      WORKER_QUEUE: ${WORKER_QUEUE:-default}
+      WORKER_RUN_SCHEDULER: "true"
       SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-30}
       AI_TRIAGE_PROVIDER: ${AI_TRIAGE_PROVIDER:-ollama}
       AI_TRIAGE_MODEL: ${AI_TRIAGE_MODEL:-qwen2.5:3b}
@@ -227,11 +289,14 @@ services:
       ATTACHMENT_STORAGE_PATH: /app/data/attachments
       RAG_STORAGE_PATH: /app/data/rag
       RAG_MAX_DOCUMENT_BYTES: ${RAG_MAX_DOCUMENT_BYTES:-26214400}
+      RAG_DOWNLOAD_TOKEN_MAX_AGE: ${RAG_DOWNLOAD_TOKEN_MAX_AGE:-300}
+      RAG_ALLOW_LEGACY_STORAGE_KEYS: ${RAG_ALLOW_LEGACY_STORAGE_KEYS:-true}
       RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-ollama}
       RAG_INGESTION_TIMEOUT_SECONDS: ${RAG_INGESTION_TIMEOUT_SECONDS:-120}
       RAG_CHUNK_SIZE_CHARS: ${RAG_CHUNK_SIZE_CHARS:-1200}
       RAG_CHUNK_OVERLAP_CHARS: ${RAG_CHUNK_OVERLAP_CHARS:-150}
       RAG_MIN_TEXT_CHARS: ${RAG_MIN_TEXT_CHARS:-20}
+      RAG_OPERATIONAL_MEMORY_ENABLED: ${RAG_OPERATIONAL_MEMORY_ENABLED:-true}
     volumes:
       - attachment_data:/app/data/attachments
       - rag_data:/app/data/rag
@@ -244,6 +309,13 @@ services:
       whisper-init:
         condition: service_completed_successfully
     restart: unless-stopped
+
+  worker-rag:
+    extends:
+      service: worker
+    environment:
+      WORKER_QUEUE: rag
+      WORKER_RUN_SCHEDULER: "false"
 
   web:
     build:

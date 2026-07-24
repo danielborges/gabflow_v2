@@ -13,3 +13,13 @@
 - **SLA:** prazo esperado de atendimento ou resposta.
 - **Human-in-the-loop:** etapa obrigatória de revisão humana.
 - **PII:** informação pessoal identificável.
+- **RAG Geral:** catálogo de conhecimento comum, curado e versionado pela plataforma.
+- **RAG Privado:** conhecimento exclusivo de um tenant, protegido por isolamento transacional e de armazenamento.
+- **RAG hierárquico:** recuperação que combina fontes globais autorizadas e fontes privadas do tenant.
+- **Política de distribuição:** regra que define quais tenants podem utilizar uma coleção global.
+- **Concessão global:** vínculo auditável que autoriza um tenant a usar uma coleção global.
+- **Versão fixada:** versão global mantida para um tenant até aprovação de atualização.
+- **Fork privado:** cópia explícita de uma versão global que passa a evoluir exclusivamente dentro do tenant.
+- **Promoção:** processo controlado de criar fonte global a partir de conteúdo privado autorizado, anonimizado e revisado.
+- **RLS:** Row-Level Security do PostgreSQL, usada para negar acesso a linhas privadas fora do tenant da transação.
+- **Groundedness:** grau em que a resposta é sustentada pelas fontes citadas.

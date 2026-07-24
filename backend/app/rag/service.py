@@ -8,7 +8,7 @@ from pathlib import Path
 
 from docx import Document
 from flask import current_app
-from sqlalchemy import delete
+from sqlalchemy import delete, select, update
 
 from app.ai.duplicates import OllamaEmbeddingProvider
 from app.ai.ocr import OCR_MIME_TYPES, ocr_provider
@@ -18,8 +18,10 @@ from app.models import (
     NotificationType,
     OutboxEvent,
     RagChunk,
+    RagDocumentLifecycle,
     RagDocumentVersion,
     RagIngestionStatus,
+    RagKnowledgeSource,
 )
 from app.notifications.service import notify_user
 from app.rag.storage import rag_document_path
@@ -69,7 +71,15 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
     version.error = None
     db.session.flush()
 
-    extracted = extract_document(rag_document_path(version.storage_key), version.mime_type)
+    extracted = extract_document(
+        rag_document_path(
+            version.storage_key,
+            tenant_id=version.tenant_id,
+            document_id=version.document_id,
+            version_id=version.id,
+        ),
+        version.mime_type,
+    )
     if len(extracted.text.strip()) < current_app.config["RAG_MIN_TEXT_CHARS"]:
         raise NonRetryableRagError("O documento não possui texto suficiente para indexação.")
     chunks = split_chunks(
@@ -106,6 +116,24 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
     version.chunk_count = len(chunks)
     version.ingestion_status = RagIngestionStatus.INDEXADO
     version.indexed_at = datetime.now(UTC)
+    operational_source = db.session.execute(
+        select(RagKnowledgeSource).where(
+            RagKnowledgeSource.tenant_id == version.tenant_id,
+            RagKnowledgeSource.latest_version_id == version.id,
+        )
+    ).scalar_one_or_none()
+    if operational_source is not None:
+        db.session.execute(
+            update(RagDocumentVersion)
+            .where(
+                RagDocumentVersion.tenant_id == version.tenant_id,
+                RagDocumentVersion.document_id == version.document_id,
+                RagDocumentVersion.id != version.id,
+                RagDocumentVersion.lifecycle_status == RagDocumentLifecycle.VIGENTE,
+            )
+            .values(lifecycle_status=RagDocumentLifecycle.HISTORICO)
+        )
+        version.lifecycle_status = RagDocumentLifecycle.VIGENTE
     details = {
         "documentoId": str(version.document_id),
         "versaoId": str(version.id),

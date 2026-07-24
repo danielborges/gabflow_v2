@@ -23,6 +23,12 @@ O Administrador Geral do GabFlow administra a plataforma como um todo e nao pert
 - **RF-130** Redefinir administradores de gabinete.
 - **RF-131** Administrar versoes e funcionalidades globais.
 - **RF-132** Consultar trilhas de auditoria administrativa da plataforma.
+- **RF-133** Administrar coleções, documentos e versões do catálogo RAG Geral.
+- **RF-134** Cadastrar conectores globais de APIs com allowlist, referência de segredo, frequência e limites.
+- **RF-135** Definir política de distribuição, elegibilidade jurisdicional e vigência das coleções globais.
+- **RF-136** Publicar, suspender, substituir ou revogar versões globais com auditoria.
+- **RF-137** Conceder ou revogar acesso direcionado a coleções globais sem acessar o RAG Privado do tenant.
+- **RF-138** Revisar propostas autorizadas de promoção privado → global após anonimização, sem reutilizar diretamente o conteúdo privado original.
 
 ## Restricoes de privacidade
 
@@ -53,3 +59,9 @@ A area de trabalho do Administrador Geral deve conter:
 - Modulo desabilitado bloqueia menu, busca global e endpoint tenant-scoped correspondente.
 - Consumo por gabinete nao retorna titulo, descricao, documentos ou dados pessoais.
 - Suporte excepcional so e registrado com gabinete, solicitante, motivo e escopo.
+- Administrador global publica somente conteúdo versionado, validado e com política de distribuição.
+- Tenant recém-criado recebe apenas coleções obrigatórias ou padrão compatíveis com sua jurisdição.
+- Coleção opcional exige adesão; coleção direcionada exige concessão explícita.
+- Revogação global impede novas recuperações, mas preserva citações históricas pela versão exata.
+- Administrador global não consegue consultar tabelas, arquivos ou chunks privados sem concessão de suporte válida.
+- Conector global bloqueia destinos fora da allowlist e conteúdo não é publicado antes da validação.

@@ -7,6 +7,7 @@
 - Chefe de Gabinete
 - Vereador
 - Administrador
+- Administrador Global de Conhecimento
 - Órgãos municipais
 - Câmara Municipal
 - Provedores de mensageria
@@ -14,6 +15,7 @@
 - Serviço de mapas e geocodificação
 - Sistemas legislativos
 - Sistemas de protocolo
+- APIs públicas e bases normativas homologadas
 
 ## Sistemas externos
 

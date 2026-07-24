@@ -20,3 +20,10 @@
 - **RNF-018 Privacidade:** minimização de dados por padrão.
 - **RNF-019 Resiliência:** falha de IA não pode impedir o cadastro manual.
 - **RNF-020 Reversibilidade:** resultados de IA devem ser editáveis e descartáveis.
+- **RNF-021 Defesa em profundidade:** dados privados RAG devem ser protegidos por filtros de aplicação, RLS forçado, constraints compostas e namespace de objetos.
+- **RNF-022 Negação por padrão:** ausência de contexto transacional de tenant não pode retornar nem permitir gravação de dados privados.
+- **RNF-023 Segregação de credenciais:** API e worker não podem usar superusuário, proprietário das tabelas ou role com `BYPASSRLS`.
+- **RNF-024 Não interferência:** conteúdo e feedback de um tenant não podem alterar recuperação, resposta ou aprendizado de outro tenant.
+- **RNF-025 Proveniência:** toda fonte global ou privada deve possuir versão, checksum, escopo e origem reproduzíveis.
+- **RNF-026 Segurança de conectores:** fontes externas devem usar allowlist, proteção SSRF, cofre de segredos, limites de consumo e snapshots versionados.
+- **RNF-027 Concorrência segura:** contexto de tenant não pode vazar pelo pool de conexões, jobs, retries ou processamento concorrente.

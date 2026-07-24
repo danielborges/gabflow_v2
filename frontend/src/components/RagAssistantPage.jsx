@@ -138,8 +138,14 @@ function RagAnswerResult({ answer, onUpdate }) {
             <header>
               <FileText size={17} />
               <span>
+                <small className={`rag-source-scope scope-${(source.escopo || "PRIVADO").toLowerCase()}`}>
+                  {source.rotuloFonte || (source.escopo === "GLOBAL" ? "Fonte GabFlow" : "Fonte do Gabinete")}
+                </small>
                 <strong>{source.titulo}</strong>
-                <small>{source.tipo || "Documento"}{source.orgao ? ` · ${source.orgao}` : ""}</small>
+                <small>
+                  {source.colecao ? `${source.colecao} · ` : ""}
+                  {source.tipo || "Documento"}{source.orgao ? ` · ${source.orgao}` : ""}
+                </small>
               </span>
             </header>
             <dl className="rag-source-meta">

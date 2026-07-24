@@ -1,9 +1,10 @@
 import hashlib
+import time
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from urllib.parse import urlsplit
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,13 @@ from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.extensions import db
 from app.models import (
+    GlobalDistributionPolicy,
+    GlobalEntitlementStatus,
+    GlobalKnowledgeCollection,
+    GlobalKnowledgeDocumentVersion,
+    GlobalKnowledgeEntitlement,
+    GlobalUpdateMode,
+    GlobalVersionStatus,
     RagAssistantQuery,
     RagDocument,
     RagDocumentAccess,
@@ -21,9 +29,17 @@ from app.models import (
     RagQueryFeedbackRating,
     utc_now,
 )
+from app.observability import percentile
+from app.rag.distribution import collection_access_for_tenant, entitlement_data
 from app.rag.retrieval import answer_query, query_audit_payload
 from app.rag.service import enqueue_ingestion, requeue_ingestion
-from app.rag.storage import RagStorageError, rag_document_path, store_rag_document
+from app.rag.storage import (
+    RagStorageError,
+    rag_document_path,
+    signed_rag_download_token,
+    store_rag_document,
+    verify_rag_download_token,
+)
 
 rag_bp = Blueprint("rag", __name__)
 DOCUMENT_TYPES = {
@@ -86,7 +102,7 @@ def create_document():
     uploaded_file = request.files.get("arquivo")
     if uploaded_file is None:
         return jsonify(error="validation_error", message="Envie o arquivo do documento."), 422
-    item = RagDocument(tenant_id=tenant_id, created_by_id=user_id, **values)
+    item = RagDocument(id=uuid.uuid4(), tenant_id=tenant_id, created_by_id=user_id, **values)
     version = RagDocumentVersion(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
@@ -96,7 +112,7 @@ def create_document():
         **version_values,
     )
     try:
-        stored = store_rag_document(tenant_id, version.id, uploaded_file)
+        stored = store_rag_document(tenant_id, item.id, version.id, uploaded_file)
     except RagStorageError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     for field, value in stored.items():
@@ -151,7 +167,7 @@ def create_version(document_id: uuid.UUID):
         **values,
     )
     try:
-        stored = store_rag_document(tenant_id, version.id, uploaded_file)
+        stored = store_rag_document(tenant_id, item.id, version.id, uploaded_file)
     except RagStorageError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     for field, value in stored.items():
@@ -242,8 +258,20 @@ def download_version(document_id: uuid.UUID, version_id: uuid.UUID):
     item = _version(tenant_id, document_id, version_id)
     if item is None or not _can_access(item.document):
         return jsonify(error="resource_not_found", message="Versão não encontrada."), 404
+    if not verify_rag_download_token(
+        str(request.args.get("token", "")),
+        tenant_id,
+        document_id,
+        version_id,
+    ):
+        return jsonify(error="invalid_download_token", message="Link inválido ou expirado."), 403
     return send_file(
-        rag_document_path(item.storage_key),
+        rag_document_path(
+            item.storage_key,
+            tenant_id=tenant_id,
+            document_id=document_id,
+            version_id=version_id,
+        ),
         mimetype=item.mime_type,
         download_name=item.original_name,
         as_attachment=True,
@@ -255,6 +283,7 @@ def download_version(document_id: uuid.UUID, version_id: uuid.UUID):
 def create_assistant_query():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
+    started = time.perf_counter()
     try:
         answer = answer_query(
             tenant_id,
@@ -277,6 +306,7 @@ def create_assistant_query():
         evidence_threshold=answer["limiarEvidencia"],
         embedding_model=answer["modeloEmbedding"],
         fallback_used=answer["fallbackUtilizado"],
+        latency_ms=max(1, round((time.perf_counter() - started) * 1000)),
     )
     db.session.add(query)
     db.session.flush()
@@ -291,7 +321,52 @@ def create_assistant_query():
         after=query_audit_payload(answer),
     )
     db.session.commit()
+    current_app.logger.info(
+        "RAG query completed grounded=%s refused=%s fallback=%s sources=%s",
+        query.grounded,
+        query.refused,
+        query.fallback_used,
+        len(query.sources),
+        extra={"duration_ms": query.latency_ms},
+    )
     return jsonify(answer)
+
+
+@rag_bp.get("/assistente/metricas")
+@roles_required("admin", "manager")
+def assistant_metrics():
+    tenant_id, _ = _context()
+    since = datetime.now(UTC) - timedelta(
+        hours=current_app.config["RAG_METRICS_WINDOW_HOURS"]
+    )
+    items = list(
+        db.session.scalars(
+            select(RagAssistantQuery).where(
+                RagAssistantQuery.tenant_id == tenant_id,
+                RagAssistantQuery.created_at >= since,
+            )
+        )
+    )
+    total = len(items)
+    latencies = [item.latency_ms for item in items if item.latency_ms is not None]
+    p95 = percentile(latencies, 0.95)
+    target = current_app.config["RAG_SLO_QUERY_P95_MS"]
+    return jsonify(
+        janelaHoras=current_app.config["RAG_METRICS_WINDOW_HOURS"],
+        consultas=total,
+        fundamentadas=sum(item.grounded for item in items),
+        recusadas=sum(item.refused for item in items),
+        fallback=sum(item.fallback_used for item in items),
+        feedbackPositivo=sum(
+            item.feedback_rating == RagQueryFeedbackRating.POSITIVA for item in items
+        ),
+        feedbackNegativo=sum(
+            item.feedback_rating == RagQueryFeedbackRating.NEGATIVA for item in items
+        ),
+        latenciaP95Ms=p95,
+        sloLatenciaMs=target,
+        sloAtendido=p95 is None or p95 <= target,
+    )
 
 
 @rag_bp.patch("/assistente/consultas/<uuid:query_id>/avaliacao")
@@ -343,6 +418,149 @@ def review_assistant_query(query_id: uuid.UUID):
     return jsonify(assistant_query_data(item))
 
 
+@rag_bp.get("/rag/catalogo-global")
+@jwt_required()
+def list_global_catalog():
+    tenant_id, _ = _context()
+    content = []
+    for access in collection_access_for_tenant(tenant_id):
+        policy = access.collection.distribution_policy
+        if access.reason in {"PLATFORM_PRIVATE", "JURISDICTION_MISMATCH"}:
+            continue
+        if policy == GlobalDistributionPolicy.DIRECIONADA and not access.enabled:
+            continue
+        content.append(
+            {
+                "id": str(access.collection.id),
+                "nome": access.collection.name,
+                "descricao": access.collection.description,
+                "politicaDistribuicao": policy.value,
+                "jurisdicao": access.collection.jurisdiction,
+                "habilitada": access.enabled,
+                "motivoAcesso": access.reason,
+                "concessao": entitlement_data(access.entitlement),
+            }
+        )
+    return jsonify(content=content)
+
+
+@rag_bp.patch("/rag/catalogo-global/colecoes/<uuid:collection_id>/adesao")
+@roles_required("admin", "manager")
+def update_global_catalog_subscription(collection_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    collection = db.session.get(GlobalKnowledgeCollection, collection_id)
+    if collection is None:
+        return jsonify(error="resource_not_found", message="Coleção global não encontrada."), 404
+    policy = collection.distribution_policy
+    entitlement = db.session.execute(
+        select(GlobalKnowledgeEntitlement).where(
+            GlobalKnowledgeEntitlement.tenant_id == tenant_id,
+            GlobalKnowledgeEntitlement.collection_id == collection_id,
+        )
+    ).scalar_one_or_none()
+    if policy == GlobalDistributionPolicy.PRIVADA_PLATAFORMA:
+        return (
+            jsonify(
+                error="forbidden",
+                message="Esta coleção não aceita adesão direta do gabinete.",
+            ),
+            403,
+        )
+    payload = request.get_json(silent=True) or {}
+    enabled = payload.get("habilitada")
+    if not isinstance(enabled, bool):
+        return jsonify(error="validation_error", message="Informe habilitada como booleano."), 422
+    if policy == GlobalDistributionPolicy.DIRECIONADA and not (
+        entitlement
+        and entitlement.grant_source == "GLOBAL_GRANT"
+        and entitlement.status == GlobalEntitlementStatus.ATIVA
+    ):
+        return (
+            jsonify(
+                error="forbidden",
+                message="Esta coleção exige concessão ativa do curador global.",
+            ),
+            403,
+        )
+    if policy == GlobalDistributionPolicy.DIRECIONADA and not enabled:
+        return (
+            jsonify(
+                error="conflict",
+                message="O gabinete não pode revogar uma concessão direcionada.",
+            ),
+            409,
+        )
+    if not enabled and policy in {
+        GlobalDistributionPolicy.OBRIGATORIA,
+        GlobalDistributionPolicy.RESTRITA_JURISDICAO,
+    }:
+        return (
+            jsonify(
+                error="conflict",
+                message="A política desta coleção não permite desativação pelo gabinete.",
+            ),
+            409,
+        )
+    try:
+        update_mode = GlobalUpdateMode(str(payload.get("modoAtualizacao", "AUTOMATICA")).upper())
+        pinned_version_id = (
+            uuid.UUID(str(payload["versaoFixadaId"])) if payload.get("versaoFixadaId") else None
+        )
+    except (TypeError, ValueError):
+        return jsonify(error="validation_error", message="Modo ou versão fixada inválida."), 422
+    if update_mode == GlobalUpdateMode.FIXADA and pinned_version_id is None:
+        return (
+            jsonify(
+                error="validation_error",
+                message="Informe a versão global que deve permanecer fixada.",
+            ),
+            422,
+        )
+    if update_mode == GlobalUpdateMode.AUTOMATICA:
+        pinned_version_id = None
+    if pinned_version_id and not _valid_global_pinned_version(collection_id, pinned_version_id):
+        return (
+            jsonify(
+                error="validation_error",
+                message="A versão fixada não pertence à coleção ou não foi publicada.",
+            ),
+            422,
+        )
+    before = entitlement_data(entitlement)
+    if entitlement is None:
+        entitlement = GlobalKnowledgeEntitlement(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            granted_by_id=user_id,
+            grant_source="TENANT_ADESAO",
+        )
+        db.session.add(entitlement)
+    if entitlement.grant_source != "GLOBAL_GRANT":
+        entitlement.status = (
+            GlobalEntitlementStatus.ATIVA if enabled else GlobalEntitlementStatus.DESATIVADA
+        )
+    entitlement.update_mode = update_mode
+    entitlement.pinned_version_id = pinned_version_id
+    if entitlement.grant_source != "GLOBAL_GRANT":
+        entitlement.justification = str(payload.get("justificativa", "")).strip() or None
+    db.session.flush()
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_global.subscription_updated",
+        "rag_global_entitlement",
+        entitlement.id,
+        before=before,
+        after=entitlement_data(entitlement),
+    )
+    db.session.commit()
+    return jsonify(
+        colecaoId=str(collection_id),
+        habilitada=enabled,
+        concessao=entitlement_data(entitlement),
+    )
+
+
 def document_data(item: RagDocument, include_versions: bool) -> dict:
     versions = sorted(item.versions, key=lambda value: value.version_number, reverse=True)
     data = {
@@ -383,7 +601,10 @@ def version_data(item: RagDocumentVersion) -> dict:
         "erro": item.error,
         "criadaEm": item.created_at.isoformat(),
         "indexadaEm": item.indexed_at.isoformat() if item.indexed_at else None,
-        "downloadUrl": f"/api/v1/rag/documentos/{item.document_id}/versoes/{item.id}/download",
+        "downloadUrl": (
+            f"/api/v1/rag/documentos/{item.document_id}/versoes/{item.id}/download"
+            f"?token={signed_rag_download_token(item.tenant_id, item.document_id, item.id)}"
+        ),
     }
 
 
@@ -465,6 +686,26 @@ def _assistant_query(tenant_id: uuid.UUID, query_id: uuid.UUID) -> RagAssistantQ
             RagAssistantQuery.tenant_id == tenant_id,
         )
     ).scalar_one_or_none()
+
+
+def _valid_global_pinned_version(collection_id: uuid.UUID, version_id: uuid.UUID) -> bool:
+    return (
+        db.session.execute(
+            select(GlobalKnowledgeDocumentVersion.id)
+            .join(GlobalKnowledgeDocumentVersion.document)
+            .where(
+                GlobalKnowledgeDocumentVersion.id == version_id,
+                GlobalKnowledgeDocumentVersion.publication_status.in_(
+                    {
+                        GlobalVersionStatus.PUBLICADA,
+                        GlobalVersionStatus.SUBSTITUIDA,
+                    }
+                ),
+                GlobalKnowledgeDocumentVersion.document.has(collection_id=collection_id),
+            )
+        ).scalar_one_or_none()
+        is not None
+    )
 
 
 def _optional_text(value: object, max_length: int, label: str) -> str | None:

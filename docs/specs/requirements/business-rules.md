@@ -20,3 +20,15 @@
 - **RN-018** Consentimento para comunicação não equivale a consentimento para divulgação pública.
 - **RN-019** Fotos com cidadãos não podem ser usadas em comunicação sem base legal ou consentimento aplicável.
 - **RN-020** Exclusões lógicas não removem registros de auditoria.
+- **RN-021** O conhecimento efetivo de um gabinete é a união das fontes globais autorizadas e das fontes privadas acessíveis ao usuário.
+- **RN-022** Conteúdo global deve ser referenciado, não copiado para cada tenant por padrão.
+- **RN-023** Conteúdo privado nunca pode ser compartilhado, promovido ou usado para melhorar o catálogo global sem autorização explícita, anonimização e revisão humana.
+- **RN-024** O administrador global do conhecimento não possui acesso implícito ao conteúdo privado dos gabinetes.
+- **RN-025** Toda fonte global deve possuir política de distribuição e critérios de elegibilidade.
+- **RN-026** Jurisdição e vigência devem ser consideradas antes do reranking e da geração de resposta.
+- **RN-027** Um fork global torna-se documento privado independente, preservando origem, versão e checksum.
+- **RN-028** Avaliações e correções influenciam apenas processos de melhoria autorizados para o mesmo tenant, salvo dataset global anonimizado e aprovado.
+- **RN-029** Uma resposta deve distinguir claramente citações globais das citações privadas.
+- **RN-030** A ausência de evidência adequada em ambos os escopos obriga recusa conclusiva.
+- **RN-031** Toda informação interna elegível produzida pelo tenant deve ser indexada automaticamente no seu RAG Privado; exclusões por sigilo, retenção, base legal ou minimização devem ser explícitas e auditáveis.
+- **RN-032** Indexação no RAG não equivale a treinamento ou fine-tuning do modelo.

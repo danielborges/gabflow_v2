@@ -13,3 +13,8 @@
 - acessibilidade verificada;
 - risco LGPD revisado;
 - para IA: dataset de avaliação executado, métricas registradas e fallback validado.
+- para RAG privado: teste de RLS sem filtro explícito, escrita cruzada, pool de conexões e worker aprovado;
+- para RAG global: política de distribuição, jurisdição, vigência, proveniência e revogação validadas;
+- para recuperação hierárquica: avaliação separada e conjunta dos escopos, citações e recusa conclusiva;
+- para conectores: allowlist, SSRF, cofre de segredos, limites, quarentena e snapshot versionado testados;
+- credenciais de runtime confirmadas como `NOSUPERUSER` e `NOBYPASSRLS`.

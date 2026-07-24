@@ -1,14 +1,58 @@
 {
-  "resposta": "Foi localizada norma municipal relacionada ao tema, mas a aplicabilidade ao caso concreto deve ser validada pelo assessor responsável.",
-  "grounded": true,
-  "confianca": 0.84,
+  "resposta": "A medida encontra fundamento geral e evidência local do gabinete, sujeita à revisão do assessor responsável.",
+  "fundamentada": true,
+  "recusaConclusiva": false,
+  "escoposConsultados": [
+    "GLOBAL",
+    "PRIVADO"
+  ],
+  "recuperacao": {
+    "total": 2,
+    "global": 1,
+    "privado": 1,
+    "deduplicacaoPorChecksum": true,
+    "rerankingConjunto": true
+  },
   "fontes": [
     {
+      "escopo": "GLOBAL",
+      "origem": "GABFLOW",
+      "rotuloFonte": "Fonte GabFlow",
+      "colecao": "Legislação Federal",
+      "colecaoId": "4cf1bf7e-a6de-4ad5-9cf7-c8b3f57591ca",
       "documentoId": "3de19e0c-5643-4a69-bcbf-62d9b542be90",
-      "titulo": "Código de Posturas Municipal",
-      "pagina": 42,
+      "versaoId": "cf4a838e-5788-4a3b-9644-1685a0fefae7",
+      "titulo": "Norma Geral Aplicável",
+      "jurisdicao": "BR",
+      "pagina": 12,
       "versao": "2026-03",
-      "trecho": "Trecho relevante recuperado da fonte."
+      "checksum": "f0bfbba4b91c4b7421d3f9f42bb39077c4331bf6ddf98e0a33ca16e70f62e56d",
+      "checksumDocumento": "4db0ed53ab054b293e24180e1a12f55d9ca53cb07391e147349b7b623c71d738",
+      "proveniencia": "Diário oficial verificado pelo GabFlow.",
+      "trecho": "Trecho relevante recuperado da fonte global.",
+      "pontuacao": 0.91
+    },
+    {
+      "escopo": "PRIVADO",
+      "origem": "GABINETE",
+      "rotuloFonte": "Fonte do Gabinete",
+      "colecao": "Atuação Legislativa do Gabinete",
+      "colecaoId": null,
+      "documentoId": "c208257a-b61a-44d6-9e05-462f6ef6cf79",
+      "versaoId": "f97191a5-118e-480a-9834-2846d3228857",
+      "fonteModulo": "LEGISLATIVO",
+      "entidadeOrigemTipo": "LEGISLATIVE_DRAFT",
+      "entidadeOrigemId": "aa807982-41df-49fd-b4e7-264b422d67e2",
+      "finalidade": "MEMORIA_E_PRODUCAO_LEGISLATIVA",
+      "baseLegal": "EXERCICIO_DA_FUNCAO_LEGISLATIVA",
+      "retencaoAte": null,
+      "titulo": "Nota técnica interna",
+      "pagina": 3,
+      "versao": "2",
+      "checksum": "7837d9366ea3e8e60d74e3b20ebd92a3a7a3c9b9f9b2439df154c519c15a24c3",
+      "checksumDocumento": "d5160ef852970ba06c4cdbbdfe75c2a8a9badd98002158c56785596929bb1ddd",
+      "trecho": "Trecho relevante pertencente exclusivamente ao tenant.",
+      "pontuacao": 0.84
     }
   ]
 }

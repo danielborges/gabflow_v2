@@ -41,21 +41,27 @@ Camada de abstração para:
 ## Serviço RAG
 
 Responsável por:
-- ingestão;
+- ingestão global e privada;
 - parsing;
 - chunking;
 - embeddings;
-- recuperação híbrida;
-- reranking;
+- distribuição e versionamento do catálogo global;
+- recuperação federada global + privada;
+- filtros de tenant, jurisdição, vigência e finalidade;
+- normalização e reranking;
 - citações;
-- controle de acesso.
+- controle de acesso;
+- avaliação e melhoria tenant-scoped.
 
 ## Banco Transacional
 
 Sugestão:
 - PostgreSQL;
 - PostGIS para geodados;
-- row-level security quando aplicável.
+- schemas distintos para RAG global e privado;
+- row-level security forçado no domínio privado;
+- roles separadas para migration, API, worker e backup;
+- pgvector para busca vetorial quando adotado.
 
 ## Armazenamento de Objetos
 

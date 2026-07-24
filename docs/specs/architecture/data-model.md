@@ -158,3 +158,158 @@
 - depois
 - data
 - ip
+
+## ColecaoConhecimentoGlobal
+- id
+- nome
+- descricao
+- politica_distribuicao
+- jurisdicao
+- status
+- criado_por
+- publicado_em
+
+## DocumentoGlobal
+- id
+- colecao_id
+- titulo
+- tipo
+- orgao
+- jurisdicao
+- proveniencia
+- nivel_confianca
+- status
+
+## VersaoDocumentoGlobal
+- id
+- documento_id
+- versao
+- vigencia_inicio
+- vigencia_fim
+- checksum
+- arquivo_ou_snapshot
+- status_indexacao
+- status_publicacao
+- modelo_embedding
+
+## FonteApiGlobal
+- id
+- colecao_id
+- nome
+- base_url
+- allowlist_rotas
+- metodos_permitidos
+- referencia_segredo
+- politica_sincronizacao
+- status
+- ultima_sincronizacao
+
+## ConcessaoConhecimentoGlobal
+- id
+- tenant_id
+- colecao_id
+- modo_atualizacao
+- versao_fixada_id
+- concedido_por
+- justificativa
+- vigencia_inicio
+- vigencia_fim
+- status
+
+Esta entidade é tenant-scoped e protegida por RLS, embora referencie uma coleção do
+catálogo global.
+
+## ColecaoConhecimentoPrivado
+- id
+- tenant_id
+- nome
+- finalidade
+- nivel_acesso
+- politica_retencao
+- status
+
+## DocumentoPrivado
+- id
+- tenant_id
+- colecao_id
+- titulo
+- tipo
+- orgao
+- nivel_acesso
+- fonte_modulo
+- entidade_origem_id
+- documento_global_origem_id
+- versao_global_origem_id
+- status
+
+## VersaoDocumentoPrivado
+- id
+- tenant_id
+- documento_id
+- versao
+- vigencia_inicio
+- vigencia_fim
+- checksum
+- storage_key
+- status_indexacao
+- modelo_embedding
+
+## ChunkGlobal
+- id
+- versao_global_id
+- posicao
+- conteudo
+- pagina_inicio
+- pagina_fim
+- secao
+- checksum
+- embedding
+- modelo_embedding
+
+## ChunkPrivado
+- id
+- tenant_id
+- versao_privada_id
+- posicao
+- conteudo
+- pagina_inicio
+- pagina_fim
+- secao
+- checksum
+- embedding
+- modelo_embedding
+
+## ConsultaAssistente
+- id
+- tenant_id
+- usuario_id
+- consulta
+- resposta
+- grounded
+- fontes_globais
+- fontes_privadas
+- modelo
+- prompt_version
+- criada_em
+
+## FeedbackAssistente
+- id
+- tenant_id
+- consulta_id
+- avaliacao
+- comentario
+- resposta_corrigida
+- revisado_por
+- revisado_em
+
+## Invariantes de tenant
+
+- Toda entidade privada possui `tenant_id` não nulo.
+- Relacionamentos privados usam foreign keys compostas que incluem `tenant_id`.
+- Uma consulta privada sem contexto transacional de tenant é negada.
+- `tenant_id` não pode ser alterado por update.
+- Conteúdo global não usa `tenant_id = NULL` em tabelas privadas; ele reside em
+  domínio próprio.
+- Forks preservam origem global, mas passam a obedecer exclusivamente ao tenant.
+- Chunks globais e privados residem em domínios distintos e são identificados por
+  escopo nas citações e auditorias.

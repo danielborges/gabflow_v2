@@ -8,18 +8,21 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from flask import current_app
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 
 from app.ai.duplicates import EmbeddingProviderError
 from app.extensions import db
 from app.models import (
+    GlobalKnowledgeChunk,
     RagChunk,
     RagDocument,
     RagDocumentAccess,
     RagDocumentLifecycle,
     RagDocumentVersion,
     RagIngestionStatus,
+    RagKnowledgeSource,
 )
+from app.rag.distribution import global_versions_for_tenant
 from app.rag.service import LocalHashEmbeddingProvider, rag_embedding_provider
 
 REFUSAL_MESSAGE = (
@@ -43,7 +46,8 @@ PROMPT_INJECTION_PATTERNS = (
 
 @dataclass(frozen=True)
 class RankedChunk:
-    chunk: RagChunk
+    chunk: RagChunk | GlobalKnowledgeChunk
+    scope: str
     score: float
     semantic_score: float
     lexical_score: float
@@ -77,6 +81,8 @@ def answer_query(tenant_id: UUID, role: str | None, query: str, limit: int | Non
             "erroFallback": fallback_error,
             "seguranca": safety_flags,
             "fontes": sources,
+            "escoposConsultados": ["GLOBAL", "PRIVADO"],
+            "recuperacao": _retrieval_summary(sources),
         }
 
     return {
@@ -91,13 +97,16 @@ def answer_query(tenant_id: UUID, role: str | None, query: str, limit: int | Non
         "erroFallback": fallback_error,
         "seguranca": safety_flags,
         "fontes": sources,
+        "escoposConsultados": ["GLOBAL", "PRIVADO"],
+        "recuperacao": _retrieval_summary(sources),
     }
 
 
 def retrieve_chunks(
     tenant_id: UUID, role: str | None, query: str, limit: int
 ) -> tuple[list[RankedChunk], str, bool, str | None]:
-    candidates = _candidate_chunks(tenant_id, role)
+    candidates = [("PRIVADO", chunk) for chunk in _private_candidate_chunks(tenant_id, role)]
+    candidates.extend(("GLOBAL", chunk) for chunk in _global_candidate_chunks(tenant_id))
     if not candidates:
         return [], LocalHashEmbeddingProvider.model, False, None
 
@@ -115,7 +124,7 @@ def retrieve_chunks(
 
     threshold = current_app.config["RAG_RETRIEVAL_SCORE_THRESHOLD"]
     ranked = []
-    for chunk in candidates:
+    for scope, chunk in candidates:
         semantic_score = _cosine(query_vector, chunk.embedding)
         lexical_score = _lexical_score(query, chunk.content)
         score = (semantic_score * 0.65) + (lexical_score * 0.35)
@@ -124,17 +133,18 @@ def retrieve_chunks(
         ranked.append(
             RankedChunk(
                 chunk=chunk,
+                scope=scope,
                 score=score,
                 semantic_score=semantic_score,
                 lexical_score=lexical_score,
                 reasons=_reasons(semantic_score, lexical_score),
             )
         )
-    ranked.sort(key=lambda item: item.score, reverse=True)
-    return ranked[:limit], provider.model, fallback_used, fallback_error
+    ranked = _deduplicate_and_diversify(ranked, limit)
+    return ranked, provider.model, fallback_used, fallback_error
 
 
-def _candidate_chunks(tenant_id: UUID, role: str | None) -> list[RagChunk]:
+def _private_candidate_chunks(tenant_id: UUID, role: str | None) -> list[RagChunk]:
     today = datetime.now(UTC).date()
     statement = (
         select(RagChunk)
@@ -158,19 +168,115 @@ def _candidate_chunks(tenant_id: UUID, role: str | None) -> list[RagChunk]:
     return list(db.session.execute(statement).scalars())
 
 
+def _global_candidate_chunks(tenant_id: UUID) -> list[GlobalKnowledgeChunk]:
+    versions = global_versions_for_tenant(tenant_id)
+    version_ids = [version.id for version in versions]
+    if not version_ids:
+        return []
+    statement = (
+        select(GlobalKnowledgeChunk)
+        .where(GlobalKnowledgeChunk.version_id.in_(version_ids))
+        .order_by(GlobalKnowledgeChunk.created_at.desc(), GlobalKnowledgeChunk.position)
+        .limit(current_app.config["RAG_RETRIEVAL_CANDIDATE_LIMIT"])
+    )
+    if db.engine.dialect.name == "postgresql":
+        permitted_chunk_ids = list(
+            db.session.execute(
+                text(
+                    "SELECT chunk_id "
+                    "FROM rag_global.tenant_published_chunks "
+                    "WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            ).scalars()
+        )
+        if not permitted_chunk_ids:
+            return []
+        statement = statement.where(GlobalKnowledgeChunk.id.in_(permitted_chunk_ids))
+    return list(db.session.execute(statement).scalars())
+
+
 def _source_data(item: RankedChunk) -> dict:
+    if item.scope == "GLOBAL":
+        return _global_source_data(item)
+    return _private_source_data(item)
+
+
+def _private_source_data(item: RankedChunk) -> dict:
     version = item.chunk.version
     document = version.document
     sanitized = _sanitize_source_content(item.chunk.content)
+    operational = db.session.execute(
+        select(RagKnowledgeSource).where(
+            RagKnowledgeSource.tenant_id == document.tenant_id,
+            RagKnowledgeSource.document_id == document.id,
+        )
+    ).scalar_one_or_none()
     return {
+        "escopo": "PRIVADO",
+        "origem": "GABINETE",
+        "rotuloFonte": "Fonte do Gabinete",
+        "colecao": "Base do Gabinete",
+        "colecaoId": None,
         "documentoId": str(document.id),
         "titulo": document.title,
         "tipo": document.document_type,
         "orgao": document.agency,
         "nivelAcesso": document.access_level.value,
+        "fonteModulo": operational.source_module if operational else None,
+        "entidadeOrigemTipo": operational.entity_type if operational else None,
+        "entidadeOrigemId": str(operational.entity_id) if operational else None,
+        "finalidade": operational.purpose if operational else None,
+        "baseLegal": operational.legal_basis if operational else None,
+        "retencaoAte": (
+            operational.retention_until.isoformat()
+            if operational and operational.retention_until
+            else None
+        ),
         "versaoId": str(version.id),
         "versao": version.version_label,
         "estado": version.lifecycle_status.value,
+        "vigenteDesde": version.valid_from.isoformat() if version.valid_from else None,
+        "vigenteAte": version.valid_until.isoformat() if version.valid_until else None,
+        "urlFonte": version.source_url,
+        "paginaInicio": item.chunk.page_start,
+        "paginaFim": item.chunk.page_end,
+        "secao": item.chunk.section,
+        "trecho": _excerpt(sanitized["content"]),
+        "checksum": item.chunk.content_checksum,
+        "checksumDocumento": version.checksum,
+        "modeloEmbedding": item.chunk.embedding_model,
+        "pontuacao": round(item.score, 4),
+        "similaridadeSemantica": round(item.semantic_score, 4),
+        "similaridadeLexical": round(item.lexical_score, 4),
+        "justificativas": item.reasons,
+        "riscoPromptInjection": sanitized["risk"],
+        "conteudoSanitizado": sanitized["sanitized"],
+        "instrucoesIgnoradas": sanitized["ignoredInstructions"],
+    }
+
+
+def _global_source_data(item: RankedChunk) -> dict:
+    version = item.chunk.version
+    document = version.document
+    collection = document.collection
+    sanitized = _sanitize_source_content(item.chunk.content)
+    return {
+        "escopo": "GLOBAL",
+        "origem": "GABFLOW",
+        "rotuloFonte": "Fonte GabFlow",
+        "colecao": collection.name,
+        "colecaoId": str(collection.id),
+        "documentoId": str(document.id),
+        "titulo": document.title,
+        "tipo": document.document_type,
+        "orgao": document.agency,
+        "nivelAcesso": "GLOBAL_PUBLICADO",
+        "jurisdicao": document.jurisdiction or collection.jurisdiction,
+        "proveniencia": document.provenance,
+        "versaoId": str(version.id),
+        "versao": version.version_label,
+        "estado": version.publication_status.value,
         "vigenteDesde": version.valid_from.isoformat() if version.valid_from else None,
         "vigenteAte": version.valid_until.isoformat() if version.valid_until else None,
         "urlFonte": version.source_url,
@@ -195,11 +301,52 @@ def _grounded_answer(sources: list[dict]) -> str:
     first = sources[0]
     page = first["paginaInicio"]
     page_text = f", pagina {page}" if page else ""
+    source_label = first["rotuloFonte"]
     return (
         "Encontrei evidencia suficiente na base documental vigente. A principal fonte recuperada "
-        f"foi '{first['titulo']}', versao {first['versao']}{page_text}. Revise as citacoes antes "
+        f"foi {source_label} '{first['titulo']}', versao {first['versao']}{page_text}. "
+        "Revise as citacoes antes "
         "de usar a resposta em ato oficial."
     )
+
+
+def _deduplicate_and_diversify(ranked: list[RankedChunk], limit: int) -> list[RankedChunk]:
+    ranked.sort(
+        key=lambda item: (
+            item.score,
+            item.scope == "PRIVADO",
+            item.semantic_score,
+        ),
+        reverse=True,
+    )
+    unique = []
+    seen_checksums = set()
+    for item in ranked:
+        checksum = item.chunk.content_checksum
+        if checksum in seen_checksums:
+            continue
+        seen_checksums.add(checksum)
+        unique.append(item)
+
+    selected = unique[:limit]
+    available_scopes = {item.scope for item in unique}
+    selected_scopes = {item.scope for item in selected}
+    if limit >= 2 and len(available_scopes) > 1 and len(selected_scopes) == 1:
+        missing_scope = (available_scopes - selected_scopes).pop()
+        replacement = next(item for item in unique if item.scope == missing_scope)
+        selected[-1] = replacement
+        selected.sort(key=lambda item: item.score, reverse=True)
+    return selected
+
+
+def _retrieval_summary(sources: list[dict]) -> dict:
+    return {
+        "total": len(sources),
+        "global": sum(source["escopo"] == "GLOBAL" for source in sources),
+        "privado": sum(source["escopo"] == "PRIVADO" for source in sources),
+        "deduplicacaoPorChecksum": True,
+        "rerankingConjunto": True,
+    }
 
 
 def _validate_query(query: str) -> str:
@@ -340,8 +487,12 @@ def query_audit_payload(answer: dict) -> dict:
             {
                 "documentoId": source["documentoId"],
                 "versaoId": source["versaoId"],
+                "escopo": source["escopo"],
+                "colecaoId": source["colecaoId"],
                 "paginaInicio": source["paginaInicio"],
                 "pontuacao": source["pontuacao"],
+                "checksum": source["checksum"],
+                "checksumDocumento": source["checksumDocumento"],
                 "riscoPromptInjection": source["riscoPromptInjection"],
             }
             for source in answer["fontes"]

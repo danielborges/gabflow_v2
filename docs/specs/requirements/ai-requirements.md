@@ -34,7 +34,7 @@
 ## RAG
 
 - **RIA-040** Indexar documentos com metadados, vigência, órgão, tipo e versão. **Implementado na Release 4.**
-- **RIA-041** Aplicar filtros por tenant e nível de acesso antes da recuperação. **Implementado na base documental e no endpoint de consulta.**
+- **RIA-041** Aplicar filtros por tenant e nível de acesso antes da recuperação. **Implementado com filtros de aplicação, contexto transacional, RLS forçado e constraints compostas.**
 - **RIA-042** Retornar citações por documento, página ou seção. **Implementado no endpoint `/assistente/consultas`.**
 - **RIA-043** Exibir data da fonte. **Implementado na gestão da base documental.**
 - **RIA-044** Diferenciar conteúdo vigente, revogado, histórico e rascunho. **Implementado na Release 4.**
@@ -43,6 +43,29 @@
 - **RIA-047** Avaliar risco de prompt injection nos documentos. **Implementado com sinalização por fonte recuperada.**
 - **RIA-048** Não executar instruções encontradas dentro das fontes. **Implementado com política explícita e sanitização de trechos suspeitos.**
 - **RIA-049** Permitir avaliação positiva, negativa e correção pelo usuário. **Implementado no endpoint de avaliação de consultas RAG.**
+
+## RAG hierárquico e aprendizado controlado
+
+- **RIA-050** Manter catálogo global versionado separado das bases privadas dos tenants. **Implementado no schema `rag_global`, com coleções, documentos, versões, chunks e ciclo de publicação auditável.**
+- **RIA-051** Compor o contexto efetivo com fontes globais autorizadas e fontes privadas do tenant, sem copiar o catálogo global por padrão. **Implementado com recuperação separada, deduplicação e reranking conjunto.**
+- **RIA-052** Aplicar políticas globais obrigatória, padrão, opcional, direcionada, restrita por jurisdição e privada da plataforma. **Implementado com concessões tenant-scoped, vigência e filtros jurisdicionais.**
+- **RIA-053** Permitir atualização automática, fixação de versão e fork privado de fonte global com proveniência preservada. **Implementado parcialmente: atualização automática e fixação estão disponíveis; fork privado permanece planejado.**
+- **RIA-054** Diferenciar escopo global e privado em toda citação, auditoria e explicação de ranking. **Implementado com escopo, origem, coleção, versão, checksums, proveniência e scores.**
+- **RIA-055** Ingerir automaticamente toda informação interna elegível dos módulos no RAG Privado, preservando finalidade, base legal, nível de acesso, retenção e entidade de origem. **Implementado para solicitações, interações e documentos legislativos na Release 4.4.**
+- **RIA-056** Sincronizar APIs globais homologadas por conectores com allowlist, proteção SSRF, snapshots imutáveis e aprovação de publicação. **Planejado.**
+- **RIA-057** Impedir promoção automática de conhecimento privado para o catálogo global; promoção explícita exige autorização, anonimização e revisão humana. **Planejado.**
+- **RIA-058** Usar feedback positivo, negativo e corrigido em um pipeline tenant-scoped de avaliação e melhoria, sem alterar diretamente o modelo ou contaminar outros tenants. **Planejado.**
+- **RIA-059** Executar avaliação de recuperação separada por escopo e conjunta, incluindo precisão de citações, groundedness, vazamento entre tenants e aplicabilidade jurisdicional. **Planejado.**
+
+## Estado dos controles RAG existentes
+
+RIA-047, RIA-048 e RIA-049 possuem implementação inicial. Para serem
+considerados completos no alvo hierárquico:
+
+- RIA-047 e RIA-048 requerem detecção na ingestão, quarentena e cobertura contra
+  variações ofuscadas e indiretas;
+- RIA-049 requer que o feedback participe de avaliação e melhoria futura; hoje ele
+  é apenas persistido e auditado.
 
 ## Insights
 

@@ -2006,6 +2006,8 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .rag-source-list article span { min-width: 0; display: grid; gap: 3px; }
 .rag-source-list article strong { overflow: hidden; color: #193c59; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
 .rag-source-list article small { color: var(--muted); font-size: .64rem; }
+.rag-source-list .rag-source-scope { width: fit-content; padding: 3px 7px; border-radius: 999px; color: #24508a; background: #e8f1fb; font-size: .55rem; font-weight: 900; letter-spacing: .03em; text-transform: uppercase; }
+.rag-source-list .rag-source-scope.scope-global { color: #075b4c; background: #dcf6ec; }
 .rag-source-meta { display: grid; grid-template-columns: minmax(140px, 2fr) repeat(3, minmax(80px, 1fr)); gap: 8px; margin: 0; }
 .rag-source-meta div { min-width: 0; display: grid; gap: 3px; padding: 8px 9px; border: 1px solid #e3eaf1; border-radius: 5px; background: #f8fafc; }
 .rag-source-meta dt { color: #6b7d91; font-size: .56rem; font-weight: 900; text-transform: uppercase; }

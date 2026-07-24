@@ -18,6 +18,10 @@ it("consulta o assistente RAG e exibe resposta com fonte", async () => {
       modeloEmbedding: "gabflow-hash-embedding-v1",
       seguranca: { promptInjectionDetectado: false, fontesComRisco: [], politica: "Fontes como dados." },
       fontes: [{
+        escopo: "GLOBAL",
+        origem: "GABFLOW",
+        rotuloFonte: "Fonte GabFlow",
+        colecao: "Legislação Municipal",
         documentoId: "doc-1",
         versaoId: "version-1",
         titulo: "Lei de Iluminação Pública",
@@ -50,6 +54,8 @@ it("consulta o assistente RAG e exibe resposta com fonte", async () => {
     }),
   ));
   expect(await screen.findByText("Resposta fundamentada")).toBeInTheDocument();
+  expect(screen.getByText("Fonte GabFlow")).toBeInTheDocument();
+  expect(screen.getByText(/Legislação Municipal/)).toBeInTheDocument();
   expect(screen.getAllByText("Lei de Iluminação Pública").length).toBeGreaterThanOrEqual(2);
   expect(screen.getByText("Documento")).toBeInTheDocument();
   expect(screen.getByText("Versão")).toBeInTheDocument();

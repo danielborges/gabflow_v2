@@ -5,6 +5,9 @@ from datetime import timedelta
 class Config:
     APP_ENV = os.getenv("APP_ENV", "development")
     APP_RELEASE = os.getenv("APP_RELEASE")
+    LOG_FORMAT = os.getenv(
+        "LOG_FORMAT", "json" if APP_ENV == "production" else "text"
+    ).lower()
     SECRET_KEY = os.getenv("SECRET_KEY", "development-only-change-me")
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL",
@@ -12,6 +15,7 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
+    DB_ENFORCE_RUNTIME_ROLE = os.getenv("DB_ENFORCE_RUNTIME_ROLE", "true").lower() == "true"
 
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
     JWT_TOKEN_LOCATION = ["cookies"]
@@ -30,6 +34,10 @@ class Config:
     ATTACHMENT_TOKEN_MAX_AGE = int(os.getenv("ATTACHMENT_TOKEN_MAX_AGE", "300"))
     RAG_STORAGE_PATH = os.getenv("RAG_STORAGE_PATH", "/data/rag")
     RAG_MAX_DOCUMENT_BYTES = int(os.getenv("RAG_MAX_DOCUMENT_BYTES", "26214400"))
+    RAG_DOWNLOAD_TOKEN_MAX_AGE = int(os.getenv("RAG_DOWNLOAD_TOKEN_MAX_AGE", "300"))
+    RAG_ALLOW_LEGACY_STORAGE_KEYS = (
+        os.getenv("RAG_ALLOW_LEGACY_STORAGE_KEYS", "true").lower() == "true"
+    )
     RAG_EMBEDDING_PROVIDER = os.getenv("RAG_EMBEDDING_PROVIDER", "ollama")
     RAG_INGESTION_TIMEOUT_SECONDS = int(
         os.getenv("RAG_INGESTION_TIMEOUT_SECONDS", "120")
@@ -37,6 +45,9 @@ class Config:
     RAG_CHUNK_SIZE_CHARS = int(os.getenv("RAG_CHUNK_SIZE_CHARS", "1200"))
     RAG_CHUNK_OVERLAP_CHARS = int(os.getenv("RAG_CHUNK_OVERLAP_CHARS", "150"))
     RAG_MIN_TEXT_CHARS = int(os.getenv("RAG_MIN_TEXT_CHARS", "20"))
+    RAG_OPERATIONAL_MEMORY_ENABLED = (
+        os.getenv("RAG_OPERATIONAL_MEMORY_ENABLED", "true").lower() == "true"
+    )
     RAG_RETRIEVAL_MAX_RESULTS = int(os.getenv("RAG_RETRIEVAL_MAX_RESULTS", "5"))
     RAG_RETRIEVAL_CANDIDATE_LIMIT = int(os.getenv("RAG_RETRIEVAL_CANDIDATE_LIMIT", "200"))
     RAG_RETRIEVAL_SCORE_THRESHOLD = float(os.getenv("RAG_RETRIEVAL_SCORE_THRESHOLD", "0.28"))
@@ -57,7 +68,17 @@ class Config:
     WORKER_RETRY_BASE_SECONDS = int(os.getenv("WORKER_RETRY_BASE_SECONDS", "30"))
     WORKER_RETRY_MAX_SECONDS = int(os.getenv("WORKER_RETRY_MAX_SECONDS", "3600"))
     WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv("WORKER_LOCK_TIMEOUT_SECONDS", "300"))
+    WORKER_QUEUE = os.getenv("WORKER_QUEUE", "all").lower()
+    WORKER_RUN_SCHEDULER = (
+        os.getenv("WORKER_RUN_SCHEDULER", "true").lower() == "true"
+    )
     SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "30"))
+    RAG_SLO_QUERY_P95_MS = int(os.getenv("RAG_SLO_QUERY_P95_MS", "15000"))
+    RAG_SLO_QUEUE_MAX_AGE_SECONDS = int(
+        os.getenv("RAG_SLO_QUEUE_MAX_AGE_SECONDS", "300")
+    )
+    RAG_METRICS_WINDOW_HOURS = int(os.getenv("RAG_METRICS_WINDOW_HOURS", "24"))
+    METRICS_BEARER_TOKEN = os.getenv("METRICS_BEARER_TOKEN")
     AI_TRIAGE_PROVIDER = os.getenv("AI_TRIAGE_PROVIDER", "ollama")
     AI_TRIAGE_MODEL = os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
     AI_TRIAGE_FALLBACK_MODEL = os.getenv(
@@ -146,9 +167,16 @@ class Config:
 class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite+pysqlite:///:memory:"
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "execution_options": {"schema_translate_map": {"rag_global": None}}
+    }
     JWT_COOKIE_SECURE = False
     RATELIMIT_ENABLED = False
     SENTRY_DSN = None
+    RAG_OPERATIONAL_MEMORY_ENABLED = False
+    METRICS_BEARER_TOKEN = "test-metrics-token"  # noqa: S105
+    WORKER_QUEUE = "all"
+    WORKER_RUN_SCHEDULER = True
     RESEND_API_KEY = None
     RESEND_FROM_EMAIL = None
     RESEND_WEBHOOK_SECRET = None

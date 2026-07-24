@@ -1,10 +1,11 @@
 import io
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models import AuditLog, RagChunk, RagDocument
+from app.models import AuditLog, OutboxEvent, RagChunk, RagDocument, RagDocumentVersion, Tenant
 from app.outbox.service import process_batch
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
@@ -108,6 +109,11 @@ def test_rag_document_ingestion_versions_and_lifecycle(app, client):
         assert db.session.execute(select(RagDocument)).scalar_one()
         chunks = db.session.execute(select(RagChunk)).scalars().all()
         assert chunks and len(chunks[0].embedding) == 128
+        stored_version = db.session.get(RagDocumentVersion, uuid.UUID(version_id))
+        assert stored_version.storage_key.startswith(
+            f"tenants/{stored_version.tenant_id}/rag/{stored_version.document_id}/"
+            f"{stored_version.id}/"
+        )
         actions = set(db.session.execute(select(AuditLog.action)).scalars())
         assert {
             "rag_document.created",
@@ -311,3 +317,60 @@ def test_rag_upload_validates_metadata_and_file_type(client):
         content=b"MZ-not-allowed",
     )
     assert invalid_file.status_code == 422
+
+
+def test_rag_download_token_is_scoped_and_tamper_resistant(app, client):
+    csrf = _login(client)
+    created = _upload(
+        client,
+        csrf,
+        "/api/v1/rag/documentos",
+        {
+            "titulo": "Documento para download",
+            "tipo": "LEGISLACAO",
+            "versao": "1",
+        },
+    )
+    assert created.status_code == 202
+    download_url = created.json["versoes"][0]["downloadUrl"]
+    parsed = urlsplit(download_url)
+    token = parse_qs(parsed.query)["token"][0]
+
+    assert client.get(download_url).status_code == 200
+    assert client.get(f"{parsed.path}?token={token}adulterado").status_code == 403
+
+    client.post("/api/v1/auth/logout", headers={"X-CSRF-TOKEN": csrf})
+    _login(client, "gabinete-b", "OutraSenha123!")
+    assert client.get(download_url).status_code == 404
+
+
+def test_rag_worker_rejects_event_with_mismatched_tenant(app, client):
+    csrf = _login(client)
+    created = _upload(
+        client,
+        csrf,
+        "/api/v1/rag/documentos",
+        {
+            "titulo": "Evento adulterado",
+            "tipo": "LEGISLACAO",
+            "versao": "1",
+        },
+    )
+    assert created.status_code == 202
+
+    with app.app_context():
+        tenant_b = db.session.execute(
+            select(Tenant).where(Tenant.slug == "gabinete-b")
+        ).scalar_one()
+        event = db.session.execute(
+            select(OutboxEvent).where(
+                OutboxEvent.aggregate_id == created.json["versoes"][0]["id"]
+            )
+        ).scalar_one()
+        event.tenant_id = tenant_b.id
+        db.session.commit()
+
+        result = process_batch("rag-mismatch-worker")
+        assert result.failed == 1
+        db.session.expire_all()
+        assert db.session.get(OutboxEvent, event.id).failed_at is not None

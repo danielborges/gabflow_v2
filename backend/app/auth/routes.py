@@ -146,7 +146,10 @@ def me():
     if tenant_claim:
         statement = statement.where(User.tenant_id == uuid.UUID(tenant_claim))
     else:
-        statement = statement.where(User.role == Role.PLATFORM_ADMIN, User.tenant_id.is_(None))
+        statement = statement.where(
+            User.role.in_({Role.PLATFORM_ADMIN, Role.GLOBAL_KNOWLEDGE_ADMIN}),
+            User.tenant_id.is_(None),
+        )
     user = db.session.execute(statement).scalar_one_or_none()
     if user is None or user.status != UserStatus.ACTIVE:
         return jsonify(error="unauthorized", message="Sessão inválida."), 401

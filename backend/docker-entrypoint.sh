@@ -8,16 +8,18 @@ if [ "$(id -u)" = "0" ]; then
   exec gosu gabflow "$0" "$@"
 fi
 
-flask --app wsgi:app db upgrade
+if [ "${RUN_MIGRATIONS_ON_START:-false}" = "true" ]; then
+  flask --app wsgi:app db upgrade
+fi
 
-if [ "${SEED_ADMIN_ON_START:-false}" = "true" ]; then
+if [ "${RUN_SEEDS_ON_START:-false}" = "true" ] && [ "${SEED_ADMIN_ON_START:-false}" = "true" ]; then
   flask --app wsgi:app seed \
     --tenant "${SEED_TENANT:-gabinete-demo}" \
     --email "${SEED_ADMIN_EMAIL:-admin@gabflow.local}" \
     --password "${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD is required}"
 fi
 
-if [ "${SEED_PLATFORM_ADMIN_ON_START:-false}" = "true" ]; then
+if [ "${RUN_SEEDS_ON_START:-false}" = "true" ] && [ "${SEED_PLATFORM_ADMIN_ON_START:-false}" = "true" ]; then
   flask --app wsgi:app seed-platform-admin \
     --email "${SEED_PLATFORM_ADMIN_EMAIL:-platform@gabflow.local}" \
     --password "${SEED_PLATFORM_ADMIN_PASSWORD:?SEED_PLATFORM_ADMIN_PASSWORD is required}"

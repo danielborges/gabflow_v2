@@ -87,5 +87,10 @@
 - **RF-090** Parametrizar categorias, territórios, status e SLA.
 - **RF-091** Configurar templates. **Implementado no P2.**
 - **RF-092** Configurar integrações. **Implementado na Release 6 como cadastro tenant-safe de configurações; conectores externos ficam para incrementos por provedor.**
-- **RF-093** Gerenciar bases documentais RAG. **Implementado na Release 4 com ingestão assíncrona, versionamento e níveis de acesso.**
+- **RF-093** Gerenciar bases documentais RAG privadas. **Implementado nas Releases 4 e 4.1 com ingestão assíncrona, versionamento, níveis de acesso, contexto transacional, RLS, constraints compostas e armazenamento segregado.**
 - **RF-094** Configurar retenção, anonimização e auditoria. **Implementado no P1.**
+- **RF-095** Administrar coleções privadas e selecionar coleções globais opcionais. **Planejado.**
+- **RF-096** Configurar atualização automática, versão fixada ou fork privado para uma fonte global. **Planejado.**
+- **RF-097** Exibir em respostas e citações se a fonte é global ou privada. **Planejado.**
+- **RF-098** Monitorar e governar a ingestão automática das entidades internas elegíveis no RAG Privado, conforme finalidade, base legal, retenção e nível de acesso. **Planejado.**
+- **RF-099** Consultar histórico de ingestão, concessões, forks, recuperação e feedback do próprio tenant. **Planejado.**
