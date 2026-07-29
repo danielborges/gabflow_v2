@@ -89,8 +89,16 @@
 - **RF-092** Configurar integrações. **Implementado na Release 6 como cadastro tenant-safe de configurações; conectores externos ficam para incrementos por provedor.**
 - **RF-093** Gerenciar bases documentais RAG privadas. **Implementado nas Releases 4 e 4.1 com ingestão assíncrona, versionamento, níveis de acesso, contexto transacional, RLS, constraints compostas e armazenamento segregado.**
 - **RF-094** Configurar retenção, anonimização e auditoria. **Implementado no P1.**
-- **RF-095** Administrar coleções privadas e selecionar coleções globais opcionais. **Planejado.**
-- **RF-096** Configurar atualização automática, versão fixada ou fork privado para uma fonte global. **Planejado.**
-- **RF-097** Exibir em respostas e citações se a fonte é global ou privada. **Planejado.**
-- **RF-098** Monitorar e governar a ingestão automática das entidades internas elegíveis no RAG Privado, conforme finalidade, base legal, retenção e nível de acesso. **Planejado.**
-- **RF-099** Consultar histórico de ingestão, concessões, forks, recuperação e feedback do próprio tenant. **Planejado.**
+- **RF-095** Administrar coleções privadas e selecionar coleções globais opcionais. **Implementado parcialmente: adesão a coleções globais está disponível; coleções privadas administráveis permanecem planejadas.**
+- **RF-096** Configurar atualização automática, versão fixada ou fork privado para uma fonte global. **Implementado parcialmente para atualização automática e versão fixada; fork privado permanece planejado.**
+- **RF-097** Exibir em respostas e citações se a fonte é global ou privada. **Implementado na recuperação hierárquica.**
+- **RF-098** Monitorar e governar a ingestão automática das entidades internas elegíveis no RAG Privado, conforme finalidade, base legal, retenção e nível de acesso. **Implementado para solicitações, interações, encaminhamentos/respostas oficiais, minutas, tramitações, OCR/transcrições revisados, atas concluídas, fiscalizações concluídas e memórias temáticas.**
+- **RF-099** Consultar histórico de ingestão, concessões, forks, recuperação e feedback do próprio tenant. **Implementado parcialmente para ingestão, concessões, consultas e feedback; forks e visão administrativa consolidada permanecem planejados.**
+- **RF-100** Cadastrar e versionar projetores autorizados por módulo, tipo de entidade e ação, com allowlist de campos e política de elegibilidade. **Implementado como registry em código para todas as fontes operacionais cobertas; administração dinâmica permanece fora do escopo atual.**
+- **RF-101** Exibir estado, origem, versão, hash, finalidade, base legal, ACL, retenção, erro e última projeção de cada fonte operacional. **Implementado na listagem administrativa tenant-scoped.**
+- **RF-102** Permitir reprocessamento, reconciliação, despublicação e purge autorizados, com auditoria e execução assíncrona. **Implementado para reprocessamento, reconciliação e purge dirigido pelo ciclo de vida da origem; endpoint de purge manual permanece reservado.**
+- **RF-103** Propagar criação, atualização, cancelamento, exclusão, anonimização e expiração da entidade para o conhecimento derivado. **Implementado com despublicação imediata, tombstone e purge idempotente.**
+- **RF-104** Rotear perguntas entre recuperação documental, consulta estruturada tenant-scoped ou composição híbrida, informando o método usado. **Implementado automaticamente no endpoint principal, preservando também o endpoint estruturado explícito.**
+- **RF-105** Consultar contagens, estados, prazos, agrupamentos e indicadores por read models estruturados, com filtros reproduzíveis. **Implementado para solicitações, encaminhamentos, tramitações, agenda e fiscalizações, com método, dataset, métrica, agrupamento, filtros e período no retorno.**
+- **RF-106** Gerar memórias temáticas agregadas e anonimizadas por tema, território, período e resultado, respeitando agregação mínima. **Implementado com reconstrução determinística e limiar mínimo configurável por ambiente.**
+- **RF-107** Cadastrar perguntas reais e documentos esperados ou expectativa de recusa por tenant, executar avaliação por `k` e preservar o histórico de métricas. **Implementado.**

@@ -23,3 +23,9 @@
 - **Promoção:** processo controlado de criar fonte global a partir de conteúdo privado autorizado, anonimizado e revisado.
 - **RLS:** Row-Level Security do PostgreSQL, usada para negar acesso a linhas privadas fora do tenant da transação.
 - **Groundedness:** grau em que a resposta é sustentada pelas fontes citadas.
+- **Memória operacional:** conhecimento privado derivado de uma entidade interna por projeção governada, versionada e recuperável; não implica treinamento do modelo.
+- **Projetor de conhecimento:** componente registrado que decide elegibilidade, seleciona campos permitidos, minimiza dados e produz o snapshot canônico de uma entidade.
+- **Consulta estruturada:** leitura tenant-scoped usada para fatos exatos como contagens, estados, prazos e agrupamentos.
+- **Tombstone:** registro mínimo que despublica uma fonte e representa sua exclusão até a conclusão do purge.
+- **Purge:** eliminação dos chunks, embeddings, textos, versões e objetos derivados, preservando somente auditoria sem conteúdo.
+- **Quarentena:** estado que impede indexação ou publicação de conteúdo suspeito até revisão.

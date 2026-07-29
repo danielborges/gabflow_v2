@@ -1,8 +1,10 @@
 import hashlib
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.ai.duplicates import EmbeddingProviderError
 from app.auth.security import hash_password
 from app.extensions import db
 from app.models import (
@@ -120,13 +122,21 @@ def _global_source(
     return collection, document, version
 
 
-def _private_source(tenant, user, content):
+def _private_source(
+    tenant,
+    user,
+    content,
+    *,
+    title="Nota técnica do gabinete",
+    indexed_at=None,
+    embedding_model=LocalHashEmbeddingProvider.model,
+):
     document_id = uuid.uuid4()
     version_id = uuid.uuid4()
     document = RagDocument(
         id=document_id,
         tenant_id=tenant.id,
-        title="Nota técnica do gabinete",
+        title=title,
         document_type="PROCEDIMENTO_INTERNO",
         access_level=RagDocumentAccess.INTERNO,
         created_by_id=user.id,
@@ -148,6 +158,7 @@ def _private_source(tenant, user, content):
         page_count=1,
         embedding_model=LocalHashEmbeddingProvider.model,
         chunk_count=1,
+        indexed_at=indexed_at,
         created_by_id=user.id,
     )
     db.session.add(
@@ -160,9 +171,10 @@ def _private_source(tenant, user, content):
             page_start=1,
             page_end=1,
             embedding=LocalHashEmbeddingProvider().embeddings([content])[0],
-            embedding_model=LocalHashEmbeddingProvider.model,
+            embedding_model=embedding_model,
         )
     )
+    return document, version
 
 
 def test_hierarchical_retrieval_combines_scopes_and_filters_jurisdiction(app, client):
@@ -241,6 +253,10 @@ def test_hierarchical_retrieval_combines_scopes_and_filters_jurisdiction(app, cl
         "GLOBAL",
         "PRIVADO",
     }
+    assert all(
+        source["pontuacao"] >= response.json["limiarEvidencia"]
+        for source in response.json["fontes"]
+    )
     titles = {source["titulo"] for source in response.json["fontes"]}
     assert "Regra nacional de iluminação pública" in titles
     assert "Nota técnica do gabinete" in titles
@@ -395,3 +411,265 @@ def test_targeted_collection_requires_global_grant(app, client):
         assert entitlement.status == GlobalEntitlementStatus.ATIVA
         assert entitlement.update_mode == GlobalUpdateMode.AUTOMATICA
         assert entitlement.grant_source == "GLOBAL_GRANT"
+
+
+def test_candidate_limit_is_applied_after_relevance_scoring(app, client):
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        )
+        now = datetime.now(UTC)
+        _private_source(
+            tenant,
+            user,
+            (
+                "A manutenção preventiva da iluminação pública deve priorizar segurança, "
+                "eficiência energética e registro das falhas nos bairros."
+            ),
+            title="Plano antigo e relevante de iluminação",
+            indexed_at=now - timedelta(days=30),
+        )
+        _private_source(
+            tenant,
+            user,
+            "O arquivo recente trata exclusivamente de uniformes e materiais de escritório.",
+            title="Comunicado recente de almoxarifado",
+            indexed_at=now,
+        )
+        db.session.commit()
+
+    app.config["RAG_RETRIEVAL_CANDIDATE_LIMIT"] = 1
+    csrf = _login(client)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={
+            "consulta": (
+                "Como planejar manutenção preventiva da iluminação pública com segurança "
+                "e eficiência energética?"
+            ),
+            "limite": 1,
+        },
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["fundamentada"] is True
+    assert [source["titulo"] for source in response.json["fontes"]] == [
+        "Plano antigo e relevante de iluminação"
+    ]
+
+
+def test_candidate_pool_is_diversified_before_its_limit(app, client):
+    query = "protocolo legislativo parecer comissao votacao"
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        )
+        _, dominant_version = _private_source(
+            tenant,
+            user,
+            query,
+            title="Manual dominante",
+        )
+        for position, suffix in enumerate(("versao alfa", "versao beta", "versao gama"), start=1):
+            content = f"{query} {suffix}"
+            db.session.add(
+                RagChunk(
+                    tenant_id=tenant.id,
+                    version=dominant_version,
+                    position=position,
+                    content=content,
+                    content_checksum=hashlib.sha256(content.encode()).hexdigest(),
+                    page_start=position + 1,
+                    page_end=position + 1,
+                    embedding=LocalHashEmbeddingProvider().embeddings([content])[0],
+                    embedding_model=LocalHashEmbeddingProvider.model,
+                )
+            )
+        _private_source(
+            tenant,
+            user,
+            "A comissao analisa o protocolo legislativo antes do parecer e da votacao.",
+            title="Guia complementar",
+        )
+        db.session.commit()
+
+    app.config["RAG_RETRIEVAL_CANDIDATE_LIMIT"] = 2
+    app.config["RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT"] = 1
+    csrf = _login(client)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": query, "limite": 2},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json["fontes"]) == 2
+    assert {source["titulo"] for source in response.json["fontes"]} == {
+        "Manual dominante",
+        "Guia complementar",
+    }
+
+
+def test_ranking_does_not_force_a_weaker_scope(app, client):
+    actor_id = _global_admin(app, "ranking@teste.local")
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        )
+        _private_source(
+            tenant,
+            user,
+            (
+                "Planejamento de iluminação pública com manutenção preventiva, segurança, "
+                "eficiência energética e inspeção periódica dos bairros."
+            ),
+            title="Plano completo de iluminação",
+        )
+        _private_source(
+            tenant,
+            user,
+            (
+                "A iluminação pública eficiente exige planejamento, manutenção preventiva, "
+                "segurança das vias e acompanhamento periódico."
+            ),
+            title="Nota complementar de iluminação",
+        )
+        _global_source(
+            actor_id=actor_id,
+            name="Referências genéricas",
+            title="Catálogo resumido de iluminação",
+            content=(
+                "Iluminação pública eficiente integra um catálogo geral de serviços "
+                "administrativos."
+            ),
+        )
+        db.session.commit()
+
+    csrf = _login(client)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={
+            "consulta": (
+                "Planejamento de iluminação pública com manutenção preventiva, segurança "
+                "e eficiência"
+            ),
+            "limite": 2,
+        },
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json["fontes"]) == 2
+    assert {source["escopo"] for source in response.json["fontes"]} == {"PRIVADO"}
+    assert response.json["recuperacao"]["diversidadeForcada"] is False
+
+
+def test_embedding_failure_uses_normalized_lexical_score(app, client, monkeypatch):
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        )
+        _private_source(
+            tenant,
+            user,
+            (
+                "A tramitação legislativa registra protocolo, comissão responsável, "
+                "parecer, votação e situação atual da proposição."
+            ),
+            title="Procedimento de tramitação legislativa",
+        )
+        db.session.commit()
+
+    def unavailable_provider():
+        raise EmbeddingProviderError("embedding indisponível no teste")
+
+    monkeypatch.setattr("app.rag.retrieval.rag_embedding_provider", unavailable_provider)
+    csrf = _login(client)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Como registrar protocolo parecer votação e situação da proposição?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["fundamentada"] is True
+    assert response.json["fallbackUtilizado"] is True
+    assert response.json["fontes"][0]["modoRecuperacao"] == "LEXICAL"
+    assert response.json["fontes"][0]["similaridadeSemantica"] == 0
+    assert response.json["fontes"][0]["pontuacao"] >= response.json["limiarEvidencia"]
+
+
+def test_embedding_from_another_model_is_not_compared(app, client):
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        )
+        _private_source(
+            tenant,
+            user,
+            (
+                "O protocolo de fiscalização contém vistoria, achados, providências "
+                "e relatório conclusivo."
+            ),
+            title="Manual de fiscalização",
+            embedding_model="modelo-antigo-incompativel",
+        )
+        db.session.commit()
+
+    csrf = _login(client)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "O que contém o protocolo de fiscalização e relatório conclusivo?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["fundamentada"] is True
+    source = response.json["fontes"][0]
+    assert source["modoRecuperacao"] == "LEXICAL"
+    assert source["similaridadeSemantica"] == 0
+    assert response.json["recuperacao"]["modo"] == "LEXICAL"
+    assert response.json["recuperacao"]["modelosEmbeddingUtilizados"] == []
+
+
+def test_lexical_only_candidate_does_not_outrank_equivalent_hybrid_candidate(app, client):
+    content = "protocolo legislativo parecer comissao votacao"
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        )
+        _private_source(
+            tenant,
+            user,
+            content,
+            title="Fonte hibrida compativel",
+        )
+        _private_source(
+            tenant,
+            user,
+            f"{content} documento legado",
+            title="Fonte lexical legada",
+            embedding_model="modelo-antigo-incompativel",
+        )
+        db.session.commit()
+
+    csrf = _login(client)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": content, "limite": 2},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert [source["titulo"] for source in response.json["fontes"]] == [
+        "Fonte hibrida compativel",
+        "Fonte lexical legada",
+    ]
+    assert response.json["recuperacao"]["modo"] == "MISTO"

@@ -26,6 +26,8 @@ Responsável por:
 - geocodificação;
 - notificações;
 - indexação;
+- projeção governada das entidades dos módulos;
+- reconciliação, expiração e purge do conhecimento operacional;
 - geração de relatórios.
 
 ## Serviço de IA
@@ -47,7 +49,9 @@ Responsável por:
 - embeddings;
 - distribuição e versionamento do catálogo global;
 - recuperação federada global + privada;
-- filtros de tenant, jurisdição, vigência e finalidade;
+- registry de projetores e ciclo de vida das fontes operacionais;
+- roteamento documental, estruturado e híbrido;
+- filtros de tenant, ACL, módulo, jurisdição, vigência e finalidade;
 - normalização e reranking;
 - citações;
 - controle de acesso;
@@ -62,6 +66,8 @@ Sugestão:
 - row-level security forçado no domínio privado;
 - roles separadas para migration, API, worker e backup;
 - pgvector para busca vetorial quando adotado.
+- full-text search para recuperação lexical;
+- read models tenant-scoped para fatos, contagens e indicadores.
 
 ## Armazenamento de Objetos
 
@@ -83,4 +89,5 @@ Sugestão:
 - desacoplamento;
 - integração;
 - processamento assíncrono;
+- outbox transacional com payload mínimo e sem conteúdo sensível;
 - auditoria operacional.

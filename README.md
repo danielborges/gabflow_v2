@@ -21,7 +21,22 @@ parlamentares.
 - responsáveis, tarefas e notificações internas;
 - agrupamento de duplicidades sem perda de histórico;
 - anexos isolados por tenant, validados e acessados por URL assinada;
-- templates, retornos agendados e envio transacional de e-mail pelo Resend.
+- templates, retornos agendados e envio transacional de e-mail pelo Resend;
+- RAG privado isolado por tenant e catálogo global distribuído por política;
+- recuperação hierárquica com citações e proveniência;
+- memória operacional versionada para solicitações, interações e minutas
+  legislativas concluídas.
+
+## Evolução do conhecimento operacional
+
+A incorporação de informações dos demais módulos está parcialmente implementada.
+O alvo não é indexar todas as tabelas: cada módulo fornece projeções governadas,
+minimizadas e tenant-scoped. Perguntas quantitativas usam consultas estruturadas;
+o RAG permanece responsável por evidências semânticas e documentais.
+
+- Decisão arquitetural: `docs/specs/adr/ADR-008-operational-knowledge-projections.md`
+- Plano do próximo incremento:
+  `docs/implementation/Release4.6-operational-knowledge-plan.md`
 
 ## Executar com Docker
 

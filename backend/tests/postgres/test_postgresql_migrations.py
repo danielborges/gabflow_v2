@@ -43,7 +43,10 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "rag_chunks",
         "rag_documents",
         "rag_document_versions",
+        "rag_evaluation_questions",
+        "rag_evaluation_runs",
         "rag_knowledge_sources",
+        "rag_thematic_memories",
         "scheduled_returns",
         "service_requests",
         "tenants",
@@ -69,6 +72,12 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
             index["name"] for index in inspector.get_indexes("outbox_events")
         }
     assert "latency_ms" in query_columns
+    assert {
+        "method",
+        "routing_reasons",
+        "applied_filters",
+        "structured_result",
+    }.issubset(query_columns)
     assert "processing_duration_ms" in outbox_columns
     assert {
         "ix_outbox_events_claim_ready",
@@ -163,6 +172,9 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         tramitation_statuses = connection.execute(
             enum_query, {"enum_name": "legislative_tramitation_status"}
         ).scalars().all()
+        operational_source_statuses = connection.execute(
+            enum_query, {"enum_name": "rag_knowledge_source_status"}
+        ).scalars().all()
 
     assert request_statuses == [
         "NOVA",
@@ -187,6 +199,15 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         "ARQUIVADA",
         "RETIRADA",
     ]
+    assert set(operational_source_statuses) == {
+        "PENDENTE",
+        "ATIVA",
+        "QUARENTENA",
+        "INELEGIVEL",
+        "EXPIRADA",
+        "ERRO",
+        "EXCLUIDA",
+    }
 
 
 def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
@@ -296,6 +317,10 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             rolled_back_outbox_columns = {
                 column["name"] for column in inspector.get_columns("outbox_events")
             }
+            rolled_back_source_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_knowledge_sources")
+            }
             rls_policies = connection.execute(
                 text(
                     """
@@ -321,8 +346,10 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "responsible" in rolled_back_external_agency_columns
         assert "phone" in rolled_back_external_agency_columns
         assert "source" in rolled_back_external_agency_columns
-        assert "latency_ms" not in rolled_back_query_columns
-        assert "processing_duration_ms" not in rolled_back_outbox_columns
+        assert "latency_ms" in rolled_back_query_columns
+        assert "processing_duration_ms" in rolled_back_outbox_columns
+        assert "tombstone_hash" not in rolled_back_source_columns
+        assert "purge_completed_at" not in rolled_back_source_columns
         assert rls_policies == 6
 
         upgrade(directory="migrations")
@@ -346,6 +373,10 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             }
             reapplied_outbox_columns = {
                 column["name"] for column in inspector.get_columns("outbox_events")
+            }
+            reapplied_source_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_knowledge_sources")
             }
             political_parties_count = connection.execute(
                 text("SELECT count(*) FROM political_parties")
@@ -372,6 +403,8 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "source" in reapplied_external_agency_columns
         assert "latency_ms" in reapplied_query_columns
         assert "processing_duration_ms" in reapplied_outbox_columns
+        assert "tombstone_hash" in reapplied_source_columns
+        assert "purge_completed_at" in reapplied_source_columns
         assert political_parties_count == 30
         assert pt_number == 13
 

@@ -31,6 +31,10 @@ Dados privados nunca são promovidos para o catálogo global automaticamente. Um
 promoção exige autorização do tenant, anonimização, revisão humana e criação de nova
 fonte global auditável.
 
+A incorporação de informações produzidas nos módulos segue projeções governadas e
+recuperação híbrida conforme o ADR-008; não significa copiar tabelas nem treinar o
+modelo com dados privados.
+
 ## Fronteiras de autorização
 
 - usuários de tenant possuem somente leitura sobre conteúdo global publicado e

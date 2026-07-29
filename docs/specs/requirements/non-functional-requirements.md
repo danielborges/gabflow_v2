@@ -27,3 +27,9 @@
 - **RNF-025 Proveniência:** toda fonte global ou privada deve possuir versão, checksum, escopo e origem reproduzíveis.
 - **RNF-026 Segurança de conectores:** fontes externas devem usar allowlist, proteção SSRF, cofre de segredos, limites de consumo e snapshots versionados.
 - **RNF-027 Concorrência segura:** contexto de tenant não pode vazar pelo pool de conexões, jobs, retries ou processamento concorrente.
+- **RNF-028 Frescor operacional:** alterações elegíveis devem ficar recuperáveis dentro do SLO definido para a fila RAG, e backlog ou fonte desatualizada deve ser observável.
+- **RNF-029 Convergência:** eventos repetidos, fora de ordem e reconciliação devem convergir para uma única versão vigente correspondente ao estado canônico.
+- **RNF-030 Exclusão derivada:** purge deve remover chunks, embeddings, texto extraído, versões derivadas e objeto armazenado, sem remover a trilha mínima de auditoria.
+- **RNF-031 Qualidade de recuperação:** cada tenant deve possuir avaliação periódica de `precision@k`, `recall@k`, groundedness, precisão de citações, fontes desconexas e taxa de recusa adequada. **Implementado com dataset e execuções persistidos por tenant; a periodicidade automática permanece operacionalmente configurável.**
+- **RNF-032 Segurança de conteúdo interno:** conteúdo originado dos módulos deve passar por minimização e avaliação de prompt injection antes da indexação e novamente antes de compor o contexto.
+- **RNF-033 Autorização pré-ranking:** tenant, ACL, finalidade, vigência e estado devem ser filtrados antes da busca ou do ranking, inclusive em consultas estruturadas.

@@ -51,7 +51,7 @@
 - **RIA-052** Aplicar políticas globais obrigatória, padrão, opcional, direcionada, restrita por jurisdição e privada da plataforma. **Implementado com concessões tenant-scoped, vigência e filtros jurisdicionais.**
 - **RIA-053** Permitir atualização automática, fixação de versão e fork privado de fonte global com proveniência preservada. **Implementado parcialmente: atualização automática e fixação estão disponíveis; fork privado permanece planejado.**
 - **RIA-054** Diferenciar escopo global e privado em toda citação, auditoria e explicação de ranking. **Implementado com escopo, origem, coleção, versão, checksums, proveniência e scores.**
-- **RIA-055** Ingerir automaticamente toda informação interna elegível dos módulos no RAG Privado, preservando finalidade, base legal, nível de acesso, retenção e entidade de origem. **Implementado para solicitações, interações e documentos legislativos na Release 4.4.**
+- **RIA-055** Ingerir automaticamente toda informação interna elegível dos módulos no RAG Privado, preservando finalidade, base legal, nível de acesso, retenção e entidade de origem. **Implementado parcialmente para solicitações, interações e minutas legislativas na Release 4.4; os demais módulos permanecem planejados.**
 - **RIA-056** Sincronizar APIs globais homologadas por conectores com allowlist, proteção SSRF, snapshots imutáveis e aprovação de publicação. **Planejado.**
 - **RIA-057** Impedir promoção automática de conhecimento privado para o catálogo global; promoção explícita exige autorização, anonimização e revisão humana. **Planejado.**
 - **RIA-058** Usar feedback positivo, negativo e corrigido em um pipeline tenant-scoped de avaliação e melhoria, sem alterar diretamente o modelo ou contaminar outros tenants. **Planejado.**
@@ -75,6 +75,17 @@ considerados completos no alvo hierárquico:
 - **RIA-063** Evitar inferência de preferência político-eleitoral individual. **Implementado na Release 5 por restrição documental e ausência de score individual.**
 - **RIA-064** Alertar sobre amostra insuficiente. **Implementado na Release 5 por supressão de grupos pequenos.**
 - **RIA-065** Possibilitar auditoria da origem dos dados. **Implementado na Release 5 com relatório mensal e evidências por protocolo.**
+
+## Conhecimento operacional e recuperação híbrida
+
+- **RIA-066** Processar entidades internas somente por projetores registrados, determinísticos e versionados, com campos permitidos por allowlist. **Implementado para solicitações, encaminhamentos/respostas oficiais, minutas, tramitações, OCR/transcrições revisados, atas concluídas, fiscalizações concluídas e memórias temáticas por contrato e registry central.**
+- **RIA-067** Emitir evento tenant-scoped sem conteúdo sensível e reler a entidade canônica dentro do contexto do tenant antes de projetá-la. **Implementado pelo contrato V2 do outbox, com módulo, entidade, ação e revisão; o worker continua relendo o aggregate pelo registry.**
+- **RIA-068** Tratar criação, atualização, cancelamento, exclusão, anonimização e expiração, mantendo uma única versão vigente e purgando conteúdo derivado quando aplicável. **Implementado com versão anterior preservada durante atualização/falha e purge físico nas ações destrutivas.**
+- **RIA-069** Aplicar minimização de PII, ACL, finalidade, base legal, retenção e detecção de prompt injection antes de gerar embeddings. **Implementado nas fontes atuais, incluindo quarentena antes de arquivo, chunks e embeddings.**
+- **RIA-070** Marcar sincronizações esgotadas como erro, permitir reprocessamento e reconciliar periodicamente o RAG com o estado canônico. **Implementado com estado `ERRO`, dados de tentativa, endpoint de reprocessamento e scheduler de retenção.**
+- **RIA-071** Rotear perguntas quantitativas ou transacionais para consultas estruturadas tenant-scoped e perguntas semânticas para recuperação documental. **Implementado com classificação determinística, composição híbrida e persistência do método, motivos, filtros e resultado estruturado.**
+- **RIA-072** Aplicar filtros de tenant, ACL, módulo, entidade, tema, território, período, vigência e estado antes do ranking. **Implementado parcialmente para tenant, nível de acesso, vigência, estado operacional e retenção; os filtros explícitos de intenção permanecem planejados.**
+- **RIA-073** Não forçar diversidade de escopo ou fonte abaixo do limiar e medir fontes desconexas, `precision@k`, `recall@k`, groundedness e precisão das citações por tenant. **Implementado com dataset tenant-scoped, execução por `k`, histórico de resultados e métricas de fontes desconexas e recusa.**
 
 ## Avaliação
 

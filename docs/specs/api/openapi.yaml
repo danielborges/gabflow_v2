@@ -33,6 +33,83 @@ paths:
       responses:
         "200":
           description: Qualidade, feedback, fallback, latência p95 e SLO
+  /assistente/consultas-estruturadas:
+    post:
+      x-status: current
+      summary: Executa consulta analítica estruturada tenant-scoped
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dataset:
+                  type: string
+                  enum: [SOLICITACOES, ENCAMINHAMENTOS, TRAMITACOES, AGENDA, FISCALIZACOES]
+                metrica:
+                  type: string
+                  enum: [CONTAGEM, PRAZOS_VENCIDOS, TEMPO_MEDIO_RESOLUCAO_HORAS]
+                agruparPor:
+                  type: string
+                  enum: [NENHUM, STATUS, TEMA, TERRITORIO, ORGAO, TIPO, ETAPA, MES]
+                inicio: { type: string, format: date }
+                fim: { type: string, format: date }
+                status: { type: string }
+                tema: { type: string }
+                territorioId: { type: string, format: uuid }
+                orgaoId: { type: string, format: uuid }
+      responses:
+        "200": { description: Resultado reproduzível com método, filtros e período }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/perguntas:
+    get:
+      x-status: current
+      summary: Lista perguntas reais do dataset de avaliação do tenant
+      responses:
+        "200": { description: Perguntas e expectativas tenant-scoped }
+    post:
+      x-status: current
+      summary: Cadastra pergunta com documentos esperados ou expectativa de recusa
+      responses:
+        "201": { description: Pergunta de avaliação criada }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/perguntas/{id}:
+    patch:
+      x-status: current
+      summary: Atualiza ou desativa pergunta de avaliação
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Pergunta atualizada }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /assistente/avaliacoes/executar:
+    post:
+      x-status: current
+      summary: Executa avaliação de retrieval por tenant
+      responses:
+        "201":
+          description: precision@k, recall@k, groundedness, citações, desconexão e recusa
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/execucoes:
+    get:
+      x-status: current
+      summary: Lista histórico de execuções de avaliação do tenant
+      responses:
+        "200": { description: Série histórica das métricas de retrieval }
+  /rag/memorias-tematicas:
+    get:
+      x-status: current
+      summary: Lista memórias agregadas por tema, território e período
+      responses:
+        "200": { description: Memórias temáticas do tenant }
+  /rag/memorias-tematicas/reconstruir:
+    post:
+      x-status: current
+      summary: Reconstrói memórias temáticas respeitando agregação mínima
+      responses:
+        "202": { description: Agregados reconstruídos e projeções enfileiradas }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /solicitacoes:
     get:
       summary: Lista solicitações
@@ -689,6 +766,77 @@ paths:
       responses:
         "202": { description: Reprocessamento enfileirado }
         "409": { description: Versão já em processamento }
+  /rag/fontes-operacionais:
+    get:
+      x-status: current
+      summary: Lista fontes operacionais e seus estados no tenant
+      parameters:
+        - { in: query, name: modulo, schema: { type: string } }
+        - { in: query, name: entidadeTipo, schema: { type: string } }
+        - { in: query, name: estado, schema: { $ref: "#/components/schemas/EstadoFonteOperacional" } }
+      responses:
+        "200":
+          description: Fontes filtradas pelo tenant e pela autorização do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/FonteOperacional" }
+  /rag/fontes-operacionais/{fonteId}/reprocessar:
+    post:
+      x-status: current
+      summary: Reprocessa uma fonte operacional a partir do estado canônico
+      parameters:
+        - in: path
+          name: fonteId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Reprocessamento tenant-scoped enfileirado }
+        "404": { description: Fonte inexistente no tenant }
+        "409": { description: Fonte já em processamento }
+  /rag/fontes-operacionais/{fonteId}/purge:
+    post:
+      x-status: planned
+      summary: Despublica e agenda purge autorizado dos artefatos derivados
+      parameters:
+        - in: path
+          name: fonteId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justificativa]
+              properties:
+                justificativa: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        "202": { description: Despublicação aplicada e purge enfileirado }
+        "403": { description: Perfil sem permissão ou retenção legal impede purge }
+        "404": { description: Fonte inexistente no tenant }
+  /rag/memoria-operacional/reconciliacoes:
+    post:
+      x-status: planned
+      summary: Agenda reconciliação das fontes operacionais do tenant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                modulo: { type: string }
+                entidadeTipo: { type: string }
+                desde: { type: string, format: date-time }
+      responses:
+        "202": { description: Reconciliação tenant-scoped enfileirada }
+        "409": { description: Já existe reconciliação equivalente em andamento }
   /legislativo/minutas:
     get:
       summary: Lista minutas legislativas do tenant
@@ -1687,6 +1835,46 @@ components:
         versoes:
           type: array
           items: { $ref: "#/components/schemas/VersaoDocumentoRag" }
+    EstadoFonteOperacional:
+      type: string
+      enum: [PENDENTE, ATIVA, QUARENTENA, INELEGIVEL, EXPIRADA, ERRO, EXCLUIDA]
+    FonteOperacional:
+      type: object
+      required:
+        - id
+        - modulo
+        - entidadeTipo
+        - entidadeId
+        - estado
+        - finalidade
+        - baseLegal
+        - nivelAcesso
+        - versaoLogica
+      properties:
+        id: { type: string, format: uuid }
+        modulo: { type: string }
+        entidadeTipo: { type: string }
+        entidadeId: { type: string, format: uuid }
+        versaoProjetor: { type: string }
+        revisaoOrigem: { type: integer, minimum: 0 }
+        estado: { $ref: "#/components/schemas/EstadoFonteOperacional" }
+        motivoElegibilidade: { type: [string, "null"] }
+        finalidade: { type: string }
+        baseLegal: { type: string }
+        nivelAcesso: { type: string, enum: [INTERNO, RESTRITO] }
+        retencaoAte: { type: [string, "null"], format: date }
+        hashConteudo: { type: [string, "null"] }
+        versaoLogica: { type: integer, minimum: 0 }
+        documentoId: { type: [string, "null"], format: uuid }
+        versaoAtualId: { type: [string, "null"], format: uuid }
+        ultimaProjecaoEm: { type: [string, "null"], format: date-time }
+        codigoErro: { type: [string, "null"] }
+        erro: { type: [string, "null"] }
+        tentativas: { type: integer, minimum: 0 }
+        quarentenaEm: { type: [string, "null"], format: date-time }
+        excluidaEm: { type: [string, "null"], format: date-time }
+        purgeConcluidoEm: { type: [string, "null"], format: date-time }
+        tombstoneHash: { type: [string, "null"] }
     CriarSolicitacaoRequest:
       type: object
       required: [origem, descricao]
@@ -2141,6 +2329,25 @@ components:
           type: integer
           minimum: 1
           maximum: 10
+        filtros:
+          type: object
+          additionalProperties: false
+          properties:
+            dataset:
+              type: string
+              enum: [SOLICITACOES, ENCAMINHAMENTOS, TRAMITACOES, AGENDA, FISCALIZACOES]
+            metrica:
+              type: string
+              enum: [CONTAGEM, PRAZOS_VENCIDOS, TEMPO_MEDIO_RESOLUCAO_HORAS]
+            agruparPor:
+              type: string
+              enum: [NENHUM, STATUS, TEMA, TERRITORIO, ORGAO, TIPO, ETAPA, MES]
+            inicio: { type: string, format: date }
+            fim: { type: string, format: date }
+            status: { type: string }
+            tema: { type: string }
+            territorioId: { type: string, format: uuid }
+            orgaoId: { type: string, format: uuid }
     RagQueryFeedbackRequest:
       type: object
       required: [avaliacao]
@@ -2163,6 +2370,21 @@ components:
           format: uuid
         consulta:
           type: string
+        metodo:
+          type: string
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO]
+          description: Método selecionado automaticamente pelo roteador.
+        motivosRoteamento:
+          type: array
+          items: { type: string }
+        filtrosAplicados:
+          type: object
+          additionalProperties: true
+          description: Filtros tenant-scoped e período usados na recuperação ou consulta estruturada.
+        resultadoEstruturado:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Resultado reproduzível de read model quando o método for ESTRUTURADO ou HIBRIDO.
         resposta:
           type: string
         fundamentada:
@@ -2180,6 +2402,24 @@ components:
         erroFallback:
           type: string
           nullable: true
+        recuperacao:
+          type: object
+          properties:
+            total: { type: integer }
+            global: { type: integer }
+            privado: { type: integer }
+            deduplicacaoPorChecksum: { type: boolean }
+            rerankingConjunto: { type: boolean }
+            limiarAplicadoPorFonte: { type: boolean }
+            diversidadeForcada: { type: boolean }
+            compatibilidadeModeloEmbedding: { type: boolean }
+            modo:
+              type: string
+              enum: [HIBRIDO, LEXICAL, MISTO, SEM_RESULTADO]
+            modelosEmbeddingUtilizados:
+              type: array
+              items:
+                type: string
         avaliacao:
           type: string
           nullable: true
@@ -2237,6 +2477,21 @@ components:
                 type: string
                 format: uuid
                 nullable: true
+              versaoProjetor:
+                type: string
+                nullable: true
+                description: Versão semântica do projetor que gerou a fonte operacional.
+              revisaoOrigem:
+                type: integer
+                nullable: true
+                description: Maior revisão de evento aplicada à fonte operacional.
+              estadoFonteOperacional:
+                allOf:
+                  - $ref: "#/components/schemas/EstadoFonteOperacional"
+                nullable: true
+              codigoErroFonte:
+                type: string
+                nullable: true
               finalidade:
                 type: string
                 nullable: true
@@ -2275,10 +2530,24 @@ components:
                 nullable: true
               pontuacao:
                 type: number
+              pontuacaoRanking:
+                type: number
+                description: Ordenação secundária por relevância, autoridade e atualidade.
               similaridadeSemantica:
                 type: number
               similaridadeLexical:
                 type: number
+              autoridade:
+                type: number
+                minimum: 0
+                maximum: 1
+              atualidade:
+                type: number
+                minimum: 0
+                maximum: 1
+              modoRecuperacao:
+                type: string
+                enum: [HIBRIDO, LEXICAL]
               justificativas:
                 type: array
                 items:

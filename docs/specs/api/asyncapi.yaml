@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: GabFlow Events
-  version: 0.1.0
+  version: 0.2.0
   description: Contrato de eventos de domínio e integração.
 channels:
   solicitacaoCriada:
@@ -29,6 +29,18 @@ channels:
     messages:
       DocumentoIndexado:
         $ref: "#/components/messages/DocumentoIndexado"
+  sincronizacaoMemoriaOperacionalV1:
+    x-status: legacy
+    address: gabflow.rag.memoria-operacional.sincronizacao.v1
+    messages:
+      SincronizacaoMemoriaOperacionalV1:
+        $ref: "#/components/messages/SincronizacaoMemoriaOperacionalV1"
+  sincronizacaoMemoriaOperacionalV2:
+    x-status: current
+    address: gabflow.rag.memoria-operacional.sincronizacao.v2
+    messages:
+      SincronizacaoMemoriaOperacionalV2:
+        $ref: "#/components/messages/SincronizacaoMemoriaOperacionalV2"
   insightGerado:
     address: gabflow.analytics.insight-gerado.v1
     messages:
@@ -47,6 +59,15 @@ operations:
     action: receive
     channel:
       $ref: "#/channels/classificacaoConcluida"
+  processSincronizacaoMemoriaOperacional:
+    action: receive
+    channel:
+      $ref: "#/channels/sincronizacaoMemoriaOperacionalV1"
+  processSincronizacaoMemoriaOperacionalV2:
+    x-status: current
+    action: receive
+    channel:
+      $ref: "#/channels/sincronizacaoMemoriaOperacionalV2"
 components:
   messages:
     SolicitacaoCriada:
@@ -98,6 +119,89 @@ components:
     DocumentoIndexado:
       payload:
         $ref: "#/components/schemas/DomainEvent"
+    SincronizacaoMemoriaOperacionalV1:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/DomainEvent"
+          - type: object
+            properties:
+              eventType:
+                const: SincronizacaoMemoriaOperacional
+              data:
+                type: object
+                additionalProperties: false
+                required: [entityType, entityId]
+                properties:
+                  entityType:
+                    type: string
+                    maxLength: 80
+                    enum:
+                      - SERVICE_REQUEST
+                      - REQUEST_FORWARDING
+                      - LEGISLATIVE_DRAFT
+                      - LEGISLATIVE_TRAMITATION
+                      - DOCUMENT_OCR
+                      - AUDIO_TRANSCRIPTION
+                      - AGENDA_EVENT
+                      - OVERSIGHT_ACTION
+                      - THEMATIC_MEMORY
+                  entityId:
+                    type: string
+                    format: uuid
+            required: [eventType, data]
+    SincronizacaoMemoriaOperacionalV2:
+      x-status: current
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/DomainEvent"
+          - type: object
+            properties:
+              eventType:
+                const: SincronizacaoMemoriaOperacional
+              data:
+                type: object
+                additionalProperties: false
+                required:
+                  [schemaVersion, sourceModule, entityType, entityId, action, revision]
+                properties:
+                  schemaVersion:
+                    type: integer
+                    const: 2
+                  sourceModule:
+                    type: string
+                    maxLength: 60
+                  entityType:
+                    type: string
+                    maxLength: 80
+                    enum:
+                      - SERVICE_REQUEST
+                      - REQUEST_FORWARDING
+                      - LEGISLATIVE_DRAFT
+                      - LEGISLATIVE_TRAMITATION
+                      - DOCUMENT_OCR
+                      - AUDIO_TRANSCRIPTION
+                      - AGENDA_EVENT
+                      - OVERSIGHT_ACTION
+                      - THEMATIC_MEMORY
+                  entityId:
+                    type: string
+                    format: uuid
+                  action:
+                    type: string
+                    enum:
+                      [
+                        CREATE,
+                        UPDATE,
+                        CANCEL,
+                        DELETE,
+                        ANONYMIZE,
+                        RETENTION_EXPIRED,
+                        RECONCILE,
+                      ]
+                  revision:
+                    type: integer
+                    minimum: 1
+            required: [eventType, data]
     InsightGerado:
       payload:
         $ref: "#/components/schemas/DomainEvent"

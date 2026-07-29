@@ -163,9 +163,13 @@ class RagIngestionStatus(str, enum.Enum):
 
 
 class RagKnowledgeSourceStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
     ATIVA = "ATIVA"
+    QUARENTENA = "QUARENTENA"
     INELEGIVEL = "INELEGIVEL"
     EXPIRADA = "EXPIRADA"
+    ERRO = "ERRO"
+    EXCLUIDA = "EXCLUIDA"
 
 
 class RagQueryFeedbackRating(str, enum.Enum):
@@ -1491,6 +1495,12 @@ class RagKnowledgeSource(db.Model):
     source_module: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     entity_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     entity_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    projector_version: Mapped[str] = mapped_column(
+        String(32), default="1.0.0", nullable=False
+    )
+    source_revision: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
     purpose: Mapped[str] = mapped_column(String(120), nullable=False)
     legal_basis: Mapped[str] = mapped_column(String(160), nullable=False)
     access_level: Mapped[RagDocumentAccess] = mapped_column(
@@ -1500,16 +1510,25 @@ class RagKnowledgeSource(db.Model):
     retention_until: Mapped[date | None] = mapped_column(Date)
     status: Mapped[RagKnowledgeSourceStatus] = mapped_column(
         Enum(RagKnowledgeSourceStatus, name="rag_knowledge_source_status"),
-        default=RagKnowledgeSourceStatus.ATIVA,
+        default=RagKnowledgeSourceStatus.PENDENTE,
         nullable=False,
         index=True,
     )
     eligibility_reason: Mapped[str | None] = mapped_column(String(120))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    sync_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     source_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     document_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     latest_version_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     last_projected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quarantined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    tombstone_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -1551,6 +1570,12 @@ class RagAssistantQuery(db.Model):
     embedding_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+    method: Mapped[str] = mapped_column(
+        String(20), default="DOCUMENTAL", nullable=False, index=True
+    )
+    routing_reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    applied_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    structured_result: Mapped[dict | None] = mapped_column(JSON)
     feedback_rating: Mapped[RagQueryFeedbackRating | None] = mapped_column(
         Enum(RagQueryFeedbackRating, name="rag_query_feedback_rating"), index=True
     )
@@ -1558,6 +1583,108 @@ class RagAssistantQuery(db.Model):
     corrected_response: Mapped[str | None] = mapped_column(Text)
     reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class RagThematicMemory(db.Model):
+    __tablename__ = "rag_thematic_memories"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "generated_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_thematic_memories_tenant_generator",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "theme",
+            "territory",
+            "period_start",
+            "period_end",
+            name="uq_rag_thematic_memory_scope",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    theme: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    territory: Mapped[str] = mapped_column(String(160), default="", nullable=False, index=True)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    resolved_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    high_priority_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class RagEvaluationQuestion(db.Model):
+    __tablename__ = "rag_evaluation_questions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_evaluation_questions_tenant_creator",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    expected_refusal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class RagEvaluationRun(db.Model):
+    __tablename__ = "rag_evaluation_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_evaluation_runs_tenant_creator",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    k: Mapped[int] = mapped_column(Integer, nullable=False)
+    question_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    precision_at_k: Mapped[float] = mapped_column(Float, nullable=False)
+    recall_at_k: Mapped[float] = mapped_column(Float, nullable=False)
+    groundedness: Mapped[float] = mapped_column(Float, nullable=False)
+    citation_precision: Mapped[float] = mapped_column(Float, nullable=False)
+    disconnected_source_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    refusal_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    results: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )

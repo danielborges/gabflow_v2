@@ -175,6 +175,47 @@ def rag_document_path(
     return target
 
 
+def delete_rag_object(
+    storage_key: str,
+    *,
+    tenant_id: uuid.UUID,
+    document_id: uuid.UUID,
+    version_id: uuid.UUID,
+) -> bool:
+    _validate_storage_key(storage_key, tenant_id, document_id, version_id)
+    root = Path(current_app.config["RAG_STORAGE_PATH"]).resolve()
+    target = root / storage_key
+    resolved = target.resolve(strict=False)
+    if root not in resolved.parents:
+        raise NonRetryableFileError("Chave de armazenamento RAG fora do tenant.")
+    if not target.exists() and not target.is_symlink():
+        return False
+    if not target.is_file() and not target.is_symlink():
+        raise NonRetryableFileError("Objeto RAG inválido para eliminação.")
+    target.unlink()
+
+    version_directory = target.parent
+    canonical_version_directory = (
+        root
+        / "tenants"
+        / str(tenant_id)
+        / "rag"
+        / str(document_id)
+        / str(version_id)
+    )
+    if (
+        version_directory.resolve(strict=False)
+        == canonical_version_directory.resolve(strict=False)
+        and version_directory.exists()
+        and not any(version_directory.iterdir())
+    ):
+        version_directory.rmdir()
+        document_directory = version_directory.parent
+        if document_directory.exists() and not any(document_directory.iterdir()):
+            document_directory.rmdir()
+    return True
+
+
 class NonRetryableFileError(RuntimeError):
     pass
 

@@ -71,3 +71,18 @@
 - Credenciais permanecem em cofre de segredos e nunca entram em chunks.
 - Conteúdo sincronizado passa por validação, quarentena e publicação versionada.
 - Prompt injection é avaliado na ingestão e na recuperação.
+
+## Conhecimento operacional
+
+- Eventos transportam somente tenant, tipo, ID, ação e revisão; conteúdo sensível é
+  relido pelo worker no contexto RLS.
+- Projetores usam allowlist de campos e omitem cadastros pessoais, endereços e
+  identificadores que não sejam necessários à finalidade.
+- Conteúdo interno passa por avaliação de PII e prompt injection antes do embedding
+  e novamente antes de compor o contexto.
+- ACL, finalidade, vigência e estado são aplicados antes da busca e do ranking.
+- Exclusão, anonimização e expiração despublicam imediatamente a fonte e propagam
+  purge para todos os artefatos derivados.
+- Reconciliação periódica detecta fontes órfãs, expiradas ou divergentes.
+- Consultas estruturadas usam os mesmos filtros de tenant e autorização do domínio
+  transacional; o modelo não recebe acesso SQL irrestrito.

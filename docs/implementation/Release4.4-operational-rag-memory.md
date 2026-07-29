@@ -34,7 +34,7 @@ Eventos do SQLAlchemy observam a mesma transação que altera `ServiceRequest`,
 O worker:
 
 1. recarrega a entidade dentro do contexto RLS do tenant;
-2. avalia estado, conteúdo aprovado e política de retenção;
+2. avalia estado, geração concluída, presença de conteúdo e política de retenção;
 3. remove e-mails, CPF, telefone e CEP, além de excluir endereço e coordenadas;
 4. compara o hash para evitar nova versão sem mudança material;
 5. grava um snapshot UTF-8 no armazenamento privado;
@@ -74,3 +74,25 @@ explicitamente nos cenários desta entrega.
 - versões anteriores tornam-se históricas somente após a nova indexação;
 - cancelamento desativa a fonte sem copiar conteúdo para auditoria;
 - registro de fontes participa das verificações PostgreSQL de RLS forçado.
+
+## Limites conhecidos
+
+Esta entrega é a fundação do item “informações aprendidas dos demais módulos”, não
+sua conclusão:
+
+- somente solicitações, interações e minutas legislativas estão cobertas;
+- exclusões físicas não são capturadas pelo listener atual;
+- retenção é reavaliada quando há alteração ou sincronização manual, sem sweep
+  periódico dedicado;
+- desativação impede recuperação, mas ainda não purga chunks, texto extraído,
+  versões e arquivo privado;
+- prompt injection é sanitizado na recuperação, sem quarentena completa antes do
+  embedding;
+- minutas entram quando a geração está `CONCLUIDA`; esta versão ainda não exige
+  aprovação humana explícita para a projeção;
+- falha definitiva da sincronização ainda não materializa estado `ERRO` na fonte;
+- acesso privado usa os níveis `INTERNO` e `RESTRITO`, sem ACL granular por equipe
+  ou responsável.
+
+O plano de correção e expansão está em
+`Release4.6-operational-knowledge-plan.md` e no ADR-008.

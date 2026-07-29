@@ -59,7 +59,8 @@ Uma consulta:
 3. calcula score semântico e lexical em cada candidato;
 4. elimina chunks duplicados por checksum;
 5. reranqueia conjuntamente;
-6. preserva diversidade entre os escopos quando ambos têm evidência;
+6. preserva diversidade entre os escopos somente quando ambos têm evidência acima
+   do limiar;
 7. aplica o limiar de groundedness;
 8. registra fontes e escopos na consulta e na auditoria.
 
@@ -87,3 +88,17 @@ Curadoria global:
 - recuperação conjunta e ausência de vazamento privado cobertas;
 - RLS forçado e view `security_barrier` validados em PostgreSQL;
 - migration, downgrade e reaplicação validados.
+
+## Evolução na Release 4.6.1
+
+- O corte por recência antes do score foi removido; os chunks elegíveis são
+  percorridos em lotes e o limite é aplicado ao pool já pontuado.
+- A diversidade forçada entre escopos foi removida.
+- Cada fonte citada precisa satisfazer o limiar mínimo de evidência.
+- Embeddings somente são comparados quando o modelo e a dimensão são compatíveis.
+- Falha ou incompatibilidade usa score lexical normalizado, sem vetor local
+  artificial.
+- Autoridade e atualidade participam do reranking sem alterar o score de evidência.
+
+Permanece planejada a migração para PostgreSQL FTS + pgvector, necessária para
+evitar varredura exata quando o volume crescer.

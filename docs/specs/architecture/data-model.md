@@ -242,6 +242,39 @@ catálogo global.
 - versao_global_origem_id
 - status
 
+## FonteConhecimentoOperacional
+- id
+- tenant_id
+- modulo_origem
+- entidade_tipo
+- entidade_id
+- versao_projetor
+- revisao_origem
+- finalidade
+- base_legal
+- nivel_acesso
+- politica_acl
+- retencao_ate
+- estado
+- motivo_elegibilidade
+- hash_conteudo
+- versao_logica
+- documento_privado_id
+- versao_privada_atual_id
+- ultima_projecao_em
+- codigo_erro
+- mensagem_erro
+- tentativas
+- quarentena_em
+- excluida_em
+- purge_concluido_em
+- tombstone_hash
+
+A origem é única por `tenant_id`, módulo, tipo e ID da entidade. Relações com
+documento e versão privada usam foreign keys compostas com `tenant_id`. O registro
+preserva somente decisão e identificadores após purge; conteúdo sensível não entra
+na auditoria nem no evento de sincronização.
+
 ## VersaoDocumentoPrivado
 - id
 - tenant_id
@@ -285,6 +318,10 @@ catálogo global.
 - usuario_id
 - consulta
 - resposta
+- metodo
+- motivos_roteamento
+- filtros_aplicados
+- resultado_estruturado
 - grounded
 - fontes_globais
 - fontes_privadas
@@ -301,6 +338,49 @@ catálogo global.
 - resposta_corrigida
 - revisado_por
 - revisado_em
+
+## MemoriaTematicaRag
+- id
+- tenant_id
+- tema
+- territorio
+- periodo_inicio
+- periodo_fim
+- total_solicitacoes
+- total_resolvidas
+- total_prioridade_alta
+- sintese
+- gerada_por
+- gerada_em
+
+A chave de agregação é única por tenant, tema, território e período. Grupos abaixo
+do limiar mínimo não originam documento privado.
+
+## PerguntaAvaliacaoRag
+- id
+- tenant_id
+- pergunta
+- documentos_esperados
+- espera_recusa
+- observacoes
+- ativa
+- criada_por
+- criada_em
+
+## ExecucaoAvaliacaoRag
+- id
+- tenant_id
+- k
+- total_perguntas
+- precision_at_k
+- recall_at_k
+- groundedness
+- precisao_citacoes
+- taxa_fontes_desconexas
+- acuracia_recusa
+- resultados_por_pergunta
+- criada_por
+- criada_em
 
 ## Invariantes de tenant
 

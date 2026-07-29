@@ -27,6 +27,8 @@ Este repositório contém a documentação de especificação utilizada para evo
 8. Conhecimento global e conhecimento privado devem possuir fronteiras explícitas.
 9. Nenhum dado privado de tenant pode melhorar outro tenant sem autorização e governança.
 10. Toda citação RAG deve informar escopo, versão e proveniência.
+11. Dados dos módulos entram no RAG somente por projeções governadas; fatos
+    quantitativos permanecem em consultas estruturadas tenant-scoped.
 
 ## Estrutura do repositório
 
@@ -68,7 +70,8 @@ gabflow-spec-driven/
 │   ├── ADR-004-human-in-the-loop.md
 │   ├── ADR-005-multi-tenant.md
 │   ├── ADR-006-geospatial-analytics.md
-│   └── ADR-007-hierarchical-rag.md
+│   ├── ADR-007-hierarchical-rag.md
+│   └── ADR-008-operational-knowledge-projections.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md

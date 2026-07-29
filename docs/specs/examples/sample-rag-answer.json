@@ -11,7 +11,14 @@
     "global": 1,
     "privado": 1,
     "deduplicacaoPorChecksum": true,
-    "rerankingConjunto": true
+    "rerankingConjunto": true,
+    "limiarAplicadoPorFonte": true,
+    "diversidadeForcada": false,
+    "compatibilidadeModeloEmbedding": true,
+    "modo": "HIBRIDO",
+    "modelosEmbeddingUtilizados": [
+      "nomic-embed-text"
+    ]
   },
   "fontes": [
     {
@@ -30,7 +37,13 @@
       "checksumDocumento": "4db0ed53ab054b293e24180e1a12f55d9ca53cb07391e147349b7b623c71d738",
       "proveniencia": "Diário oficial verificado pelo GabFlow.",
       "trecho": "Trecho relevante recuperado da fonte global.",
-      "pontuacao": 0.91
+      "pontuacao": 0.91,
+      "pontuacaoRanking": 0.95,
+      "similaridadeSemantica": 0.92,
+      "similaridadeLexical": 0.89,
+      "autoridade": 1.0,
+      "atualidade": 0.98,
+      "modoRecuperacao": "HIBRIDO"
     },
     {
       "escopo": "PRIVADO",
@@ -43,6 +56,10 @@
       "fonteModulo": "LEGISLATIVO",
       "entidadeOrigemTipo": "LEGISLATIVE_DRAFT",
       "entidadeOrigemId": "aa807982-41df-49fd-b4e7-264b422d67e2",
+      "versaoProjetor": "1.0.0",
+      "revisaoOrigem": 1785321600000000000,
+      "estadoFonteOperacional": "ATIVA",
+      "codigoErroFonte": null,
       "finalidade": "MEMORIA_E_PRODUCAO_LEGISLATIVA",
       "baseLegal": "EXERCICIO_DA_FUNCAO_LEGISLATIVA",
       "retencaoAte": null,
@@ -52,7 +69,13 @@
       "checksum": "7837d9366ea3e8e60d74e3b20ebd92a3a7a3c9b9f9b2439df154c519c15a24c3",
       "checksumDocumento": "d5160ef852970ba06c4cdbbdfe75c2a8a9badd98002158c56785596929bb1ddd",
       "trecho": "Trecho relevante pertencente exclusivamente ao tenant.",
-      "pontuacao": 0.84
+      "pontuacao": 0.84,
+      "pontuacaoRanking": 0.87,
+      "similaridadeSemantica": 0.86,
+      "similaridadeLexical": 0.81,
+      "autoridade": 0.7,
+      "atualidade": 0.99,
+      "modoRecuperacao": "HIBRIDO"
     }
   ]
 }

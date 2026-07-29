@@ -35,10 +35,13 @@ O catálogo global:
 ### RAG Privado
 
 Cada tenant possui uma base privada que recebe documentos enviados pelo gabinete e
-indexa automaticamente toda informação interna elegível produzida nos módulos,
-incluindo solicitações, interações, respostas de órgãos, procedimentos, atas e
-documentos legislativos. Elegibilidade considera finalidade, base legal, retenção,
-sigilo e minimização; informação inelegível não deve ser enviada ao modelo.
+projeções governadas das informações internas elegíveis produzidas nos módulos.
+Solicitações, interações, encaminhamentos, respostas oficiais, minutas,
+tramitações, OCR e transcrições revisados, atas concluídas e relatórios de
+fiscalização concluídos possuem cobertura. Cada origem é incorporada somente pelo
+respectivo projetor registrado.
+Elegibilidade considera aprovação, finalidade, base legal, retenção, sigilo, ACL e
+minimização; informação inelegível não deve ser enviada ao modelo.
 
 O RAG Privado:
 
@@ -51,6 +54,83 @@ O RAG Privado:
 “Aprender”, neste contexto, significa incorporar conhecimento recuperável,
 versionado e governado. Treinamento ou fine-tuning de modelo é um processo separado
 e nunca ocorre implicitamente com dados privados.
+
+## Conhecimento operacional governado
+
+Informações dos módulos não são copiadas diretamente de tabelas para o índice.
+Cada tipo de entidade elegível possui um projetor registrado e versionado:
+
+```text
+alteração no módulo
+  -> evento transacional no outbox, sem conteúdo sensível
+  -> worker no contexto RLS do tenant
+  -> projetor do tipo de entidade
+  -> elegibilidade + allowlist + PII + ACL + segurança
+  -> snapshot canônico e hash
+  -> versão privada imutável
+  -> chunks e embeddings
+  -> ativação atômica da nova versão
+```
+
+O contrato do registry é composto por `ProjectorDefinition`, `Projection` e pelo
+protocolo `OperationalMemoryProjector`. A definição declara módulo, tipo de
+entidade, versão semântica, proprietário, ações suportadas, allowlist, finalidade,
+base legal padrão, ACL, retenção, quarentena e purge. O registry impede
+duplicidade por tipo, valida a saída contra a política registrada e é a única
+origem usada pela sincronização e reconciliação.
+
+O projetor relê o aggregate canônico, em vez de confiar no payload do evento.
+Eventos repetidos ou fora de ordem devem convergir pelo hash e revisão da origem.
+Varredura agendada é mecanismo auxiliar para backfill, reconciliação, expiração e
+detecção de divergência, não o caminho primário de ingestão.
+
+Encaminhamentos e respostas oficiais usam o projetor `REQUEST_FORWARDING`. O
+snapshot contém somente protocolo e título da solicitação, nome do órgão,
+protocolo externo, observações, estado, prazo e resposta registrada. Contatos do
+órgão e dados cadastrais do cidadão não são projetados. Alterações na
+solicitação-pai e no nome do órgão invalidam o snapshot dependente.
+
+Tramitações usam `LEGISLATIVE_TRAMITATION`; OCR e transcrições usam
+`DOCUMENT_OCR` e `AUDIO_TRANSCRIPTION` somente após revisão humana; atas usam
+`AGENDA_EVENT` somente no estado realizado; relatórios de fiscalização usam
+`OVERSIGHT_ACTION` somente no estado concluído. Conteúdo bruto, participantes,
+fotos e responsáveis identificados permanecem fora das projeções.
+
+Memórias temáticas são agregados persistidos e reprojetáveis por tema, território
+e período. Grupos abaixo de `RAG_THEMATIC_MIN_GROUP_SIZE` não são publicados.
+Consultas estruturadas operam diretamente sobre dados tenant-scoped e retornam o
+método, dataset, métrica, agrupamento, filtros, período e base de cálculo.
+
+O endpoint conversacional classifica a intenção de forma determinística:
+
+- indicadores, contagens, médias, prazos e agrupamentos usam `ESTRUTURADO`;
+- pedidos de argumentos, fundamentos, relatos ou evidências usam `DOCUMENTAL`;
+- perguntas que combinam ambos usam `HIBRIDO`.
+
+Filtros explícitos podem complementar a extração automática, mas somente chaves
+em allowlist são aceitas. Método, motivos de roteamento, filtros aplicados e
+resultado estruturado são persistidos na consulta e na auditoria. O modo
+estruturado não executa embeddings; o híbrido combina o cálculo reproduzível com
+as citações documentais sem transformar contagem em evidência semântica.
+
+A avaliação de retrieval mantém perguntas reais por tenant, documentos esperados
+ou expectativa de recusa e execuções históricas por `k`. Os resultados incluem
+`precision@k`, `recall@k`, groundedness, precisão das citações, taxa de fontes
+desconexas e acurácia de recusa.
+
+O evento operacional V2 transporta somente versão do schema, módulo, tipo e ID da
+entidade, ação e revisão de ordenação. A revisão processada é persistida na fonte;
+eventos repetidos ou anteriores são descartados antes de reler ou reprojetar o
+aggregate. Eventos V1 já persistidos continuam aceitos como reconciliação legada.
+
+Cancelamento, exclusão, anonimização ou expiração despublicam a fonte
+imediatamente. Quando a política exigir eliminação, o purge remove chunks,
+embeddings, texto extraído, versões derivadas e objeto privado, preservando apenas
+auditoria sem conteúdo.
+
+Não são fontes operacionais elegíveis cadastros brutos de cidadãos, consentimentos,
+solicitações de privacidade, credenciais, configurações, notificações, auditoria
+bruta ou saídas de IA ainda não aprovadas.
 
 ## Organização de persistência
 
@@ -132,7 +212,7 @@ continuam apontando para a versão exata que as fundamentou.
 ## Pipeline de ingestão
 
 1. Resolver escopo global ou privado e autorização de escrita.
-2. Receber arquivo, registro interno ou conteúdo de conector homologado.
+2. Receber arquivo, projeção interna governada ou conteúdo de conector homologado.
 3. Validar tipo, tamanho, malware, proveniência e finalidade.
 4. Extrair texto e aplicar OCR quando necessário.
 5. Detectar idioma, estrutura, PII e tentativa de prompt injection.
@@ -144,20 +224,33 @@ continuam apontando para a versão exata que as fundamentou.
 11. Executar testes de qualidade e segurança.
 12. Publicar a versão mediante autorização compatível com o escopo.
 
-## Recuperação federada
+## Recuperação federada e roteamento híbrido
 
-Uma consulta autenticada executa duas recuperações independentes:
+Antes da recuperação, um roteador classifica a intenção:
+
+- **documental:** busca fontes e evidências semânticas;
+- **estruturada:** executa read model tenant-scoped para contagens, estados, prazos
+  e agrupamentos;
+- **híbrida:** combina resultado estruturado reproduzível com fontes documentais.
+
+Uma consulta documental autenticada executa duas recuperações independentes:
 
 1. recuperar fontes globais publicadas, vigentes e autorizadas ao tenant;
 2. recuperar fontes privadas pertencentes ao tenant e acessíveis ao usuário;
-3. normalizar scores entre coleções e modelos compatíveis;
-4. remover duplicidades e aplicar jurisdição, vigência e finalidade;
-5. reranquear conjuntamente, preservando diversidade e proveniência;
+3. aplicar tenant, ACL, módulo, entidade, tema, território, período, vigência,
+   finalidade e estado antes do ranking;
+4. executar busca vetorial e textual sobre o conjunto elegível;
+5. normalizar scores, remover duplicidades e reranquear por relevância, autoridade
+   e atualidade;
 6. montar contexto com separação explícita entre dados e instruções;
 7. gerar resposta fundamentada;
 8. verificar groundedness e correspondência das citações;
 9. recusar conclusão quando a evidência for insuficiente;
-10. registrar consulta, fontes, versões, escopos, modelo e feedback.
+10. registrar consulta, método, filtros, fontes, versões, escopos, modelo e feedback.
+
+Diversidade entre escopos é um critério secundário e nunca pode incluir fonte abaixo
+do limiar de evidência. Quando nenhum candidato autorizado e pertinente satisfizer
+o limiar, o assistente deve recusar a conclusão.
 
 Cada citação informa no mínimo `escopo`, coleção, documento, versão, checksum,
 jurisdição, trecho ou página e pontuação. A interface diferencia “Fonte GabFlow” de
@@ -241,12 +334,18 @@ assíncrona, versões imutáveis e ciclo auditável de publicação, substituiç
 suspensão e revogação. A Release 4.3 adicionou concessões protegidas por RLS,
 resolução de política e jurisdição, view global `security_barrier` e recuperação
 federada global + privada com proveniência explícita. A Release 4.4 adicionou
-memória operacional privada governada. A Release 4.5
+memória operacional privada governada para solicitações, interações e minutas
+legislativas. A Release 4.5
 adicionou filas escaláveis, índices de claim, scheduler com lock, reconciliação em
 lotes, logs estruturados, métricas e SLOs. Ainda são alvo arquitetural:
 
 - migração física das tabelas privadas existentes para o schema `rag_private`;
 - fork privado de versões globais;
-- ampliação da ingestão automática para os demais módulos elegíveis;
+- migração da varredura exata em lotes para PostgreSQL FTS + pgvector, preservando
+  o ranking corrigido e usando índices por modelo/dimensão;
+- expansão dos projetores e do ciclo de vida já implementado para os demais
+  módulos elegíveis;
+- ampliação gradual da ingestão para os demais módulos elegíveis;
+- roteamento entre recuperação documental e consultas estruturadas tenant-scoped;
 - conectores globais controlados;
 - uso efetivo do feedback em melhoria de recuperação e resposta.

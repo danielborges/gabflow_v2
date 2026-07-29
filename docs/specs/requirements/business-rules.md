@@ -16,7 +16,7 @@
 - **RN-014** Toda minuta gerada por IA deve iniciar como rascunho.
 - **RN-015** Toda resposta RAG deve citar as fontes recuperadas.
 - **RN-016** Na ausência de evidência suficiente, o assistente deve declarar que não encontrou base confiável.
-- **RN-017** Documentos revogados ou expirados devem permanecer pesquisáveis, mas identificados.
+- **RN-017** Documentos normativos ou históricos revogados e expirados podem permanecer pesquisáveis quando a política arquivística permitir, sempre identificados e fora do contexto vigente.
 - **RN-018** Consentimento para comunicação não equivale a consentimento para divulgação pública.
 - **RN-019** Fotos com cidadãos não podem ser usadas em comunicação sem base legal ou consentimento aplicável.
 - **RN-020** Exclusões lógicas não removem registros de auditoria.
@@ -32,3 +32,9 @@
 - **RN-030** A ausência de evidência adequada em ambos os escopos obriga recusa conclusiva.
 - **RN-031** Toda informação interna elegível produzida pelo tenant deve ser indexada automaticamente no seu RAG Privado; exclusões por sigilo, retenção, base legal ou minimização devem ser explícitas e auditáveis.
 - **RN-032** Indexação no RAG não equivale a treinamento ou fine-tuning do modelo.
+- **RN-033** Uma entidade interna somente pode originar conhecimento por projetor registrado, com allowlist de campos, finalidade, base legal, retenção, proveniência e ACL explícitas.
+- **RN-034** Cadastro bruto de cidadão, consentimento, solicitação de privacidade, credencial, configuração, notificação, auditoria ou saída de IA não revisada não pode ser indexado como conhecimento operacional.
+- **RN-035** Cancelamento, exclusão, anonimização ou expiração de uma fonte operacional deve despublicá-la imediatamente e executar purge quando a política de retenção determinar eliminação, preservando auditoria sem conteúdo.
+- **RN-036** Eventos de memória operacional não podem transportar conteúdo sensível; o worker deve reler o estado canônico dentro do contexto do tenant.
+- **RN-037** Contagens, agrupamentos, estados e indicadores devem ser obtidos de consultas estruturadas tenant-scoped, nunca inferidos exclusivamente por similaridade vetorial.
+- **RN-038** Uma fonte não pode ser incluída apenas para assegurar diversidade entre escopos; todo resultado deve satisfazer autorização e limiar mínimo de evidência.

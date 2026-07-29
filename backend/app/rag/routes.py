@@ -25,13 +25,26 @@ from app.models import (
     RagDocumentAccess,
     RagDocumentLifecycle,
     RagDocumentVersion,
+    RagEvaluationQuestion,
+    RagEvaluationRun,
     RagIngestionStatus,
+    RagKnowledgeSource,
+    RagKnowledgeSourceStatus,
     RagQueryFeedbackRating,
+    RagThematicMemory,
     utc_now,
 )
 from app.observability import percentile
+from app.rag.analytics import rebuild_thematic_memories, structured_query
 from app.rag.distribution import collection_access_for_tenant, entitlement_data
-from app.rag.retrieval import answer_query, query_audit_payload
+from app.rag.evaluation import (
+    evaluation_question_data,
+    evaluation_run_data,
+    execute_tenant_evaluation,
+)
+from app.rag.operational_memory import reprocess_operational_memory
+from app.rag.retrieval import query_audit_payload
+from app.rag.router import route_query
 from app.rag.service import enqueue_ingestion, requeue_ingestion
 from app.rag.storage import (
     RagStorageError,
@@ -52,6 +65,143 @@ DOCUMENT_TYPES = {
     "PROCEDIMENTO_INTERNO",
     "OUTRO",
 }
+
+
+@rag_bp.get("/rag/fontes-operacionais")
+@roles_required("admin", "manager")
+def list_operational_sources():
+    tenant_id, _ = _context()
+    statement = select(RagKnowledgeSource).where(
+        RagKnowledgeSource.tenant_id == tenant_id
+    )
+    status_value = str(request.args.get("estado", "")).strip().upper()
+    if status_value:
+        try:
+            status = RagKnowledgeSourceStatus(status_value)
+        except ValueError:
+            return (
+                jsonify(
+                    error="validation_error",
+                    message="Estado de fonte operacional inválido.",
+                ),
+                422,
+            )
+        statement = statement.where(RagKnowledgeSource.status == status)
+    source_module = str(request.args.get("modulo", "")).strip().upper()
+    if source_module:
+        statement = statement.where(
+            RagKnowledgeSource.source_module == source_module[:60]
+        )
+    entity_type = str(request.args.get("entidadeTipo", "")).strip().upper()
+    if entity_type:
+        statement = statement.where(
+            RagKnowledgeSource.entity_type == entity_type[:80]
+        )
+    sources = db.session.scalars(
+        statement.order_by(RagKnowledgeSource.updated_at.desc()).limit(300)
+    )
+    return jsonify(content=[operational_source_data(source) for source in sources])
+
+
+@rag_bp.post("/rag/fontes-operacionais/<uuid:source_id>/reprocessar")
+@roles_required("admin", "manager")
+def reprocess_operational_source(source_id: uuid.UUID):
+    tenant_id, _ = _context()
+    source = db.session.execute(
+        select(RagKnowledgeSource).where(
+            RagKnowledgeSource.tenant_id == tenant_id,
+            RagKnowledgeSource.id == source_id,
+        )
+    ).scalar_one_or_none()
+    if source is None:
+        return (
+            jsonify(error="resource_not_found", message="Fonte não encontrada."),
+            404,
+        )
+    try:
+        reprocess_operational_memory(source)
+    except ValueError as error:
+        return jsonify(error="conflict", message=str(error)), 409
+    db.session.commit()
+    return jsonify(operational_source_data(source)), 202
+
+
+@rag_bp.get("/rag/memorias-tematicas")
+@jwt_required()
+def list_thematic_memories():
+    tenant_id, _ = _context()
+    items = db.session.scalars(
+        select(RagThematicMemory)
+        .where(RagThematicMemory.tenant_id == tenant_id)
+        .order_by(
+            RagThematicMemory.period_end.desc(),
+            RagThematicMemory.request_count.desc(),
+        )
+        .limit(500)
+    )
+    return jsonify(content=[thematic_memory_data(item) for item in items])
+
+
+@rag_bp.post("/rag/memorias-tematicas/reconstruir")
+@roles_required("admin", "manager")
+def rebuild_thematic_memory_route():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        period_end = date.fromisoformat(
+            str(payload.get("fim") or datetime.now(UTC).date().isoformat())
+        )
+        period_start = date.fromisoformat(
+            str(payload.get("inicio") or (period_end - timedelta(days=365)).isoformat())
+        )
+        items = rebuild_thematic_memories(
+            tenant_id,
+            user_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_thematic_memory.rebuilt",
+        "rag_thematic_memory",
+        None,
+        after={
+            "inicio": period_start.isoformat(),
+            "fim": period_end.isoformat(),
+            "memorias": len(items),
+        },
+    )
+    db.session.commit()
+    return jsonify(content=[thematic_memory_data(item) for item in items]), 202
+
+
+@rag_bp.post("/assistente/consultas-estruturadas")
+@jwt_required()
+def create_structured_query():
+    tenant_id, user_id = _context()
+    try:
+        result = structured_query(tenant_id, request.get_json(silent=True) or {})
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_assistant.structured_query",
+        "structured_query",
+        None,
+        after={
+            "dataset": result["dataset"],
+            "metrica": result["metrica"],
+            "agruparPor": result["agruparPor"],
+            "filtros": result["filtros"],
+            "periodo": result["periodo"],
+        },
+    )
+    db.session.commit()
+    return jsonify(result)
 
 
 def _context() -> tuple[uuid.UUID, uuid.UUID]:
@@ -285,11 +435,12 @@ def create_assistant_query():
     payload = request.get_json(silent=True) or {}
     started = time.perf_counter()
     try:
-        answer = answer_query(
+        answer = route_query(
             tenant_id,
             get_jwt().get("role"),
             str(payload.get("consulta", "")),
-            payload.get("limite"),
+            limit=payload.get("limite"),
+            explicit_filters=payload.get("filtros"),
         )
     except (TypeError, ValueError) as error:
         return jsonify(error="validation_error", message=str(error)), 422
@@ -307,6 +458,10 @@ def create_assistant_query():
         embedding_model=answer["modeloEmbedding"],
         fallback_used=answer["fallbackUtilizado"],
         latency_ms=max(1, round((time.perf_counter() - started) * 1000)),
+        method=answer["metodo"],
+        routing_reasons=answer["motivosRoteamento"],
+        applied_filters=answer["filtrosAplicados"],
+        structured_result=answer["resultadoEstruturado"],
     )
     db.session.add(query)
     db.session.flush()
@@ -366,6 +521,152 @@ def assistant_metrics():
         latenciaP95Ms=p95,
         sloLatenciaMs=target,
         sloAtendido=p95 is None or p95 <= target,
+    )
+
+
+@rag_bp.get("/assistente/avaliacoes/perguntas")
+@roles_required("admin", "manager")
+def list_evaluation_questions():
+    tenant_id, _ = _context()
+    items = db.session.scalars(
+        select(RagEvaluationQuestion)
+        .where(RagEvaluationQuestion.tenant_id == tenant_id)
+        .order_by(RagEvaluationQuestion.created_at.desc())
+    )
+    return jsonify(content=[evaluation_question_data(item) for item in items])
+
+
+@rag_bp.post("/assistente/avaliacoes/perguntas")
+@roles_required("admin", "manager")
+def create_evaluation_question():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        values = _evaluation_question_values(payload, tenant_id)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    item = RagEvaluationQuestion(
+        tenant_id=tenant_id,
+        created_by_id=user_id,
+        **values,
+    )
+    db.session.add(item)
+    db.session.flush()
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_evaluation.question_created",
+        "rag_evaluation_question",
+        item.id,
+        after={
+            "documentosEsperados": len(item.expected_document_ids),
+            "esperaRecusa": item.expected_refusal,
+            "ativa": item.active,
+        },
+    )
+    db.session.commit()
+    return jsonify(evaluation_question_data(item)), 201
+
+
+@rag_bp.patch("/assistente/avaliacoes/perguntas/<uuid:question_id>")
+@roles_required("admin", "manager")
+def update_evaluation_question(question_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(RagEvaluationQuestion).where(
+            RagEvaluationQuestion.id == question_id,
+            RagEvaluationQuestion.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Pergunta não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    merged = {
+        "pergunta": payload.get("pergunta", item.question),
+        "documentosEsperados": payload.get(
+            "documentosEsperados", item.expected_document_ids
+        ),
+        "esperaRecusa": payload.get("esperaRecusa", item.expected_refusal),
+        "observacoes": payload.get("observacoes", item.notes),
+        "ativa": payload.get("ativa", item.active),
+    }
+    try:
+        values = _evaluation_question_values(merged, tenant_id)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    before = {
+        "documentosEsperados": len(item.expected_document_ids),
+        "esperaRecusa": item.expected_refusal,
+        "ativa": item.active,
+    }
+    for field, value in values.items():
+        setattr(item, field, value)
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_evaluation.question_updated",
+        "rag_evaluation_question",
+        item.id,
+        before=before,
+        after={
+            "documentosEsperados": len(item.expected_document_ids),
+            "esperaRecusa": item.expected_refusal,
+            "ativa": item.active,
+        },
+    )
+    db.session.commit()
+    return jsonify(evaluation_question_data(item))
+
+
+@rag_bp.post("/assistente/avaliacoes/executar")
+@roles_required("admin", "manager")
+def execute_evaluation():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        run = execute_tenant_evaluation(
+            tenant_id,
+            user_id,
+            get_jwt().get("role"),
+            k=int(payload.get("k", current_app.config["RAG_RETRIEVAL_MAX_RESULTS"])),
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_evaluation.executed",
+        "rag_evaluation_run",
+        run.id,
+        after={
+            "k": run.k,
+            "perguntas": run.question_count,
+            "precisionAtK": run.precision_at_k,
+            "recallAtK": run.recall_at_k,
+            "groundedness": run.groundedness,
+            "precisaoCitacoes": run.citation_precision,
+            "taxaFontesDesconexas": run.disconnected_source_rate,
+            "acuraciaRecusa": run.refusal_accuracy,
+        },
+    )
+    db.session.commit()
+    return jsonify(evaluation_run_data(run)), 201
+
+
+@rag_bp.get("/assistente/avaliacoes/execucoes")
+@roles_required("admin", "manager")
+def list_evaluation_runs():
+    tenant_id, _ = _context()
+    items = db.session.scalars(
+        select(RagEvaluationRun)
+        .where(RagEvaluationRun.tenant_id == tenant_id)
+        .order_by(RagEvaluationRun.created_at.desc())
+        .limit(100)
+    )
+    return jsonify(
+        content=[
+            evaluation_run_data(item, include_results=False) for item in items
+        ]
     )
 
 
@@ -561,6 +862,74 @@ def update_global_catalog_subscription(collection_id: uuid.UUID):
     )
 
 
+def operational_source_data(source: RagKnowledgeSource) -> dict:
+    return {
+        "id": str(source.id),
+        "modulo": source.source_module,
+        "entidadeTipo": source.entity_type,
+        "entidadeId": str(source.entity_id),
+        "versaoProjetor": source.projector_version,
+        "revisaoOrigem": source.source_revision,
+        "estado": source.status.value,
+        "motivoElegibilidade": source.eligibility_reason,
+        "finalidade": source.purpose,
+        "baseLegal": source.legal_basis,
+        "nivelAcesso": source.access_level.value,
+        "retencaoAte": (
+            source.retention_until.isoformat()
+            if source.retention_until
+            else None
+        ),
+        "hashConteudo": source.content_hash,
+        "versaoLogica": source.source_version,
+        "documentoId": str(source.document_id) if source.document_id else None,
+        "versaoAtualId": (
+            str(source.latest_version_id) if source.latest_version_id else None
+        ),
+        "codigoErro": source.error_code,
+        "erro": source.error_message,
+        "tentativas": source.sync_attempts,
+        "ultimaProjecaoEm": (
+            source.last_projected_at.isoformat()
+            if source.last_projected_at
+            else None
+        ),
+        "quarentenaEm": (
+            source.quarantined_at.isoformat()
+            if source.quarantined_at
+            else None
+        ),
+        "excluidaEm": (
+            source.deleted_at.isoformat() if source.deleted_at else None
+        ),
+        "purgeConcluidoEm": (
+            source.purge_completed_at.isoformat()
+            if source.purge_completed_at
+            else None
+        ),
+        "tombstoneHash": source.tombstone_hash,
+        "criadaEm": source.created_at.isoformat(),
+        "atualizadaEm": source.updated_at.isoformat(),
+    }
+
+
+def thematic_memory_data(item: RagThematicMemory) -> dict:
+    return {
+        "id": str(item.id),
+        "tema": item.theme,
+        "territorio": item.territory or None,
+        "periodo": {
+            "inicio": item.period_start.isoformat(),
+            "fim": item.period_end.isoformat(),
+        },
+        "solicitacoes": item.request_count,
+        "resolvidas": item.resolved_count,
+        "prioridadeAlta": item.high_priority_count,
+        "sintese": item.summary,
+        "geradaEm": item.generated_at.isoformat(),
+    }
+
+
 def document_data(item: RagDocument, include_versions: bool) -> dict:
     versions = sorted(item.versions, key=lambda value: value.version_number, reverse=True)
     data = {
@@ -719,6 +1088,50 @@ def _optional_text(value: object, max_length: int, label: str) -> str | None:
     return text
 
 
+def _evaluation_question_values(payload: dict, tenant_id: uuid.UUID) -> dict:
+    question = str(payload.get("pergunta", "")).strip()
+    if len(question) < 3 or len(question) > 2000:
+        raise ValueError("A pergunta deve possuir entre 3 e 2000 caracteres.")
+    expected_values = payload.get("documentosEsperados", [])
+    if not isinstance(expected_values, list) or len(expected_values) > 20:
+        raise ValueError("Documentos esperados deve ser uma lista com até 20 itens.")
+    try:
+        expected_ids = list(
+            dict.fromkeys(str(uuid.UUID(str(value))) for value in expected_values)
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError("Documento esperado inválido.") from error
+    if expected_ids:
+        found = {
+            str(value)
+            for value in db.session.scalars(
+                select(RagDocument.id).where(
+                    RagDocument.tenant_id == tenant_id,
+                    RagDocument.id.in_([uuid.UUID(value) for value in expected_ids]),
+                )
+            )
+        }
+        if found != set(expected_ids):
+            raise ValueError("Documento esperado não pertence ao tenant.")
+    expected_refusal = payload.get("esperaRecusa", False)
+    active = payload.get("ativa", True)
+    if not isinstance(expected_refusal, bool) or not isinstance(active, bool):
+        raise ValueError("esperaRecusa e ativa devem ser booleanos.")
+    if expected_refusal and expected_ids:
+        raise ValueError("Uma pergunta de recusa não deve declarar documentos esperados.")
+    if not expected_refusal and not expected_ids:
+        raise ValueError(
+            "Informe documentos esperados ou marque a pergunta como recusa."
+        )
+    return {
+        "question": question,
+        "expected_document_ids": expected_ids,
+        "expected_refusal": expected_refusal,
+        "notes": _optional_text(payload.get("observacoes"), 2000, "Observações"),
+        "active": active,
+    }
+
+
 def assistant_query_data(item: RagAssistantQuery) -> dict:
     return {
         "id": str(item.id),
@@ -731,6 +1144,10 @@ def assistant_query_data(item: RagAssistantQuery) -> dict:
         "limiarEvidencia": item.evidence_threshold,
         "modeloEmbedding": item.embedding_model,
         "fallbackUtilizado": item.fallback_used,
+        "metodo": item.method,
+        "motivosRoteamento": item.routing_reasons,
+        "filtrosAplicados": item.applied_filters,
+        "resultadoEstruturado": item.structured_result,
         "avaliacao": item.feedback_rating.value if item.feedback_rating else None,
         "comentario": item.feedback_comment,
         "respostaCorrigida": item.corrected_response,

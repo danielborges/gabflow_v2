@@ -22,6 +22,7 @@ from app.models import (
     RagDocumentVersion,
     RagIngestionStatus,
     RagKnowledgeSource,
+    RagKnowledgeSourceStatus,
 )
 from app.notifications.service import notify_user
 from app.rag.storage import rag_document_path
@@ -65,6 +66,23 @@ def requeue_ingestion(version: RagDocumentVersion) -> None:
 
 def execute_ingestion(version: RagDocumentVersion) -> None:
     if version.ingestion_status == RagIngestionStatus.INDEXADO:
+        return
+    operational_source = db.session.execute(
+        select(RagKnowledgeSource)
+        .where(
+            RagKnowledgeSource.tenant_id == version.tenant_id,
+            RagKnowledgeSource.latest_version_id == version.id,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if (
+        operational_source is not None
+        and operational_source.status != RagKnowledgeSourceStatus.PENDENTE
+    ):
+        version.ingestion_status = RagIngestionStatus.FALHOU
+        version.error = (
+            "Ingestão cancelada porque a fonte operacional não está pendente."
+        )
         return
     version.ingestion_status = RagIngestionStatus.PROCESSANDO
     version.started_at = datetime.now(UTC)
@@ -116,12 +134,6 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
     version.chunk_count = len(chunks)
     version.ingestion_status = RagIngestionStatus.INDEXADO
     version.indexed_at = datetime.now(UTC)
-    operational_source = db.session.execute(
-        select(RagKnowledgeSource).where(
-            RagKnowledgeSource.tenant_id == version.tenant_id,
-            RagKnowledgeSource.latest_version_id == version.id,
-        )
-    ).scalar_one_or_none()
     if operational_source is not None:
         db.session.execute(
             update(RagDocumentVersion)
@@ -134,6 +146,12 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
             .values(lifecycle_status=RagDocumentLifecycle.HISTORICO)
         )
         version.lifecycle_status = RagDocumentLifecycle.VIGENTE
+        operational_source.status = RagKnowledgeSourceStatus.ATIVA
+        operational_source.eligibility_reason = None
+        operational_source.error_code = None
+        operational_source.error_message = None
+        operational_source.sync_attempts = 0
+        operational_source.quarantined_at = None
     details = {
         "documentoId": str(version.document_id),
         "versaoId": str(version.id),
@@ -163,9 +181,46 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
     )
 
 
-def fail_ingestion(version: RagDocumentVersion, error_message: str) -> None:
+def fail_ingestion(
+    version: RagDocumentVersion,
+    error_message: str,
+    *,
+    attempts: int = 1,
+) -> None:
     version.ingestion_status = RagIngestionStatus.FALHOU
     version.error = error_message[:2000]
+    operational_source = db.session.execute(
+        select(RagKnowledgeSource)
+        .where(
+            RagKnowledgeSource.tenant_id == version.tenant_id,
+            RagKnowledgeSource.latest_version_id == version.id,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if operational_source is None:
+        return
+    operational_source.status = RagKnowledgeSourceStatus.ERRO
+    operational_source.eligibility_reason = "INGESTION_FAILED"
+    operational_source.error_code = "RAG_INGESTION_EXHAUSTED"
+    operational_source.error_message = re.sub(
+        r"\s+", " ", str(error_message or "")
+    ).strip()[:500]
+    operational_source.sync_attempts = max(1, attempts)
+    db.session.add(
+        AuditLog(
+            tenant_id=version.tenant_id,
+            user_id=None,
+            action="rag_operational_memory.ingestion_failed",
+            entity_type="rag_knowledge_source",
+            entity_id=str(operational_source.id),
+            after={
+                "status": operational_source.status.value,
+                "codigoErro": operational_source.error_code,
+                "tentativas": operational_source.sync_attempts,
+                "versaoId": str(version.id),
+            },
+        )
+    )
 
 
 def extract_document(path: Path, mime_type: str) -> ExtractedDocument:
