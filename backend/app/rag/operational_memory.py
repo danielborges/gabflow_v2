@@ -1135,6 +1135,16 @@ def _purge_operational_source(
         if document is not None and document.tenant_id == source.tenant_id
         else []
     )
+    if document is not None and versions:
+        from app.rag.learning import invalidate_learning_for_source
+
+        invalidate_learning_for_source(
+            source.tenant_id,
+            document.id,
+            [version.id for version in versions],
+            versions[-1].created_by_id,
+            "FONTE_OPERACIONAL_PURGADA",
+        )
     if document is not None:
         document.active = False
         db.session.flush()

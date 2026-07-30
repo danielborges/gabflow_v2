@@ -2,9 +2,16 @@ import io
 import sys
 from types import SimpleNamespace
 
+import pytest
+from reportlab.pdfgen import canvas
 from sqlalchemy import select
 
-from app.ai.ocr import NoTextDetectedError, OcrResult, TesseractOcrProvider
+from app.ai.ocr import (
+    NonRetryableOcrError,
+    NoTextDetectedError,
+    OcrResult,
+    TesseractOcrProvider,
+)
 from app.extensions import db
 from app.models import AuditLog
 from app.outbox.service import process_batch
@@ -55,6 +62,103 @@ def test_tesseract_provider_reports_normalized_confidence(monkeypatch):
     result = provider._ocr_page(image, 1)
 
     assert result == {"pagina": 1, "texto": "GabFlow OCR", "confianca": 0.9}
+
+
+def test_pdf_prefers_native_text_and_uses_selective_ocr(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "hibrido.pdf"
+    pdf_path.write_bytes(
+        _pdf_bytes(
+            [
+                "Texto legislativo nativo suficientemente longo para evitar OCR nesta página.",
+                None,
+                "Outra página nativa com conteúdo suficiente para extração direta pelo PDFium.",
+            ]
+        )
+    )
+    provider = TesseractOcrProvider(
+        "tesseract-5",
+        "por",
+        maximum_pages=500,
+        maximum_pixels=25_000_000,
+        native_text_minimum_chars=40,
+        batch_size=2,
+    )
+    ocr_pages = []
+
+    def fake_ocr(_image, page_number):
+        ocr_pages.append(page_number)
+        return {
+            "pagina": page_number,
+            "texto": "Texto reconhecido somente na página digitalizada.",
+            "confianca": 0.88,
+        }
+
+    monkeypatch.setattr(provider, "_ocr_page", fake_ocr)
+
+    result = provider.extract(pdf_path, "application/pdf")
+
+    assert result.page_count == 3
+    assert ocr_pages == [2]
+    assert [page["origem"] for page in result.pages] == ["NATIVO", "OCR", "NATIVO"]
+    assert result.pages[0]["confianca"] == 1.0
+    assert result.pages[1]["confianca"] == 0.88
+    assert "Texto legislativo nativo" in result.text
+    assert "página digitalizada" in result.text
+
+
+def test_native_pdf_can_exceed_previous_ocr_page_limit(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "documento-extenso.pdf"
+    pdf_path.write_bytes(
+        _pdf_bytes(
+            [
+                f"Página {number} com conteúdo textual nativo suficiente para leitura direta."
+                for number in range(1, 31)
+            ]
+        )
+    )
+    provider = TesseractOcrProvider(
+        "tesseract-5",
+        "por",
+        maximum_pages=500,
+        maximum_pixels=25_000_000,
+        native_text_minimum_chars=40,
+        batch_size=8,
+    )
+    monkeypatch.setattr(
+        provider,
+        "_ocr_page",
+        lambda *_args: pytest.fail("OCR não deveria ser executado para páginas nativas."),
+    )
+
+    result = provider.extract(pdf_path, "application/pdf")
+
+    assert result.page_count == 30
+    assert all(page["origem"] == "NATIVO" for page in result.pages)
+
+
+def test_pdf_hard_page_limit_remains_configurable(tmp_path):
+    pdf_path = tmp_path / "acima-do-teto.pdf"
+    pdf_path.write_bytes(_pdf_bytes(["Página com texto."] * 3))
+    provider = TesseractOcrProvider(
+        "tesseract-5",
+        "por",
+        maximum_pages=2,
+        maximum_pixels=25_000_000,
+    )
+
+    with pytest.raises(NonRetryableOcrError, match="limite operacional de 2 páginas"):
+        provider.extract(pdf_path, "application/pdf")
+
+
+def _pdf_bytes(page_texts):
+    stream = io.BytesIO()
+    document = canvas.Canvas(stream)
+    for text in page_texts:
+        if text:
+            document.drawString(72, 760, text)
+        document.showPage()
+    document.save()
+    return stream.getvalue()
 
 
 def _login(client, tenant="gabinete-a", password=PASSWORD):

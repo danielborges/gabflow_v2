@@ -226,6 +226,25 @@ def test_transaction_local_tenant_context_does_not_leak(postgres_app):
             assert tenants == [tenant_b]
 
 
+def test_tenant_context_is_restored_after_commit(postgres_app):
+    tenant_a, _tenant_b, _chunk_a, _version_b = _seed_rag_tenants(postgres_app)
+
+    with postgres_app.app_context(), tenant_context(tenant_a):
+        assert db.session.scalar(
+            text("SELECT current_setting('app.tenant_id', true)")
+        ) == str(tenant_a)
+        db.session.commit()
+
+        assert db.session.scalar(
+            text("SELECT current_setting('app.tenant_id', true)")
+        ) == str(tenant_a)
+        visible_documents = db.session.scalars(
+            select(RagDocument).where(RagDocument.tenant_id == tenant_a)
+        ).all()
+        assert [item.tenant_id for item in visible_documents] == [tenant_a]
+        db.session.rollback()
+
+
 def test_runtime_role_cannot_bypass_rls(postgres_app):
     _ensure_runtime_role(postgres_app)
 
@@ -278,6 +297,9 @@ def test_runtime_role_cannot_bypass_rls(postgres_app):
                         "rag_feedback_source_judgments",
                         "rag_global_entitlements",
                         "rag_knowledge_sources",
+                        "rag_learning_artifact_feedback",
+                        "rag_learning_artifacts",
+                        "rag_learning_runs",
                         "rag_query_feedback",
                         "rag_thematic_memories",
                     ]
@@ -298,6 +320,9 @@ def test_runtime_role_cannot_bypass_rls(postgres_app):
         "rag_feedback_source_judgments",
         "rag_global_entitlements",
         "rag_knowledge_sources",
+        "rag_learning_artifact_feedback",
+        "rag_learning_artifacts",
+        "rag_learning_runs",
         "rag_query_feedback",
         "rag_thematic_memories",
     ]
@@ -438,7 +463,9 @@ def _ensure_runtime_role(postgres_app):
                            rag_assistant_queries, rag_global_entitlements,
                            rag_knowledge_sources, rag_evaluation_questions,
                            rag_evaluation_runs, rag_thematic_memories,
-                           rag_query_feedback, rag_feedback_source_judgments
+                           rag_query_feedback, rag_feedback_source_judgments,
+                           rag_learning_runs, rag_learning_artifacts,
+                           rag_learning_artifact_feedback
                         TO gabflow_rls_test;
                     """
                 )

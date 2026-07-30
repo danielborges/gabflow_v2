@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy import select
 
+from app.ai.ocr import NonRetryableOcrError
 from app.extensions import db
 from app.models import AuditLog, OutboxEvent, RagChunk, RagDocument, RagDocumentVersion, Tenant
 from app.outbox.service import process_batch
@@ -335,6 +336,46 @@ def test_rag_ingestion_failure_reprocess_and_tenant_isolation(app, client):
         ).status_code
         == 404
     )
+
+
+def test_rag_permanent_ocr_failure_is_not_retried(app, client, monkeypatch):
+    class PermanentOcrFailureProvider:
+        def extract(self, _path, _mime_type):
+            raise NonRetryableOcrError("O PDF excede o limite de 25 páginas para OCR.")
+
+    csrf = _login(client)
+    created = _upload(
+        client,
+        csrf,
+        "/api/v1/rag/documentos",
+        {
+            "titulo": "PDF acima do limite",
+            "tipo": "LEGISLACAO",
+            "versao": "1",
+        },
+        name="documento.pdf",
+        content=b"%PDF-1.7 permanent-ocr-failure",
+    )
+    assert created.status_code == 202
+    version_id = uuid.UUID(created.json["versoes"][0]["id"])
+    monkeypatch.setattr(
+        "app.rag.service.ocr_provider",
+        lambda: PermanentOcrFailureProvider(),
+    )
+
+    with app.app_context():
+        result = process_batch("rag-permanent-ocr-worker")
+        assert result.failed == 1
+        assert result.retried == 0
+
+        event = db.session.scalar(
+            select(OutboxEvent).where(OutboxEvent.aggregate_id == str(version_id))
+        )
+        version = db.session.get(RagDocumentVersion, version_id)
+        assert event.attempt_count == 1
+        assert event.failed_at is not None
+        assert version.ingestion_status.value == "FALHOU"
+        assert version.error == "O PDF excede o limite de 25 páginas para OCR."
 
 
 def test_rag_upload_validates_metadata_and_file_type(client):

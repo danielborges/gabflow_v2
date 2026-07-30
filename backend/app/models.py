@@ -212,6 +212,30 @@ class RagFeedbackModerationMode(str, enum.Enum):
     HUMANA = "HUMANA"
 
 
+class RagLearningRunStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    PROCESSANDO = "PROCESSANDO"
+    CONCLUIDA = "CONCLUIDA"
+    ERRO = "ERRO"
+
+
+class RagLearningArtifactType(str, enum.Enum):
+    RERANK_PROFILE = "RERANK_PROFILE"
+    ROUTING_EXAMPLES = "ROUTING_EXAMPLES"
+    EVALUATION_CASES = "EVALUATION_CASES"
+    ANSWER_EXEMPLARS = "ANSWER_EXEMPLARS"
+
+
+class RagLearningArtifactStatus(str, enum.Enum):
+    CANDIDATO = "CANDIDATO"
+    EM_AVALIACAO = "EM_AVALIACAO"
+    REJEITADO = "REJEITADO"
+    APROVADO = "APROVADO"
+    ATIVO = "ATIVO"
+    SUBSTITUIDO = "SUBSTITUIDO"
+    REVOGADO = "REVOGADO"
+
+
 class GlobalDistributionPolicy(str, enum.Enum):
     OBRIGATORIA = "OBRIGATORIA"
     PADRAO = "PADRAO"
@@ -1615,6 +1639,7 @@ class RagAssistantQuery(db.Model):
     routing_reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     applied_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     structured_result: Mapped[dict | None] = mapped_column(JSON)
+    learning_artifacts: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     feedback_rating: Mapped[RagQueryFeedbackRating | None] = mapped_column(
         Enum(RagQueryFeedbackRating, name="rag_query_feedback_rating"), index=True
     )
@@ -1773,6 +1798,188 @@ class RagFeedbackSourceJudgment(db.Model):
     )
 
 
+class RagLearningRun(db.Model):
+    __tablename__ = "rag_learning_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_rag_learning_runs_tenant_id_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "window_start",
+            "window_end",
+            "configuration_hash",
+            name="uq_rag_learning_runs_idempotency",
+        ),
+        CheckConstraint(
+            "window_start < window_end",
+            name="ck_rag_learning_runs_window",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "initiated_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_learning_runs_tenant_initiator",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    window_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    window_end: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    configuration: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    configuration_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )
+    baseline: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    total_feedbacks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_approved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_quarantine: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[RagLearningRunStatus] = mapped_column(
+        Enum(RagLearningRunStatus, name="rag_learning_run_status"),
+        default=RagLearningRunStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    initiated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RagLearningArtifact(db.Model):
+    __tablename__ = "rag_learning_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_rag_learning_artifacts_tenant_id_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "artifact_type",
+            "version",
+            name="uq_rag_learning_artifacts_version",
+        ),
+        CheckConstraint(
+            "version > 0",
+            name="ck_rag_learning_artifacts_version_positive",
+        ),
+        CheckConstraint(
+            "rollout_percentage >= 0 AND rollout_percentage <= 100",
+            name="ck_rag_learning_artifacts_rollout_percentage",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "run_id"],
+            ["rag_learning_runs.tenant_id", "rag_learning_runs.id"],
+            name="fk_rag_learning_artifacts_tenant_run",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "approved_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_learning_artifacts_tenant_approver",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "activated_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_learning_artifacts_tenant_activator",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "replaced_by_id"],
+            ["rag_learning_artifacts.tenant_id", "rag_learning_artifacts.id"],
+            name="fk_rag_learning_artifacts_tenant_replacement",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    artifact_type: Mapped[RagLearningArtifactType] = mapped_column(
+        Enum(RagLearningArtifactType, name="rag_learning_artifact_type"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_feedback_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    baseline: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    metrics_before: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    metrics_after: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    evaluation_details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[RagLearningArtifactStatus] = mapped_column(
+        Enum(RagLearningArtifactStatus, name="rag_learning_artifact_status"),
+        default=RagLearningArtifactStatus.CANDIDATO,
+        nullable=False,
+        index=True,
+    )
+    approved_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    activated_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    activation_mode: Mapped[str | None] = mapped_column(String(20))
+    rollout_percentage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    online_metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revocation_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class RagLearningArtifactFeedback(db.Model):
+    __tablename__ = "rag_learning_artifact_feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "artifact_id",
+            "feedback_id",
+            name="uq_rag_learning_artifact_feedback",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "artifact_id"],
+            ["rag_learning_artifacts.tenant_id", "rag_learning_artifacts.id"],
+            name="fk_rag_learning_artifact_feedback_tenant_artifact",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "feedback_id"],
+            ["rag_query_feedback.tenant_id", "rag_query_feedback.id"],
+            name="fk_rag_learning_artifact_feedback_tenant_feedback",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    artifact_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    feedback_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    contribution: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
 class RagThematicMemory(db.Model):
     __tablename__ = "rag_thematic_memories"
     __table_args__ = (
@@ -1824,6 +2031,11 @@ class RagEvaluationQuestion(db.Model):
             "source_feedback_id",
             name="uq_rag_evaluation_questions_source_feedback",
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "source_query_id",
+            name="uq_rag_evaluation_questions_source_query",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "created_by_id"],
             ["users.tenant_id", "users.id"],
@@ -1841,6 +2053,20 @@ class RagEvaluationQuestion(db.Model):
             ["rag_query_feedback.tenant_id", "rag_query_feedback.id"],
             name="fk_rag_evaluation_questions_tenant_feedback",
             ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "source_query_id"],
+            ["rag_assistant_queries.tenant_id", "rag_assistant_queries.id"],
+            name="fk_rag_evaluation_questions_tenant_query",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "case_origin IN ('MANUAL', 'FEEDBACK', 'REGRESSAO')",
+            name="ck_rag_evaluation_questions_origin",
+        ),
+        CheckConstraint(
+            "severity IN ('BAIXA', 'MEDIA', 'ALTA', 'CRITICA')",
+            name="ck_rag_evaluation_questions_severity",
         ),
         CheckConstraint(
             "expected_method IS NULL OR expected_method IN "
@@ -1863,6 +2089,19 @@ class RagEvaluationQuestion(db.Model):
     expected_method: Mapped[str | None] = mapped_column(String(20), index=True)
     expected_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    case_origin: Mapped[str] = mapped_column(
+        String(20), default="MANUAL", nullable=False, index=True
+    )
+    failure_reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(10), default="MEDIA", nullable=False, index=True
+    )
+    tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    baseline_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    baseline_captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    source_query_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     source_feedback_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     curated_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)

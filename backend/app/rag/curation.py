@@ -146,6 +146,7 @@ def promote_feedback_to_evaluation(
         expected_method=feedback.expected_method,
         expected_filters=feedback.expected_filters,
         notes=_optional_text(notes, 2000, "Observações"),
+        case_origin="FEEDBACK",
         active=True,
         source_feedback_id=feedback.id,
         curated_by_id=curator_id,

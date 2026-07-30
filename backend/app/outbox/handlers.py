@@ -39,6 +39,7 @@ from app.models import (
     GlobalKnowledgeDocumentVersion,
     OutboxEvent,
     RagDocumentVersion,
+    RagLearningRun,
     RequestHistory,
     ServiceRequest,
 )
@@ -46,6 +47,11 @@ from app.rag.global_service import (
     GLOBAL_RAG_INGESTION_EVENT,
     execute_global_ingestion,
     fail_global_ingestion,
+)
+from app.rag.learning import (
+    LEARNING_COMPILATION_EVENT,
+    execute_learning_run,
+    fail_learning_run,
 )
 from app.rag.operational_memory import (
     OPERATIONAL_MEMORY_EVENT,
@@ -121,6 +127,9 @@ def handle_event(event: OutboxEvent) -> None:
         except (TypeError, ValueError) as error:
             raise NonRetryableEventError(str(error)) from error
         return
+    if event.event_type == LEARNING_COMPILATION_EVENT:
+        execute_learning_run(_rag_learning_run(event))
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
         return
@@ -185,6 +194,9 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
             error_message=error_message,
             attempts=event.attempt_count,
         )
+        return
+    if event.event_type == LEARNING_COMPILATION_EVENT:
+        fail_learning_run(_rag_learning_run(event), error_message)
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -351,6 +363,16 @@ def _rag_document_version(event: OutboxEvent) -> RagDocumentVersion:
     if version is None or version.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Versão da base documental não encontrada.")
     return version
+
+
+def _rag_learning_run(event: OutboxEvent) -> RagLearningRun:
+    run_id = _uuid(event.payload, "runId")
+    run = db.session.get(RagLearningRun, run_id)
+    if run is None or run.tenant_id != event.tenant_id:
+        raise NonRetryableEventError(
+            "Execução de compilação RAG não encontrada."
+        )
+    return run
 
 
 def _global_rag_document_version(

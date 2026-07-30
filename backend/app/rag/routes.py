@@ -31,6 +31,11 @@ from app.models import (
     RagIngestionStatus,
     RagKnowledgeSource,
     RagKnowledgeSourceStatus,
+    RagLearningArtifact,
+    RagLearningArtifactStatus,
+    RagLearningArtifactType,
+    RagLearningRun,
+    RagLearningRunStatus,
     RagQueryFeedback,
     RagQueryFeedbackRating,
     RagThematicMemory,
@@ -58,7 +63,23 @@ from app.rag.feedback import (
     feedback_data,
     moderate_feedback,
 )
+from app.rag.learning import (
+    LearningConflictError,
+    LearningValidationError,
+    activate_learning_artifact,
+    create_learning_run,
+    evaluate_learning_artifact,
+    learning_artifact_data,
+    learning_run_data,
+    record_learning_influence,
+    rollback_learning_artifact,
+)
 from app.rag.operational_memory import reprocess_operational_memory
+from app.rag.regression import (
+    RegressionNotFoundError,
+    RegressionValidationError,
+    capture_regression_case,
+)
 from app.rag.retrieval import query_audit_payload
 from app.rag.router import route_query
 from app.rag.service import enqueue_ingestion, requeue_ingestion
@@ -457,6 +478,7 @@ def create_assistant_query():
             str(payload.get("consulta", "")),
             limit=payload.get("limite"),
             explicit_filters=payload.get("filtros"),
+            canary_key=str(user_id),
         )
     except (TypeError, ValueError) as error:
         return jsonify(error="validation_error", message=str(error)), 422
@@ -467,7 +489,11 @@ def create_assistant_query():
         query_hash=hashlib.sha256(answer["consulta"].encode("utf-8")).hexdigest(),
         response=answer["resposta"],
         sources=answer["fontes"],
-        safety_flags=answer["seguranca"],
+        safety_flags={
+            **answer["seguranca"],
+            "recuperacao": answer["recuperacao"],
+            "geracao": answer.get("geracao"),
+        },
         grounded=answer["fundamentada"],
         refused=answer["recusaConclusiva"],
         evidence_threshold=answer["limiarEvidencia"],
@@ -478,9 +504,11 @@ def create_assistant_query():
         routing_reasons=answer["motivosRoteamento"],
         applied_filters=answer["filtrosAplicados"],
         structured_result=answer["resultadoEstruturado"],
+        learning_artifacts=answer.get("artefatosAprendizado", []),
     )
     db.session.add(query)
     db.session.flush()
+    record_learning_influence(tenant_id, query.learning_artifacts)
     answer["id"] = str(query.id)
     answer["avaliacao"] = None
     add_audit(
@@ -522,12 +550,80 @@ def assistant_metrics():
     latencies = [item.latency_ms for item in items if item.latency_ms is not None]
     p95 = percentile(latencies, 0.95)
     target = current_app.config["RAG_SLO_QUERY_P95_MS"]
+    neural_rerank_applied = sum(
+        bool(
+            (item.safety_flags or {})
+            .get("recuperacao", {})
+            .get("rerankingNeural", {})
+            .get("aplicado")
+        )
+        for item in items
+    )
+    neural_rerank_fallback = sum(
+        bool(
+            (item.safety_flags or {})
+            .get("recuperacao", {})
+            .get("rerankingNeural", {})
+            .get("fallbackUtilizado")
+        )
+        for item in items
+    )
+    expanded_queries = sum(
+        bool(
+            (item.safety_flags or {})
+            .get("recuperacao", {})
+            .get("expansaoConsultaAplicada")
+        )
+        for item in items
+    )
+    documentary_filters = sum(
+        bool(
+            (
+                (item.safety_flags or {})
+                .get("recuperacao", {})
+                .get("entendimentoConsulta")
+                or {}
+            ).get("filtrosDocumentais")
+        )
+        for item in items
+    )
+    generated_answers = sum(
+        bool(((item.safety_flags or {}).get("geracao") or {}).get("aplicada"))
+        for item in items
+    )
+    generation_fallbacks = sum(
+        bool(
+            ((item.safety_flags or {}).get("geracao") or {})
+            .get("fallbackUtilizado")
+        )
+        for item in items
+    )
+    citation_validation_rejections = sum(
+        bool(
+            ((item.safety_flags or {}).get("geracao") or {}).get("habilitada")
+            and not (
+                ((item.safety_flags or {}).get("geracao") or {})
+                .get("validacaoCruzada", {})
+                .get("valida")
+            )
+            and ((item.safety_flags or {}).get("geracao") or {})
+            .get("fallbackUtilizado")
+        )
+        for item in items
+    )
     return jsonify(
         janelaHoras=current_app.config["RAG_METRICS_WINDOW_HOURS"],
         consultas=total,
         fundamentadas=sum(item.grounded for item in items),
         recusadas=sum(item.refused for item in items),
         fallback=sum(item.fallback_used for item in items),
+        rerankingNeuralAplicado=neural_rerank_applied,
+        fallbackRerankingNeural=neural_rerank_fallback,
+        consultasComExpansao=expanded_queries,
+        consultasComFiltrosDocumentais=documentary_filters,
+        respostasGeradas=generated_answers,
+        fallbackGeracao=generation_fallbacks,
+        rejeicoesValidacaoCitacoes=citation_validation_rejections,
         feedbackPositivo=sum(
             item.feedback_rating == RagQueryFeedbackRating.POSITIVA for item in items
         ),
@@ -546,10 +642,31 @@ def list_evaluation_questions():
     tenant_id, user_id = _context()
     if reconcile_curated_questions(tenant_id, user_id):
         db.session.commit()
+    statement = select(RagEvaluationQuestion).where(
+        RagEvaluationQuestion.tenant_id == tenant_id
+    )
+    origin = request.args.get("origem")
+    if origin:
+        origin = origin.strip().upper()
+        if origin not in {"MANUAL", "FEEDBACK", "REGRESSAO"}:
+            return jsonify(error="validation_error", message="Origem inválida."), 422
+        statement = statement.where(RagEvaluationQuestion.case_origin == origin)
+    severity = request.args.get("severidade")
+    if severity:
+        severity = severity.strip().upper()
+        if severity not in {"BAIXA", "MEDIA", "ALTA", "CRITICA"}:
+            return jsonify(error="validation_error", message="Severidade inválida."), 422
+        statement = statement.where(RagEvaluationQuestion.severity == severity)
+    active = request.args.get("ativa")
+    if active is not None:
+        normalized_active = active.strip().lower()
+        if normalized_active not in {"true", "false"}:
+            return jsonify(error="validation_error", message="ativa inválida."), 422
+        statement = statement.where(
+            RagEvaluationQuestion.active.is_(normalized_active == "true")
+        )
     items = db.session.scalars(
-        select(RagEvaluationQuestion)
-        .where(RagEvaluationQuestion.tenant_id == tenant_id)
-        .order_by(RagEvaluationQuestion.created_at.desc())
+        statement.order_by(RagEvaluationQuestion.created_at.desc())
     )
     return jsonify(content=[evaluation_question_data(item) for item in items])
 
@@ -586,6 +703,35 @@ def create_evaluation_question():
     return jsonify(evaluation_question_data(item)), 201
 
 
+@rag_bp.post("/assistente/avaliacoes/casos-regressao")
+@roles_required("admin", "manager")
+def create_regression_case():
+    tenant_id, user_id = _context()
+    try:
+        item, created = capture_regression_case(
+            tenant_id,
+            user_id,
+            request.get_json(silent=True) or {},
+        )
+        db.session.commit()
+    except RegressionNotFoundError as error:
+        db.session.rollback()
+        return jsonify(error="resource_not_found", message=str(error)), 404
+    except RegressionValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    except IntegrityError:
+        db.session.rollback()
+        return (
+            jsonify(
+                error="conflict",
+                message="A consulta foi registrada simultaneamente.",
+            ),
+            409,
+        )
+    return jsonify(evaluation_question_data(item)), 201 if created else 200
+
+
 @rag_bp.patch("/assistente/avaliacoes/perguntas/<uuid:question_id>")
 @roles_required("admin", "manager")
 def update_evaluation_question(question_id: uuid.UUID):
@@ -599,17 +745,17 @@ def update_evaluation_question(question_id: uuid.UUID):
     if item is None:
         return jsonify(error="resource_not_found", message="Pergunta não encontrada."), 404
     payload = request.get_json(silent=True) or {}
-    if item.source_feedback_id:
+    if item.source_feedback_id or item.case_origin == "REGRESSAO":
         unsupported = set(payload) - {"observacoes", "ativa"}
         if unsupported:
             return (
                 jsonify(
                     error="conflict",
-                    message="Caso curado preserva os sinais do feedback de origem.",
+                    message="Caso curado preserva os sinais e o baseline de origem.",
                 ),
                 409,
             )
-        if payload.get("ativa") is True and not item.active:
+        if item.source_feedback_id and payload.get("ativa") is True and not item.active:
             return (
                 jsonify(
                     error="conflict",
@@ -934,6 +1080,199 @@ def promote_assistant_feedback(feedback_id: uuid.UUID):
             409,
         )
     return jsonify(evaluation_question_data(item)), 201 if created else 200
+
+
+@rag_bp.post("/assistente/aprendizado/execucoes")
+@roles_required("admin", "manager")
+def create_assistant_learning_run():
+    tenant_id, user_id = _context()
+    try:
+        item, created = create_learning_run(
+            tenant_id,
+            user_id,
+            request.get_json(silent=True) or {},
+        )
+        db.session.commit()
+    except LearningValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    except IntegrityError:
+        db.session.rollback()
+        return (
+            jsonify(
+                error="conflict",
+                message="Uma compilação idêntica foi criada simultaneamente.",
+            ),
+            409,
+        )
+    return jsonify(learning_run_data(item)), 202 if created else 200
+
+
+@rag_bp.get("/assistente/aprendizado/execucoes")
+@roles_required("admin", "manager")
+def list_assistant_learning_runs():
+    tenant_id, _ = _context()
+    statement = select(RagLearningRun).where(
+        RagLearningRun.tenant_id == tenant_id
+    )
+    status_value = str(request.args.get("estado", "")).strip().upper()
+    if status_value:
+        try:
+            status = RagLearningRunStatus(status_value)
+        except ValueError:
+            return (
+                jsonify(
+                    error="validation_error",
+                    message="Estado de compilação inválido.",
+                ),
+                422,
+            )
+        statement = statement.where(RagLearningRun.status == status)
+    items = db.session.scalars(
+        statement.order_by(RagLearningRun.created_at.desc()).limit(300)
+    )
+    return jsonify(content=[learning_run_data(item) for item in items])
+
+
+@rag_bp.get("/assistente/aprendizado/artefatos")
+@roles_required("admin", "manager")
+def list_assistant_learning_artifacts():
+    tenant_id, _ = _context()
+    statement = select(RagLearningArtifact).where(
+        RagLearningArtifact.tenant_id == tenant_id
+    )
+    type_value = str(request.args.get("tipo", "")).strip().upper()
+    if type_value:
+        try:
+            artifact_type = RagLearningArtifactType(type_value)
+        except ValueError:
+            return (
+                jsonify(error="validation_error", message="Tipo de artefato inválido."),
+                422,
+            )
+        statement = statement.where(
+            RagLearningArtifact.artifact_type == artifact_type
+        )
+    status_value = str(request.args.get("estado", "")).strip().upper()
+    if status_value:
+        try:
+            status = RagLearningArtifactStatus(status_value)
+        except ValueError:
+            return (
+                jsonify(
+                    error="validation_error",
+                    message="Estado de artefato inválido.",
+                ),
+                422,
+            )
+        statement = statement.where(RagLearningArtifact.status == status)
+    items = db.session.scalars(
+        statement.order_by(RagLearningArtifact.created_at.desc()).limit(500)
+    )
+    return jsonify(
+        content=[learning_artifact_data(item) for item in items]
+    )
+
+
+@rag_bp.get("/assistente/aprendizado/artefatos/<uuid:artifact_id>")
+@roles_required("admin", "manager")
+def get_assistant_learning_artifact(artifact_id: uuid.UUID):
+    tenant_id, _ = _context()
+    item = db.session.scalar(
+        select(RagLearningArtifact).where(
+            RagLearningArtifact.tenant_id == tenant_id,
+            RagLearningArtifact.id == artifact_id,
+        )
+    )
+    if item is None:
+        return (
+            jsonify(error="resource_not_found", message="Artefato não encontrado."),
+            404,
+        )
+    return jsonify(learning_artifact_data(item, include_payload=True))
+
+
+@rag_bp.post("/assistente/aprendizado/artefatos/<uuid:artifact_id>/avaliacao")
+@roles_required("admin")
+def evaluate_assistant_learning_artifact(artifact_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _learning_artifact(tenant_id, artifact_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Artefato não encontrado."), 404
+    try:
+        approved, reasons = evaluate_learning_artifact(
+            item,
+            user_id,
+            str(get_jwt().get("role", "")),
+            request.get_json(silent=True) or {},
+        )
+        db.session.commit()
+    except LearningConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except (LearningValidationError, ValueError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    response = learning_artifact_data(item, include_payload=True)
+    if not approved:
+        response["motivosRejeicao"] = reasons
+        return jsonify(response), 409
+    return jsonify(response)
+
+
+@rag_bp.post("/assistente/aprendizado/artefatos/<uuid:artifact_id>/ativacao")
+@roles_required("admin")
+def activate_assistant_learning_artifact(artifact_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _learning_artifact(tenant_id, artifact_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Artefato não encontrado."), 404
+    try:
+        activate_learning_artifact(
+            item,
+            user_id,
+            request.get_json(silent=True) or {},
+        )
+        db.session.commit()
+    except LearningConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except LearningValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(learning_artifact_data(item, include_payload=True))
+
+
+@rag_bp.post("/assistente/aprendizado/artefatos/<uuid:artifact_id>/rollback")
+@roles_required("admin")
+def rollback_assistant_learning_artifact(artifact_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _learning_artifact(tenant_id, artifact_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Artefato não encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict) or set(payload) - {"motivo"}:
+        return (
+            jsonify(error="validation_error", message="O corpo do rollback é inválido."),
+            422,
+        )
+    try:
+        restored = rollback_learning_artifact(
+            item,
+            user_id,
+            payload.get("motivo"),
+        )
+        db.session.commit()
+    except LearningConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except LearningValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(
+        artefatoRevogado=learning_artifact_data(item),
+        artefatoRestaurado=learning_artifact_data(restored) if restored else None,
+    )
 
 
 @rag_bp.get("/rag/catalogo-global")
@@ -1357,6 +1696,7 @@ def _evaluation_question_values(payload: dict, tenant_id: uuid.UUID) -> dict:
         "expected_document_ids": expected_ids,
         "expected_refusal": expected_refusal,
         "notes": _optional_text(payload.get("observacoes"), 2000, "Observações"),
+        "case_origin": "MANUAL",
         "active": active,
     }
 
@@ -1377,9 +1717,22 @@ def assistant_query_data(item: RagAssistantQuery) -> dict:
         "motivosRoteamento": item.routing_reasons,
         "filtrosAplicados": item.applied_filters,
         "resultadoEstruturado": item.structured_result,
+        "artefatosAprendizado": item.learning_artifacts,
         "avaliacao": item.feedback_rating.value if item.feedback_rating else None,
         "comentario": item.feedback_comment,
         "respostaCorrigida": item.corrected_response,
         "revisadaEm": item.reviewed_at.isoformat() if item.reviewed_at else None,
         "criadaEm": item.created_at.isoformat(),
     }
+
+
+def _learning_artifact(
+    tenant_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+) -> RagLearningArtifact | None:
+    return db.session.scalar(
+        select(RagLearningArtifact).where(
+            RagLearningArtifact.tenant_id == tenant_id,
+            RagLearningArtifact.id == artifact_id,
+        )
+    )

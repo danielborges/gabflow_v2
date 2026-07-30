@@ -92,12 +92,22 @@ considerados completos no alvo hierárquico:
 - **RIA-074** Preservar cada avaliação como revisão imutável tenant-scoped, com autor, consulta, fontes e versões originais, motivos normalizados e eventual resposta corrigida. **Implementado na captura confiável da Release 4.7.**
 - **RIA-075** Tratar comentário e correção como conteúdo não confiável, aplicando minimização, limites, detecção de prompt injection, quarentena e moderação antes de qualquer uso. **Implementado na captura confiável da Release 4.7.**
 - **RIA-076** Permitir julgamento por fonte, rota esperada, filtros esperados e expectativa de recusa para distinguir falhas de retrieval, roteamento e geração. **Implementado nas etapas 4.7.1 e 4.7.2.**
-- **RIA-077** Compilar somente feedback aprovado em artefatos tenant-scoped, versionados, reproduzíveis e com proveniência até os sinais de origem. **Especificado; implementação planejada.**
-- **RIA-078** Impedir que ajustes derivados de feedback ultrapassem tenant, ACL, finalidade, jurisdição, vigência, estado ou limiar mínimo de evidência. **Especificado; implementação planejada.**
-- **RIA-079** Comparar candidato e baseline no dataset do tenant antes da ativação, registrar as métricas e suportar canário, revogação e rollback atômico. **Especificado; implementação planejada.**
-- **RIA-080** Não usar resposta corrigida como fonte factual ou citação; sua promoção limita-se a caso de avaliação ou exemplar aprovado, fundamentado e separado das evidências. **Especificado; implementação planejada.**
+- **RIA-077** Compilar somente feedback aprovado em artefatos tenant-scoped, versionados, reproduzíveis e com proveniência até os sinais de origem. **Implementado na etapa 4.7.3.**
+- **RIA-078** Impedir que ajustes derivados de feedback ultrapassem tenant, ACL, finalidade, jurisdição, vigência, estado ou limiar mínimo de evidência. **Implementado; o perfil atua somente após autorização e corte pelo limiar, sem recuperar fontes inelegíveis.**
+- **RIA-079** Comparar candidato e baseline no dataset do tenant antes da ativação, registrar as métricas e suportar canário, revogação e rollback atômico. **Implementado na etapa 4.7.4.**
+- **RIA-080** Não usar resposta corrigida como fonte factual ou citação; sua promoção limita-se a caso de avaliação ou exemplar aprovado, fundamentado e separado das evidências. **Implementado na compilação candidata; a resposta corrigida é marcada como não factual e não participa do retrieval.**
 - **RIA-081** Promover explicitamente feedback aprovado para caso de avaliação, preservando fontes/versionamentos relevantes, hard negatives, rota, filtros, recusa, curador e proveniência tenant-scoped. **Implementado na Release 4.7.**
 - **RIA-082** Desativar caso curado antes da execução quando o feedback for superado, revogado ou deixar de ser aprovado, ou quando uma fonte referenciada for eliminada ou ficar inacessível. **Implementado na Release 4.7.**
+- **RIA-083** Manter dataset de regressão com consultas problemáticas reais por tenant, preservando expectativas e diagnóstico imutáveis, hard negatives originados da consulta e baseline minimizado sem resposta ou trechos brutos. **Implementado no incremento 4.8.1.**
+- **RIA-084** Recuperar candidatos documentais por FTS e similaridade `pgvector`, comparar somente modelo e dimensão compatíveis, fundir canais por RRF e manter fallback FTS quando o embedding estiver indisponível. **Implementado no incremento 4.8.2.**
+- **RIA-085** Reordenar e vetar por relevância neural apenas o pool híbrido já autorizado e acima do limiar, usando conteúdo sanitizado, contrato estruturado com conjunto exato de IDs e fallback que preserve a ordem base. **Implementado no incremento 4.8.3.**
+- **RIA-086** Expor pontuação base e neural, modelo, versão do prompt, justificativa e fallback do reranking sem alterar o score de evidência ou permitir a introdução de fontes. **Implementado no incremento 4.8.3.**
+- **RIA-087** Identificar intenção documental, tema, tipo, referência normativa e período, preservando a consulta original e sem permitir que inferências alterem tenant, ACL, retenção, vigência obrigatória ou publicação. **Implementado no incremento 4.8.4.**
+- **RIA-088** Executar expansões controladas nos canais FTS e `pgvector`, fundir os pools por RRF e aplicar filtros documentais antes do ranking e do reranker neural. **Implementado no incremento 4.8.4.**
+- **RIA-089** Auditar entendimento, expansões, filtros, motivos e quantidade de consultas, incluindo métricas operacionais e avaliação pelo dataset tenant-scoped. **Implementado no incremento 4.8.4.**
+- **RIA-090** Gerar resposta substantiva exclusivamente a partir de chunks autorizados, sanitizados e aprovados pelo retrieval, exigindo contrato estruturado com afirmações e IDs de fontes. **Implementado no incremento 4.8.5.**
+- **RIA-091** Validar cada afirmação contra os chunks citados, rejeitar fontes desconhecidas ou afirmações sem suporte e recusar conclusivamente em qualquer falha, sem usar texto genérico como resposta fundamentada. **Implementado no incremento 4.8.5.**
+- **RIA-092** Expor e auditar modelo, versão do prompt, afirmações, citações, validação cruzada e fallback, medindo precisão sobre as fontes efetivamente citadas. **Implementado no incremento 4.8.5.**
 
 ## Avaliação
 

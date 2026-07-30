@@ -53,8 +53,9 @@ hierárquica completa.
 - A consulta não executa recuperação federada global + privada.
 - Solicitações, interações e documentos legislativos elegíveis ainda não são
   ingeridos automaticamente no RAG Privado.
-- A resposta atual resume a evidência principal; geração substantiva, reranking e
-  verificação de citações permanecem evoluções.
+- A resposta inicialmente apenas resumia a evidência principal; reranking neural,
+  geração substantiva e validação cruzada de citações foram entregues na Release
+  4.8.
 - O feedback é persistido e auditado, mas ainda não participa do ranking, dataset de
   avaliação ou pipeline de melhoria. O alvo controlado está especificado na
   Release 4.7 e no ADR-009.

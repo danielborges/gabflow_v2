@@ -26,3 +26,21 @@ def test_rag_health_and_prometheus_metrics_require_monitoring_token(client):
     assert metrics.status_code == 200
     assert "gabflow_rag_outbox_pending 0" in metrics.text
     assert metrics.content_type.startswith("text/plain")
+
+
+def test_internal_errors_return_safe_json(app, client):
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+
+    @app.get("/test/internal-error")
+    def internal_error():
+        raise RuntimeError("detalhe interno sensível")
+
+    response = client.get("/test/internal-error")
+
+    assert response.status_code == 500
+    assert response.content_type.startswith("application/json")
+    assert response.json == {
+        "error": "internal_server_error",
+        "message": "Não foi possível concluir a operação. Tente novamente.",
+    }
+    assert "sensível" not in response.text

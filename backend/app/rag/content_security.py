@@ -2,6 +2,7 @@ import unicodedata
 
 PROMPT_INJECTION_PATTERNS = (
     "ignore as instrucoes",
+    "ignore todas as instrucoes",
     "ignorar instrucoes",
     "desconsidere as instrucoes",
     "desconsiderar instrucoes",

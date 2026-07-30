@@ -11,7 +11,7 @@ from flask import current_app
 from sqlalchemy import delete, select, update
 
 from app.ai.duplicates import OllamaEmbeddingProvider
-from app.ai.ocr import OCR_MIME_TYPES, ocr_provider
+from app.ai.ocr import OCR_MIME_TYPES, NonRetryableOcrError, ocr_provider
 from app.extensions import db
 from app.models import (
     AuditLog,
@@ -240,7 +240,10 @@ def extract_document(path: Path, mime_type: str) -> ExtractedDocument:
         text = "\n\n".join(paragraphs)
         return ExtractedDocument(text=text, pages=[{"pagina": 1, "texto": text}])
     if mime_type in OCR_MIME_TYPES:
-        result = ocr_provider().extract(path, mime_type)
+        try:
+            result = ocr_provider().extract(path, mime_type)
+        except NonRetryableOcrError as error:
+            raise NonRetryableRagError(str(error)) from error
         return ExtractedDocument(text=result.text, pages=result.pages)
     raise NonRetryableRagError("Tipo de documento não compatível com a ingestão.")
 

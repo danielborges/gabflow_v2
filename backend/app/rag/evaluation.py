@@ -15,6 +15,40 @@ def execute_tenant_evaluation(
     *,
     k: int,
 ) -> RagEvaluationRun:
+    evaluation = evaluate_tenant_dataset(
+        tenant_id,
+        role,
+        k=k,
+    )
+    metrics = evaluation["metrics"]
+    run = RagEvaluationRun(
+        tenant_id=tenant_id,
+        created_by_id=user_id,
+        k=evaluation["k"],
+        question_count=evaluation["questionCount"],
+        precision_at_k=metrics["precisionAtK"],
+        recall_at_k=metrics["recallAtK"],
+        groundedness=metrics["groundedness"],
+        citation_precision=metrics["citationPrecision"],
+        disconnected_source_rate=metrics["disconnectedSourceRate"],
+        refusal_accuracy=metrics["refusalAccuracy"],
+        routing_accuracy=metrics["routingAccuracy"],
+        filter_accuracy=metrics["filterAccuracy"],
+        hard_negative_rate=metrics["hardNegativeRate"],
+        results=evaluation["results"],
+    )
+    db.session.add(run)
+    db.session.flush()
+    return run
+
+
+def evaluate_tenant_dataset(
+    tenant_id: uuid.UUID,
+    role: str | None,
+    *,
+    k: int,
+    learning_artifacts: dict | None = None,
+) -> dict:
     questions = list(
         db.session.scalars(
             select(RagEvaluationQuestion)
@@ -41,14 +75,37 @@ def execute_tenant_evaluation(
 
     for question in questions:
         if question.expected_method or question.expected_filters:
-            answer = route_query(
-                tenant_id,
-                role,
-                question.question,
-                limit=safe_k,
-            )
+            if learning_artifacts is None:
+                answer = route_query(
+                    tenant_id,
+                    role,
+                    question.question,
+                    limit=safe_k,
+                )
+            else:
+                answer = route_query(
+                    tenant_id,
+                    role,
+                    question.question,
+                    limit=safe_k,
+                    learning_artifacts=learning_artifacts,
+                )
         else:
-            answer = answer_query(tenant_id, role, question.question, safe_k)
+            if learning_artifacts is None:
+                answer = answer_query(
+                    tenant_id,
+                    role,
+                    question.question,
+                    safe_k,
+                )
+            else:
+                answer = route_query(
+                    tenant_id,
+                    role,
+                    question.question,
+                    limit=safe_k,
+                    learning_artifacts=learning_artifacts,
+                )
         retrieved = list(
             dict.fromkeys(
                 str(source.get("documentoId"))
@@ -59,6 +116,18 @@ def execute_tenant_evaluation(
         expected = {str(value) for value in question.expected_document_ids}
         retrieved_set = set(retrieved)
         relevant = retrieved_set & expected
+        generation_enabled = bool(
+            (answer.get("geracao") or {}).get("habilitada")
+        )
+        cited = list(
+            dict.fromkeys(
+                str(citation.get("documentoId"))
+                for citation in (answer.get("citacoes") or [])
+                if citation.get("documentoId")
+            )
+        )
+        cited_set = set(cited) if generation_enabled else retrieved_set
+        cited_relevant = cited_set & expected
         hard_negative_ids = {
             str(value.get("documentoId"))
             for value in question.hard_negative_source_refs
@@ -70,7 +139,9 @@ def execute_tenant_evaluation(
         if expected:
             evidence_precisions.append(precision)
             evidence_recalls.append(recall)
-            citation_precisions.append(precision)
+            citation_precisions.append(
+                len(cited_relevant) / len(cited_set) if cited_set else 0.0
+            )
         disconnected = (
             len(retrieved_set - expected) / len(retrieved_set)
             if retrieved_set
@@ -121,7 +192,13 @@ def execute_tenant_evaluation(
                 "documentosEsperados": sorted(expected),
                 "documentosRecuperados": retrieved,
                 "documentosRelevantes": sorted(relevant),
+                "documentosCitados": cited,
+                "documentosCitadosRelevantes": sorted(cited_relevant),
                 "precisionAtK": round(precision, 6),
+                "precisaoCitacoes": round(
+                    len(cited_relevant) / len(cited_set) if cited_set else 0.0,
+                    6,
+                ),
                 "recallAtK": round(recall, 6) if recall is not None else None,
                 "fundamentada": bool(answer["fundamentada"]),
                 "fontesDesconexas": len(retrieved_set - expected),
@@ -142,25 +219,22 @@ def execute_tenant_evaluation(
             }
         )
 
-    run = RagEvaluationRun(
-        tenant_id=tenant_id,
-        created_by_id=user_id,
-        k=safe_k,
-        question_count=len(questions),
-        precision_at_k=_average(evidence_precisions),
-        recall_at_k=_average(evidence_recalls),
-        groundedness=_average(grounded_scores),
-        citation_precision=_average(citation_precisions),
-        disconnected_source_rate=_average(disconnected_rates),
-        refusal_accuracy=_average(refusal_scores),
-        routing_accuracy=_average(routing_scores),
-        filter_accuracy=_average(filter_scores),
-        hard_negative_rate=_average(hard_negative_rates),
-        results=results,
-    )
-    db.session.add(run)
-    db.session.flush()
-    return run
+    return {
+        "k": safe_k,
+        "questionCount": len(questions),
+        "metrics": {
+            "precisionAtK": _average(evidence_precisions),
+            "recallAtK": _average(evidence_recalls),
+            "groundedness": _average(grounded_scores),
+            "citationPrecision": _average(citation_precisions),
+            "disconnectedSourceRate": _average(disconnected_rates),
+            "refusalAccuracy": _average(refusal_scores),
+            "routingAccuracy": _average(routing_scores),
+            "filterAccuracy": _average(filter_scores),
+            "hardNegativeRate": _average(hard_negative_rates),
+        },
+        "results": results,
+    }
 
 
 def evaluation_question_data(item: RagEvaluationQuestion) -> dict:
@@ -175,7 +249,19 @@ def evaluation_question_data(item: RagEvaluationQuestion) -> dict:
         "filtrosEsperados": item.expected_filters,
         "observacoes": item.notes,
         "ativa": item.active,
-        "origem": "FEEDBACK" if item.source_feedback_id else "MANUAL",
+        "origem": item.case_origin,
+        "motivosFalha": item.failure_reasons,
+        "severidade": item.severity,
+        "tags": item.tags,
+        "baseline": item.baseline_snapshot,
+        "baselineCapturadoEm": (
+            item.baseline_captured_at.isoformat()
+            if item.baseline_captured_at
+            else None
+        ),
+        "consultaOrigemId": (
+            str(item.source_query_id) if item.source_query_id else None
+        ),
         "feedbackOrigemId": (
             str(item.source_feedback_id) if item.source_feedback_id else None
         ),

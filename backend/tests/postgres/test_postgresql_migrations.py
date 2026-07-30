@@ -47,6 +47,9 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "rag_evaluation_runs",
         "rag_feedback_source_judgments",
         "rag_knowledge_sources",
+        "rag_learning_artifact_feedback",
+        "rag_learning_artifacts",
+        "rag_learning_runs",
         "rag_query_feedback",
         "rag_thematic_memories",
         "scheduled_returns",
@@ -81,6 +84,55 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
             column["name"]
             for column in inspector.get_columns("rag_evaluation_runs")
         }
+        learning_artifact_columns = {
+            column["name"]
+            for column in inspector.get_columns("rag_learning_artifacts")
+        }
+        rag_chunk_columns = {
+            column["name"] for column in inspector.get_columns("rag_chunks")
+        }
+        global_chunk_columns = {
+            column["name"]
+            for column in inspector.get_columns("chunks", schema="rag_global")
+        }
+        vector_extension = connection.execute(
+            text(
+                """
+                SELECT extversion
+                FROM pg_extension
+                WHERE extname = 'vector'
+                """
+            )
+        ).scalar_one()
+        hybrid_indexes = {
+            row
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT schemaname || '.' || indexname
+                    FROM pg_indexes
+                    WHERE indexname IN (
+                        'ix_rag_chunks_search_vector',
+                        'ix_rag_chunks_embedding_hnsw_128',
+                        'ix_rag_chunks_embedding_hnsw_768',
+                        'ix_global_chunks_search_vector',
+                        'ix_global_chunks_embedding_hnsw_128',
+                        'ix_global_chunks_embedding_hnsw_768'
+                    )
+                    """
+                )
+            ).scalars()
+        }
+        active_artifact_index = connection.execute(
+            text(
+                """
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname = 'uq_rag_learning_artifacts_one_active'
+                """
+            )
+        ).scalar_one()
     assert "latency_ms" in query_columns
     assert {
         "method",
@@ -97,17 +149,66 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "curated_by_id",
         "curated_at",
         "deactivation_reason",
+        "case_origin",
+        "failure_reasons",
+        "severity",
+        "tags",
+        "baseline_snapshot",
+        "baseline_captured_at",
+        "source_query_id",
     }.issubset(evaluation_question_columns)
     assert {
         "routing_accuracy",
         "filter_accuracy",
         "hard_negative_rate",
     }.issubset(evaluation_run_columns)
+    assert "learning_artifacts" in query_columns
+    assert {
+        "evaluation_details",
+        "activated_by_id",
+        "activation_mode",
+        "rollout_percentage",
+        "online_metrics",
+    }.issubset(learning_artifact_columns)
+    assert "UNIQUE INDEX" in active_artifact_index
+    assert "status" in active_artifact_index
+    assert "ATIVO" in active_artifact_index
     assert "processing_duration_ms" in outbox_columns
     assert {
         "ix_outbox_events_claim_ready",
         "ix_outbox_events_event_claim_ready",
     }.issubset(outbox_indexes)
+    assert {"embedding_vector", "search_vector"}.issubset(rag_chunk_columns)
+    assert {"embedding_vector", "search_vector"}.issubset(global_chunk_columns)
+    assert vector_extension
+    assert hybrid_indexes == {
+        "public.ix_rag_chunks_search_vector",
+        "public.ix_rag_chunks_embedding_hnsw_128",
+        "public.ix_rag_chunks_embedding_hnsw_768",
+        "rag_global.ix_global_chunks_search_vector",
+        "rag_global.ix_global_chunks_embedding_hnsw_128",
+        "rag_global.ix_global_chunks_embedding_hnsw_768",
+    }
+    with postgres_app.app_context(), db.engine.connect() as connection:
+        runtime_global_access = connection.execute(
+            text(
+                """
+                SELECT
+                    has_schema_privilege('gabflow_app', 'rag_global', 'USAGE'),
+                    has_table_privilege(
+                        'gabflow_app',
+                        'rag_global.chunks',
+                        'SELECT'
+                    ),
+                    has_table_privilege(
+                        'gabflow_worker',
+                        'rag_global.tenant_published_chunks',
+                        'SELECT'
+                    )
+                """
+            )
+        ).one()
+    assert runtime_global_access == (True, True, True)
 
 
 def test_global_catalog_schema_and_outbox_boundary(postgres_app):
@@ -369,6 +470,13 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
                 column["name"]
                 for column in inspector.get_columns("rag_evaluation_runs")
             }
+            rolled_back_learning_artifact_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_learning_artifacts")
+            }
+            rolled_back_chunk_columns = {
+                column["name"] for column in inspector.get_columns("rag_chunks")
+            }
             rls_policies = connection.execute(
                 text(
                     """
@@ -390,8 +498,17 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_knowledge_sources" in rolled_back_tables
         assert "rag_query_feedback" in rolled_back_tables
         assert "rag_feedback_source_judgments" in rolled_back_tables
-        assert "source_feedback_id" not in rolled_back_evaluation_columns
-        assert "routing_accuracy" not in rolled_back_evaluation_run_columns
+        assert "rag_learning_runs" in rolled_back_tables
+        assert "rag_learning_artifacts" in rolled_back_tables
+        assert "rag_learning_artifact_feedback" in rolled_back_tables
+        assert "learning_artifacts" in rolled_back_query_columns
+        assert "activation_mode" in rolled_back_learning_artifact_columns
+        assert "source_feedback_id" in rolled_back_evaluation_columns
+        assert "case_origin" in rolled_back_evaluation_columns
+        assert "source_query_id" in rolled_back_evaluation_columns
+        assert "embedding_vector" not in rolled_back_chunk_columns
+        assert "search_vector" not in rolled_back_chunk_columns
+        assert "routing_accuracy" in rolled_back_evaluation_run_columns
         assert "location_geography" in rolled_back_service_columns
         assert "jurisdiction_name" in rolled_back_tenant_columns
         assert "jurisdiction_geojson" in rolled_back_tenant_columns
@@ -402,7 +519,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "processing_duration_ms" in rolled_back_outbox_columns
         assert "tombstone_hash" in rolled_back_source_columns
         assert "purge_completed_at" in rolled_back_source_columns
-        assert rls_policies == 11
+        assert rls_policies == 14
 
         upgrade(directory="migrations")
 
@@ -438,6 +555,13 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
                 column["name"]
                 for column in inspector.get_columns("rag_evaluation_runs")
             }
+            reapplied_learning_artifact_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_learning_artifacts")
+            }
+            reapplied_chunk_columns = {
+                column["name"] for column in inspector.get_columns("rag_chunks")
+            }
             political_parties_count = connection.execute(
                 text("SELECT count(*) FROM political_parties")
             ).scalar_one()
@@ -457,8 +581,18 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_knowledge_sources" in reapplied_tables
         assert "rag_query_feedback" in reapplied_tables
         assert "rag_feedback_source_judgments" in reapplied_tables
+        assert "rag_learning_runs" in reapplied_tables
+        assert "rag_learning_artifacts" in reapplied_tables
+        assert "rag_learning_artifact_feedback" in reapplied_tables
+        assert "learning_artifacts" in reapplied_query_columns
+        assert "activation_mode" in reapplied_learning_artifact_columns
         assert "source_feedback_id" in reapplied_evaluation_columns
         assert "hard_negative_source_refs" in reapplied_evaluation_columns
+        assert "case_origin" in reapplied_evaluation_columns
+        assert "baseline_snapshot" in reapplied_evaluation_columns
+        assert "source_query_id" in reapplied_evaluation_columns
+        assert "embedding_vector" in reapplied_chunk_columns
+        assert "search_vector" in reapplied_chunk_columns
         assert "routing_accuracy" in reapplied_evaluation_run_columns
         assert "hard_negative_rate" in reapplied_evaluation_run_columns
         assert "location_geography" in reapplied_service_columns

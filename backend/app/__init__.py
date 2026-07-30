@@ -84,6 +84,16 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             429,
         )
 
+    @app.errorhandler(500)
+    def internal_server_error(_error):
+        return (
+            jsonify(
+                error="internal_server_error",
+                message="Não foi possível concluir a operação. Tente novamente.",
+            ),
+            500,
+        )
+
     return app
 
 

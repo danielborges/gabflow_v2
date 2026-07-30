@@ -41,6 +41,9 @@ def assert_runtime_database_role() -> None:
                 "rag_documents",
                 "rag_global_entitlements",
                 "rag_knowledge_sources",
+                "rag_learning_artifact_feedback",
+                "rag_learning_artifacts",
+                "rag_learning_runs",
             ]
         },
     ).one()

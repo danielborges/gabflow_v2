@@ -3,7 +3,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from flask import g, has_request_context
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.orm import Session
 
 from app.extensions import db
 
@@ -13,6 +14,28 @@ GLOBAL_KNOWLEDGE_ADMIN_SETTING = "app.global_knowledge_admin"
 
 class TenantContextError(RuntimeError):
     pass
+
+
+@event.listens_for(Session, "after_begin")
+def restore_transaction_local_context(
+    session: Session, _transaction, connection
+) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+
+    tenant_id = session.info.get("tenant_id")
+    if tenant_id is not None:
+        connection.execute(
+            text("SELECT set_config(:setting, :tenant_id, true)"),
+            {"setting": TENANT_SETTING, "tenant_id": str(tenant_id)},
+        )
+        return
+
+    if session.info.get("global_knowledge_admin"):
+        connection.execute(
+            text("SELECT set_config(:setting, 'true', true)"),
+            {"setting": GLOBAL_KNOWLEDGE_ADMIN_SETTING},
+        )
 
 
 def activate_tenant_context(tenant_id: uuid.UUID | str) -> uuid.UUID:

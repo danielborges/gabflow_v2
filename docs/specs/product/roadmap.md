@@ -54,8 +54,8 @@
   concluídas são projetadas de forma versionada no RAG Privado.
 - **Entregue:** correção funcional do ranking sem corte por recência, com limiar por
   fonte, compatibilidade de embedding, fallback lexical e sem diversidade forçada.
-- **Próximo incremento de infraestrutura:** PostgreSQL FTS + pgvector com índices
-  por modelo/dimensão e reindexação controlada.
+- **Entregue:** PostgreSQL FTS + `pgvector`, índices GIN/HNSW por dimensão,
+  sincronização automática dos vetores e fusão RRF tenant-safe.
 - **Entregue:** contrato e registry versionado de projetores para solicitações e
   minutas legislativas, com allowlist e políticas de governança.
 - **Entregue:** eventos explícitos V2 de criação, atualização, cancelamento,
@@ -75,8 +75,20 @@
   validação, minimização, quarentena e moderação tenant-scoped.
 - **Entregue:** curadoria explícita para o dataset, expected sources versionadas,
   hard negatives, expectativas de rota/filtros/recusa e invalidação automática.
-- **Próximo incremento:** compilação de artefatos de aprendizado versionados,
-  avaliação contra baseline, ativação tenant-scoped e rollback.
+- **Entregue:** compilação idempotente de sinais aprovados em artefatos candidatos
+  versionados, limitados, reproduzíveis e com proveniência por feedback.
+- **Entregue:** avaliação de candidato contra baseline, gates de regressão,
+  aprovação, ativação tenant-scoped em canário, métricas online e rollback.
+- **Entregue:** captura idempotente de consultas problemáticas em dataset de
+  regressão tenant-scoped, com taxonomia, severidade, fontes esperadas,
+  hard negatives e snapshot minimizado do baseline.
+- **Entregue:** reranking neural listwise sobre o pool híbrido elegível, com
+  contrato estruturado, proteção contra instruções nos documentos, explicabilidade
+  e fallback para a ordem base.
+- **Entregue:** entendimento documental determinístico, filtros temáticos
+  pré-ranking, expansões controladas e fusão multi-query por RRF.
+- **Entregue:** geração substantiva por afirmações, contrato fechado de fontes,
+  validação cruzada das citações e recusa segura em caso de falha.
 
 ## Release 5 — Inteligência territorial
 

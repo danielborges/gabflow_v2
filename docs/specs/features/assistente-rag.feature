@@ -101,6 +101,37 @@ Funcionalidade: Assistente RAG hierárquico
     E devem ser persistidas precisão das citações, fontes desconexas e acurácia de recusa
     E perguntas, documentos e execuções não devem cruzar tenants
 
+  Cenário: Recuperar candidatos por FTS e pgvector
+    Dado que existem fontes antigas e recentes elegíveis no tenant
+    Quando uma pergunta documental for consultada
+    Então o PostgreSQL deve formar candidatos por busca textual e vetorial
+    E deve fundir as posições dos canais por Reciprocal Rank Fusion
+    E somente embeddings do mesmo modelo e dimensão devem ser comparados
+    E a data de indexação não deve eliminar uma fonte antes da relevância
+    E ACL, vigência, retenção, publicação global e tenant devem ser filtrados no banco
+
+  Cenário: Continuar operando quando o embedding estiver indisponível
+    Dado que o provedor de embeddings não respondeu
+    Quando a consulta documental for executada
+    Então o canal PostgreSQL FTS deve continuar disponível
+    E nenhuma comparação vetorial incompatível deve ser realizada
+    E a resposta deve informar o fallback lexical
+
+  Cenário: Capturar consulta problemática no dataset de regressão
+    Dado que uma consulta do tenant retornou uma fonte desconexa
+    Quando o gestor informar a fonte esperada, a fonte irrelevante e o motivo da falha
+    Então deve ser criado um caso de origem REGRESSAO vinculado à consulta
+    E o baseline deve preservar identificadores, scores, rota, filtros e hashes
+    E o baseline não deve armazenar a resposta nem os trechos recuperados
+    E repetir a captura da mesma consulta deve retornar o mesmo caso
+
+  Cenário: Impedir contaminação e alteração dos sinais de regressão
+    Dado que uma consulta problemática pertence a outro tenant
+    Quando o gestor tentar capturá-la como caso de regressão
+    Então o sistema deve responder como recurso não encontrado
+    E uma fonte irrelevante deve ter participado da consulta original
+    E pergunta, expectativas, motivos e baseline devem permanecer imutáveis
+
   Cenário: Reprocessar evento operacional de forma idempotente
     Dado que a versão canônica de uma entidade já foi projetada e indexada
     Quando o mesmo evento for entregue novamente ou fora de ordem
@@ -365,6 +396,40 @@ Funcionalidade: Assistente RAG hierárquico
     Dado que o tenant A corrigiu uma resposta
     Quando o tenant B fizer uma consulta semelhante
     Então a correção privada do tenant A não deve influenciar a resposta do tenant B
+
+  Cenário: Entender e expandir consulta documental
+    Dado que o usuário pergunta por um decreto sobre transporte
+    Quando o assistente formar o pool documental
+    Então deve preservar a consulta original
+    E pode gerar expansões legislativas e temáticas controladas
+    E deve fundir os pools por RRF antes do reranking neural
+    E deve auditar intenção, referências, expansões e filtros
+
+  Cenário: Filtros inferidos não afrouxam segurança
+    Dado que o entendimento identificou tema, tipo documental e período
+    Quando os filtros forem aplicados
+    Então devem restringir os candidatos antes do ranking
+    Mas não devem alterar tenant, ACL, vigência, retenção ou publicação
+
+  Cenário: Gerar resposta substantiva com citações validadas
+    Dado que o retrieval aprovou chunks autorizados, pertinentes e sanitizados
+    Quando o gerador produzir afirmações estruturadas
+    Então cada afirmação deve citar somente IDs presentes no contexto
+    E a aplicação deve validar o suporte da afirmação nos chunks citados
+    E a resposta deve expor citações rastreáveis até chunk, documento e versão
+
+  Cenário: Recusar resposta cuja citação não seja validada
+    Dado que o gerador citou uma fonte desconhecida ou sem suporte para a afirmação
+    Quando a aplicação validar o retorno estruturado
+    Então a resposta substantiva deve ser descartada integralmente
+    E o assistente deve emitir recusa conclusiva segura
+    E as fontes recuperadas podem permanecer visíveis para inspeção
+
+  Cenário: Tratar instruções dos documentos como dados
+    Dado que um chunk recuperado contém uma instrução maliciosa
+    Quando o contexto for preparado para a geração
+    Então o trecho deve ser sanitizado e limitado
+    E a instrução não deve alterar o contrato, as fontes ou a política do sistema
 
   Cenário: Promover conhecimento privado para o catálogo global
     Dado que o tenant autorizou formalmente o compartilhamento

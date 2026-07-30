@@ -297,6 +297,8 @@ na auditoria nem no evento de sincronização.
 - secao
 - checksum
 - embedding
+- embedding_vector (`vector`, sincronizado por trigger)
+- search_vector (`tsvector`, gerado em português)
 - modelo_embedding
 
 ## ChunkPrivado
@@ -310,7 +312,14 @@ na auditoria nem no evento de sincronização.
 - secao
 - checksum
 - embedding
+- embedding_vector (`vector`, sincronizado por trigger)
+- search_vector (`tsvector`, gerado em português)
 - modelo_embedding
+
+Os dois escopos usam GIN sobre `search_vector` e HNSW de distância cosseno
+sobre as dimensões atualmente suportadas (128 e 768). A coluna vetorial não
+possui dimensão fixa para permitir coexistência de modelos; consultas e índices
+sempre filtram e convertem explicitamente pela dimensão e pelo modelo.
 
 ## ConsultaAssistente
 - id
@@ -327,6 +336,7 @@ na auditoria nem no evento de sincronização.
 - fontes_privadas
 - modelo
 - prompt_version
+- artefatos_aprendizado
 - criada_em
 
 ## FeedbackAssistente
@@ -402,10 +412,15 @@ esperada pode ser indicada por documento/versão visível ao mesmo tenant.
 - baseline
 - metricas_antes
 - metricas_depois
+- detalhes_avaliacao
 - estado
 - aprovado_por
 - aprovado_em
+- ativado_por
 - ativado_em
+- modo_ativacao
+- percentual_canario
+- metricas_online
 - substituido_por_id
 - revogado_em
 - motivo_revogacao
@@ -414,6 +429,18 @@ esperada pode ser indicada por documento/versão visível ao mesmo tenant.
 Tipos iniciais: `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES` e
 `ANSWER_EXEMPLARS`. Existe no máximo um artefato `ATIVO` por tenant e tipo.
 O payload usa schema fechado e não contém comentário bruto.
+
+## FeedbackArtefatoAprendizadoRag
+- id
+- tenant_id
+- artefato_id
+- feedback_id
+- contribuicao
+- criado_em
+
+A relação preserva a proveniência de cada sinal por foreign keys compostas com
+`tenant_id`. Na etapa 4.7.3, todo artefato nasce em `CANDIDATO`; a compilação não
+o aplica ao retrieval, roteamento ou geração.
 
 ## MemoriaTematicaRag
 - id
@@ -443,6 +470,13 @@ do limiar mínimo não originam documento privado.
 - metodo_esperado
 - filtros_esperados
 - observacoes
+- origem (`MANUAL`, `FEEDBACK` ou `REGRESSAO`)
+- motivos_falha
+- severidade
+- tags
+- baseline_snapshot
+- baseline_capturado_em
+- consulta_origem_id
 - ativa
 - feedback_origem_id
 - curada_por
@@ -450,6 +484,12 @@ do limiar mínimo não originam documento privado.
 - motivo_desativacao
 - criada_por
 - criada_em
+
+Casos `REGRESSAO` são únicos por `tenant_id + consulta_origem_id`. O snapshot
+registra apenas hashes, identificadores, scores, método, filtros e metadados
+necessários para reproduzir o baseline; resposta e trechos brutos não são
+duplicados. Fontes marcadas como irrelevantes precisam ter sido retornadas na
+consulta original, e fontes esperadas devem estar visíveis ao mesmo tenant.
 
 Casos manuais mantêm `feedback_origem_id` nulo. Casos curados possuem no máximo
 um registro por feedback e usam FK composta com `tenant_id`. Feedback que deixe o

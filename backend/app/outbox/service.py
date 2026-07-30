@@ -16,6 +16,7 @@ RAG_QUEUE_EVENT_TYPES = {
     "IngestaoDocumentoRag",
     "IngestaoDocumentoRagGlobal",
     "SincronizacaoMemoriaOperacional",
+    "CompilacaoSinaisRag",
 }
 WORKER_QUEUES = {"all", "default", "rag"}
 

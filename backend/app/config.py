@@ -51,6 +51,16 @@ class Config:
     RAG_RETRIEVAL_MAX_RESULTS = int(os.getenv("RAG_RETRIEVAL_MAX_RESULTS", "5"))
     RAG_RETRIEVAL_CANDIDATE_LIMIT = int(os.getenv("RAG_RETRIEVAL_CANDIDATE_LIMIT", "200"))
     RAG_RETRIEVAL_SCAN_BATCH_SIZE = int(os.getenv("RAG_RETRIEVAL_SCAN_BATCH_SIZE", "500"))
+    RAG_HYBRID_DATABASE_ENABLED = (
+        os.getenv("RAG_HYBRID_DATABASE_ENABLED", "true").lower() == "true"
+    )
+    RAG_HYBRID_RRF_K = int(os.getenv("RAG_HYBRID_RRF_K", "60"))
+    RAG_HYBRID_HNSW_EF_SEARCH = int(
+        os.getenv("RAG_HYBRID_HNSW_EF_SEARCH", "100")
+    )
+    RAG_QUERY_EXPANSION_MAX_QUERIES = int(
+        os.getenv("RAG_QUERY_EXPANSION_MAX_QUERIES", "3")
+    )
     RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT = int(
         os.getenv("RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT", "2")
     )
@@ -63,6 +73,82 @@ class Config:
     )
     RAG_RETRIEVAL_FRESHNESS_RERANK_WEIGHT = float(
         os.getenv("RAG_RETRIEVAL_FRESHNESS_RERANK_WEIGHT", "0.01")
+    )
+    RAG_NEURAL_RERANK_ENABLED = (
+        os.getenv("RAG_NEURAL_RERANK_ENABLED", "true").lower() == "true"
+    )
+    RAG_NEURAL_RERANK_PROVIDER = os.getenv(
+        "RAG_NEURAL_RERANK_PROVIDER", "ollama"
+    )
+    RAG_NEURAL_RERANK_MODEL = os.getenv(
+        "RAG_NEURAL_RERANK_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
+    )
+    RAG_NEURAL_RERANK_PROMPT_VERSION = os.getenv(
+        "RAG_NEURAL_RERANK_PROMPT_VERSION", "rag-neural-rerank-v1"
+    )
+    RAG_NEURAL_RERANK_TIMEOUT_SECONDS = int(
+        os.getenv("RAG_NEURAL_RERANK_TIMEOUT_SECONDS", "45")
+    )
+    RAG_NEURAL_RERANK_CANDIDATE_LIMIT = int(
+        os.getenv("RAG_NEURAL_RERANK_CANDIDATE_LIMIT", "12")
+    )
+    RAG_NEURAL_RERANK_CONTENT_CHARS = int(
+        os.getenv("RAG_NEURAL_RERANK_CONTENT_CHARS", "700")
+    )
+    RAG_NEURAL_RERANK_WEIGHT = float(
+        os.getenv("RAG_NEURAL_RERANK_WEIGHT", "0.55")
+    )
+    RAG_NEURAL_RERANK_MIN_SCORE = float(
+        os.getenv("RAG_NEURAL_RERANK_MIN_SCORE", "0.20")
+    )
+    RAG_NEURAL_RERANK_FALLBACK_ENABLED = (
+        os.getenv("RAG_NEURAL_RERANK_FALLBACK_ENABLED", "true").lower() == "true"
+    )
+    RAG_ANSWER_GENERATION_ENABLED = (
+        os.getenv("RAG_ANSWER_GENERATION_ENABLED", "true").lower() == "true"
+    )
+    RAG_ANSWER_PROVIDER = os.getenv("RAG_ANSWER_PROVIDER", "ollama")
+    RAG_ANSWER_MODEL = os.getenv(
+        "RAG_ANSWER_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
+    )
+    RAG_ANSWER_PROMPT_VERSION = os.getenv(
+        "RAG_ANSWER_PROMPT_VERSION", "rag-grounded-answer-v1"
+    )
+    RAG_ANSWER_TIMEOUT_SECONDS = int(
+        os.getenv("RAG_ANSWER_TIMEOUT_SECONDS", "60")
+    )
+    RAG_ANSWER_MAX_SOURCES = int(os.getenv("RAG_ANSWER_MAX_SOURCES", "5"))
+    RAG_ANSWER_SOURCE_CHARS = int(os.getenv("RAG_ANSWER_SOURCE_CHARS", "1800"))
+    RAG_ANSWER_MAX_CLAIMS = int(os.getenv("RAG_ANSWER_MAX_CLAIMS", "8"))
+    RAG_ANSWER_MAX_CHARS = int(os.getenv("RAG_ANSWER_MAX_CHARS", "5000"))
+    RAG_ANSWER_CITATION_SUPPORT_THRESHOLD = float(
+        os.getenv("RAG_ANSWER_CITATION_SUPPORT_THRESHOLD", "0.18")
+    )
+    RAG_ANSWER_FALLBACK_REFUSAL_ENABLED = (
+        os.getenv("RAG_ANSWER_FALLBACK_REFUSAL_ENABLED", "true").lower() == "true"
+    )
+    RAG_LEARNING_MIN_SIGNALS = int(os.getenv("RAG_LEARNING_MIN_SIGNALS", "3"))
+    RAG_LEARNING_MAX_ADJUSTMENT = float(
+        os.getenv("RAG_LEARNING_MAX_ADJUSTMENT", "0.12")
+    )
+    RAG_LEARNING_DECAY_HALF_LIFE_DAYS = int(
+        os.getenv("RAG_LEARNING_DECAY_HALF_LIFE_DAYS", "90")
+    )
+    RAG_LEARNING_MAX_EXAMPLES = int(
+        os.getenv("RAG_LEARNING_MAX_EXAMPLES", "200")
+    )
+    RAG_LEARNING_EVALUATION_K = int(os.getenv("RAG_LEARNING_EVALUATION_K", "5"))
+    RAG_LEARNING_MAX_REGRESSION = float(
+        os.getenv("RAG_LEARNING_MAX_REGRESSION", "0.05")
+    )
+    RAG_LEARNING_CANARY_PERCENT = int(
+        os.getenv("RAG_LEARNING_CANARY_PERCENT", "10")
+    )
+    RAG_LEARNING_ONLINE_MIN_SAMPLES = int(
+        os.getenv("RAG_LEARNING_ONLINE_MIN_SAMPLES", "10")
+    )
+    RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE = float(
+        os.getenv("RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE", "0.60")
     )
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL")
@@ -172,8 +258,12 @@ class Config:
     DOCUMENT_OCR_PROVIDER = os.getenv("DOCUMENT_OCR_PROVIDER", "tesseract")
     DOCUMENT_OCR_MODEL = os.getenv("DOCUMENT_OCR_MODEL", "tesseract-5")
     DOCUMENT_OCR_LANGUAGE = os.getenv("DOCUMENT_OCR_LANGUAGE", "por")
-    DOCUMENT_OCR_MAX_PAGES = int(os.getenv("DOCUMENT_OCR_MAX_PAGES", "25"))
+    DOCUMENT_OCR_MAX_PAGES = int(os.getenv("DOCUMENT_OCR_MAX_PAGES", "500"))
     DOCUMENT_OCR_MAX_PIXELS = int(os.getenv("DOCUMENT_OCR_MAX_PIXELS", "25000000"))
+    DOCUMENT_OCR_NATIVE_MIN_CHARS = int(
+        os.getenv("DOCUMENT_OCR_NATIVE_MIN_CHARS", "40")
+    )
+    DOCUMENT_OCR_BATCH_SIZE = int(os.getenv("DOCUMENT_OCR_BATCH_SIZE", "8"))
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 
 
@@ -187,6 +277,10 @@ class TestConfig(Config):
     RATELIMIT_ENABLED = False
     SENTRY_DSN = None
     RAG_OPERATIONAL_MEMORY_ENABLED = False
+    RAG_NEURAL_RERANK_ENABLED = False
+    RAG_ANSWER_GENERATION_ENABLED = False
+    RAG_LEARNING_MIN_SIGNALS = 1
+    RAG_LEARNING_ONLINE_MIN_SAMPLES = 2
     METRICS_BEARER_TOKEN = "test-metrics-token"  # noqa: S105
     WORKER_QUEUE = "all"
     WORKER_RUN_SCHEDULER = True

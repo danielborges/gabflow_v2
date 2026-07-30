@@ -60,10 +60,13 @@ persistente e o worker processa o áudio sem enviá-lo a serviços externos. Arq
 15 minutos são transcritos em segmentos; o texto gerado permanece separado da versão
 revisada e do arquivo original.
 
-O OCR usa Tesseract local com o pacote de idioma português. Imagens PNG/JPEG e PDFs de até
-25 páginas são processados pelo worker; PDFs são renderizados localmente e nenhuma página é
-enviada a terceiros. O resultado registra confiança média e confiança por página, mantendo o
-texto extraído separado da versão revisada e do documento original.
+O pipeline de PDF é híbrido e local. O PDFium tenta primeiro extrair a camada textual de cada
+página; apenas páginas sem o mínimo de texto útil são renderizadas e enviadas ao Tesseract,
+em lotes configuráveis. O teto operacional padrão é de 500 páginas e protege o worker contra
+arquivos abusivos, sem impor o antigo limite de 25 páginas aos documentos legislativos.
+Nenhuma página é enviada a terceiros. O resultado registra a origem `NATIVO` ou `OCR`, além
+da confiança média e por página, mantendo o texto extraído separado da versão revisada e do
+documento original.
 
 A resposta é limitada por JSON Schema, validada novamente pelo backend e executada com
 temperatura zero. IDs de categoria que não pertençam ao tenant são rejeitados.
@@ -124,7 +127,9 @@ AUDIO_TRANSCRIPTION_MAX_DURATION_SECONDS=900
 DOCUMENT_OCR_PROVIDER=tesseract
 DOCUMENT_OCR_MODEL=tesseract-5
 DOCUMENT_OCR_LANGUAGE=por
-DOCUMENT_OCR_MAX_PAGES=25
+DOCUMENT_OCR_MAX_PAGES=500
 DOCUMENT_OCR_MAX_PIXELS=25000000
+DOCUMENT_OCR_NATIVE_MIN_CHARS=40
+DOCUMENT_OCR_BATCH_SIZE=8
 OLLAMA_BASE_URL=http://ollama:11434
 ```

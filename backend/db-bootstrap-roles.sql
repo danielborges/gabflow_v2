@@ -57,6 +57,13 @@ SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'app_role')
 SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'worker_role')
 \gexec
 
+SELECT format('GRANT USAGE ON SCHEMA rag_global TO %I', :'app_role')
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format('GRANT USAGE ON SCHEMA rag_global TO %I', :'worker_role')
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+
 SELECT format(
     'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I',
     :'app_role'
@@ -70,6 +77,31 @@ SELECT format(
 SELECT format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_role')
 \gexec
 SELECT format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I', :'worker_role')
+\gexec
+
+SELECT format(
+    'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA rag_global TO %I',
+    :'app_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format(
+    'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA rag_global TO %I',
+    :'worker_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format(
+    'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag_global TO %I',
+    :'app_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format(
+    'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag_global TO %I',
+    :'worker_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
 \gexec
 
 SELECT format(

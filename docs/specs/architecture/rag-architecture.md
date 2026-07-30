@@ -155,6 +155,20 @@ ACL, finalidade, jurisdição, vigência, estado e limiar individual. O ajuste �
 limitado, exige quantidade mínima de sinais ou aprovação explícita e possui janela
 temporal e decaimento. Feedback negativo isolado não despublica fonte.
 
+O reranker neural atua depois desse mesmo corte sobre uma janela limitada do pool
+híbrido. Recebe somente IDs opacos, metadados mínimos e trechos sanitizados; seu
+retorno deve cobrir exatamente os IDs enviados. Ele reordena ou veta por
+irrelevância, mas não recupera, autoriza ou torna elegível uma fonte. Candidatos
+não avaliados não substituem os vetados. Falha de contrato, timeout ou
+indisponibilidade mantém a pontuação e a ordem base.
+
+O entendimento da consulta ocorre antes da candidatura e produz um plano
+auditável com intenção, referências normativas, temas, tipos, período e
+expansões. Os filtros desse plano são sempre adicionais às políticas obrigatórias
+de tenant, ACL, vigência, retenção e publicação. A consulta original e cada
+expansão formam pools FTS + `pgvector` independentes, posteriormente fundidos por
+RRF; somente então são calculados os scores finais e executado o reranker neural.
+
 Cada artefato registra versão, checksum, configuração, baseline, dataset, sinais de
 origem, métricas e aprovação. Apenas uma versão por tipo fica ativa em cada tenant;
 a versão anterior é preservada para rollback. Revogar feedback ou eliminar uma
@@ -301,6 +315,21 @@ Cada citação informa no mínimo `escopo`, coleção, documento, versão, check
 jurisdição, trecho ou página e pontuação. A interface diferencia “Fonte GabFlow” de
 “Fonte do Gabinete”.
 
+## Geração e validação cruzada
+
+O gerador opera depois da autorização, dos filtros, dos limiares e do reranking.
+Ele recebe somente excertos sanitizados e limitados, identificados por IDs opacos,
+e não possui acesso ao banco, ferramentas ou fontes adicionais. O contrato exige
+uma lista estruturada de afirmações, cada uma vinculada a IDs pertencentes ao
+contexto.
+
+A aplicação é a autoridade final: valida o schema, restringe os IDs, verifica a
+presença de citações e calcula suporte entre cada afirmação e os chunks citados.
+Somente afirmações aprovadas são compostas em texto e recebem marcadores
+numerados. Qualquer falha causa recusa conclusiva; não existe fallback para uma
+resposta substantiva sem validação. Modelo, prompt, checks, citações e fallback
+integram a auditoria tenant-scoped.
+
 ## Isolamento transacional
 
 Após validar JWT, usuário, tenant e contrato, a API configura o tenant na transação:
@@ -382,15 +411,13 @@ federada global + privada com proveniência explícita. A Release 4.4 adicionou
 memória operacional privada governada para solicitações, interações e minutas
 legislativas. A Release 4.5
 adicionou filas escaláveis, índices de claim, scheduler com lock, reconciliação em
-lotes, logs estruturados, métricas e SLOs. Ainda são alvo arquitetural:
+lotes, logs estruturados, métricas e SLOs. A Release 4.7 adicionou o ciclo
+controlado de feedback, dataset, artefatos candidatos, canário e rollback. A
+Release 4.8 adicionou dataset de regressão, FTS + `pgvector`, reranking neural,
+entendimento e expansão da consulta, geração substantiva e validação cruzada de
+citações. Ainda são alvo arquitetural:
 
 - migração física das tabelas privadas existentes para o schema `rag_private`;
 - fork privado de versões globais;
-- migração da varredura exata em lotes para PostgreSQL FTS + pgvector, preservando
-  o ranking corrigido e usando índices por modelo/dimensão;
-- expansão dos projetores e do ciclo de vida já implementado para os demais
-  módulos elegíveis;
-- ampliação gradual da ingestão para os demais módulos elegíveis;
-- roteamento entre recuperação documental e consultas estruturadas tenant-scoped;
 - conectores globais controlados;
-- uso efetivo do feedback em melhoria de recuperação e resposta.
+- calibração contínua de modelos e limiares com datasets reais por tenant.

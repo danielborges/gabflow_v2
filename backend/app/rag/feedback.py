@@ -34,6 +34,9 @@ FILTER_KEYS = {
     "tema",
     "territorioId",
     "orgaoId",
+    "tipoDocumento",
+    "orgao",
+    "jurisdicao",
 }
 CREATE_KEYS = {
     "idempotencyKey",
@@ -139,6 +142,13 @@ def create_feedback_revision(
             user_id,
             "FEEDBACK_SUPERADO",
         )
+        from app.rag.learning import invalidate_learning_for_feedback
+
+        invalidate_learning_for_feedback(
+            latest,
+            user_id,
+            "FEEDBACK_SUPERADO",
+        )
 
     now = utc_now()
     status, moderation_mode, moderation_rule = _initial_moderation(values)
@@ -199,6 +209,10 @@ def create_feedback_revision(
             ),
         },
     )
+    if feedback.status == RagFeedbackStatus.APROVADO:
+        from app.rag.learning import record_learning_feedback
+
+        record_learning_feedback(feedback)
     return FeedbackCreation(feedback, True)
 
 
@@ -324,12 +338,22 @@ def moderate_feedback(
         query.reviewed_at = item.moderated_at
     if target != RagFeedbackStatus.APROVADO:
         from app.rag.curation import deactivate_questions_for_feedback
+        from app.rag.learning import invalidate_learning_for_feedback
 
         deactivate_questions_for_feedback(
             item,
             moderator_id,
             f"FEEDBACK_{target.value}",
         )
+        invalidate_learning_for_feedback(
+            item,
+            moderator_id,
+            f"FEEDBACK_{target.value}",
+        )
+    else:
+        from app.rag.learning import record_learning_feedback
+
+        record_learning_feedback(item)
     add_audit(
         item.tenant_id,
         moderator_id,
