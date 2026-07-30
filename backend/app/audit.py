@@ -1,6 +1,6 @@
 import uuid
 
-from flask import request
+from flask import has_request_context, request
 
 from app.extensions import db
 from app.models import AuditLog
@@ -24,7 +24,11 @@ def add_audit(
             entity_id=str(entity_id) if entity_id else None,
             before=before,
             after=after,
-            ip_address=request.remote_addr,
-            user_agent=request.user_agent.string[:512],
+            ip_address=request.remote_addr if has_request_context() else None,
+            user_agent=(
+                request.user_agent.string[:512]
+                if has_request_context()
+                else "gabflow-worker"
+            ),
         )
     )

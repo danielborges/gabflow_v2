@@ -2,6 +2,7 @@ import hashlib
 import heapq
 import math
 import re
+import time
 import unicodedata
 from collections import Counter
 from collections.abc import Iterable
@@ -81,7 +82,9 @@ def answer_query(
     rerank_artifact=None,
     applied_artifacts: list | None = None,
     retrieval_plan=None,
+    quality_profile: dict | None = None,
 ) -> dict:
+    started = time.perf_counter()
     normalized_query = _validate_query(query)
     max_results = _safe_limit(limit)
     (
@@ -99,8 +102,14 @@ def answer_query(
         rerank_artifact=rerank_artifact,
         applied_artifacts=applied_artifacts,
         retrieval_plan=retrieval_plan,
+        quality_profile=quality_profile,
     )
-    min_evidence = current_app.config["RAG_RETRIEVAL_MIN_EVIDENCE_SCORE"]
+    retrieval_ms = _duration_ms(started)
+    min_evidence = _profile_float(
+        quality_profile,
+        "minEvidenceScore",
+        "RAG_RETRIEVAL_MIN_EVIDENCE_SCORE",
+    )
     grounded = bool(ranked)
     sources = [_source_data(item) for item in ranked]
     safety_flags = _safety_summary(sources)
@@ -118,8 +127,24 @@ def answer_query(
         )
         for item in ranked[: max(1, current_app.config["RAG_ANSWER_MAX_SOURCES"])]
     )
-    generation = generate_grounded_answer(normalized_query, generation_sources)
+    generation = generate_grounded_answer(
+        normalized_query,
+        generation_sources,
+        quality_profile=quality_profile,
+    )
     generation_summary = _generation_summary(generation)
+    total_ms = _duration_ms(started)
+    budget_ms = max(
+        1000,
+        int(current_app.config["RAG_QUERY_LATENCY_BUDGET_MS"]),
+    )
+    latency = {
+        "recuperacaoMs": retrieval_ms,
+        **(generation.timings or {}),
+        "totalMs": total_ms,
+        "orcamentoMs": budget_ms,
+        "orcamentoExcedido": total_ms > budget_ms,
+    }
     citations = _citation_data(generation, sources)
 
     if not grounded:
@@ -144,6 +169,7 @@ def answer_query(
                 candidate_mechanism,
                 retrieval_plan,
             ),
+            "latenciaEtapas": latency,
         }
 
     if current_app.config["RAG_ANSWER_GENERATION_ENABLED"] and not generation.applied:
@@ -174,6 +200,7 @@ def answer_query(
                 candidate_mechanism,
                 retrieval_plan,
             ),
+            "latenciaEtapas": latency,
         }
 
     return {
@@ -197,6 +224,7 @@ def answer_query(
             candidate_mechanism,
             retrieval_plan,
         ),
+        "latenciaEtapas": latency,
     }
 
 
@@ -209,6 +237,7 @@ def retrieve_chunks(
     rerank_artifact=None,
     applied_artifacts: list | None = None,
     retrieval_plan=None,
+    quality_profile: dict | None = None,
 ) -> tuple[list[RankedChunk], str, bool, str | None, dict, str]:
     fallback_used = False
     fallback_error = None
@@ -270,13 +299,21 @@ def retrieve_chunks(
             provider_model,
             fallback_used,
             fallback_error,
-            _empty_neural_rerank_summary(),
+            _empty_neural_rerank_summary(quality_profile),
             candidate_mechanism,
         )
 
     threshold = max(
-        current_app.config["RAG_RETRIEVAL_SCORE_THRESHOLD"],
-        current_app.config["RAG_RETRIEVAL_MIN_EVIDENCE_SCORE"],
+        _profile_float(
+            quality_profile,
+            "retrievalScoreThreshold",
+            "RAG_RETRIEVAL_SCORE_THRESHOLD",
+        ),
+        _profile_float(
+            quality_profile,
+            "minEvidenceScore",
+            "RAG_RETRIEVAL_MIN_EVIDENCE_SCORE",
+        ),
     )
     per_document_limit = current_app.config["RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT"]
     query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
@@ -439,6 +476,7 @@ def retrieve_chunks(
         query,
         ranked,
         context_queries=search_queries,
+        quality_profile=quality_profile,
     )
     if neural_fallback:
         fallback_used = True
@@ -914,6 +952,7 @@ def _generation_summary(generation) -> dict:
         "afirmacoes": len(generation.claims),
         "citacoes": len(generation.citation_numbers),
         "validacaoCruzada": generation.validation,
+        "latencia": generation.timings or {},
     }
 
 
@@ -949,17 +988,17 @@ def _citation_data(generation, sources: list[dict]) -> list[dict]:
 
 
 def _keep_best_candidate(
-    heap: list[tuple[tuple[float, float, float, float, int], RankedChunk]],
+    heap: list[tuple[tuple[float, float, float, float, str], RankedChunk]],
     item: RankedChunk,
     limit: int,
-    sequence: int,
+    _sequence: int,
 ) -> None:
     key = (
         item.ranking_score,
         item.score,
         item.authority_score,
         item.freshness_score,
-        sequence,
+        str(item.chunk.id),
     )
     entry = (key, item)
     if len(heap) < limit:
@@ -1018,6 +1057,7 @@ def _apply_neural_reranking(
     ranked: list[RankedChunk],
     *,
     context_queries: tuple[str, ...] | None = None,
+    quality_profile: dict | None = None,
 ) -> tuple[list[RankedChunk], bool, str | None, dict]:
     ranked.sort(
         key=lambda item: (
@@ -1025,9 +1065,37 @@ def _apply_neural_reranking(
             item.score,
             item.authority_score,
             item.freshness_score,
+            str(item.chunk.id),
         ),
         reverse=True,
     )
+    adaptive_reason = _adaptive_rerank_skip_reason(ranked)
+    if adaptive_reason is not None:
+        top_score = ranked[0].ranking_score if ranked else 0.0
+        runner_up = ranked[1].ranking_score if len(ranked) > 1 else 0.0
+        return ranked, False, None, {
+            "habilitado": True,
+            "aplicado": False,
+            "modelo": None,
+            "versaoPrompt": None,
+            "peso": current_app.config["RAG_NEURAL_RERANK_WEIGHT"],
+            "limiarRelevancia": _profile_float(
+                quality_profile,
+                "neuralMinScore",
+                "RAG_NEURAL_RERANK_MIN_SCORE",
+            ),
+            "candidatosAvaliados": 0,
+            "candidatosAceitos": len(ranked),
+            "candidatosRejeitados": 0,
+            "rejeicoes": [],
+            "fallbackUtilizado": False,
+            "erroFallback": None,
+            "skipAdaptativo": True,
+            "motivoSkip": adaptive_reason,
+            "pontuacaoLider": round(top_score, 6),
+            "margemLideranca": round(top_score - runner_up, 6),
+            "latenciaMs": 0,
+        }
     candidate_limit = max(
         1,
         current_app.config["RAG_NEURAL_RERANK_CANDIDATE_LIMIT"],
@@ -1053,7 +1121,14 @@ def _apply_neural_reranking(
     weight = max(0.0, min(1.0, current_app.config["RAG_NEURAL_RERANK_WEIGHT"]))
     minimum_score = max(
         0.0,
-        min(1.0, current_app.config["RAG_NEURAL_RERANK_MIN_SCORE"]),
+        min(
+            1.0,
+            _profile_float(
+                quality_profile,
+                "neuralMinScore",
+                "RAG_NEURAL_RERANK_MIN_SCORE",
+            ),
+        ),
     )
     updated = []
     rejected = []
@@ -1120,8 +1195,43 @@ def _apply_neural_reranking(
         "rejeicoes": rejected,
         "fallbackUtilizado": outcome.fallback_used,
         "erroFallback": outcome.fallback_error,
+        "skipAdaptativo": False,
+        "motivoSkip": None,
+        "latenciaMs": outcome.duration_ms,
     }
     return updated, outcome.fallback_used, outcome.fallback_error, summary
+
+
+def _adaptive_rerank_skip_reason(
+    ranked: list[RankedChunk],
+) -> str | None:
+    if (
+        not current_app.config["RAG_NEURAL_RERANK_ENABLED"]
+        or not current_app.config["RAG_NEURAL_RERANK_ADAPTIVE_ENABLED"]
+        or not ranked
+    ):
+        return None
+    if len(ranked) == 1:
+        return "CANDIDATO_UNICO"
+    minimum_score = max(
+        0.0,
+        min(
+            1.0,
+            float(current_app.config["RAG_NEURAL_RERANK_SKIP_MIN_SCORE"]),
+        ),
+    )
+    minimum_margin = max(
+        0.0,
+        min(
+            1.0,
+            float(current_app.config["RAG_NEURAL_RERANK_SKIP_MIN_MARGIN"]),
+        ),
+    )
+    top_score = ranked[0].ranking_score
+    margin = top_score - ranked[1].ranking_score
+    if top_score >= minimum_score and margin >= minimum_margin:
+        return "LIDER_HIBRIDO_INEQUIVOCO"
+    return None
 
 
 def _focused_rerank_excerpt(
@@ -1157,14 +1267,20 @@ def _focused_rerank_excerpt(
     return " ".join(value for _, value in selected)
 
 
-def _empty_neural_rerank_summary() -> dict:
+def _empty_neural_rerank_summary(
+    quality_profile: dict | None = None,
+) -> dict:
     return {
         "habilitado": current_app.config["RAG_NEURAL_RERANK_ENABLED"],
         "aplicado": False,
         "modelo": None,
         "versaoPrompt": None,
         "peso": current_app.config["RAG_NEURAL_RERANK_WEIGHT"],
-        "limiarRelevancia": current_app.config["RAG_NEURAL_RERANK_MIN_SCORE"],
+        "limiarRelevancia": _profile_float(
+            quality_profile,
+            "neuralMinScore",
+            "RAG_NEURAL_RERANK_MIN_SCORE",
+        ),
         "candidatosAvaliados": 0,
         "candidatosAceitos": 0,
         "candidatosRejeitados": 0,
@@ -1182,6 +1298,7 @@ def _deduplicate_and_limit(ranked: list[RankedChunk], limit: int) -> list[Ranked
             item.authority_score,
             item.freshness_score,
             item.semantic_score,
+            str(item.chunk.id),
         ),
         reverse=True,
     )
@@ -1264,6 +1381,10 @@ def _validate_query(query: str) -> str:
     if len(value) > 2000:
         raise ValueError("A consulta deve ter no maximo 2000 caracteres.")
     return value
+
+
+def _duration_ms(started: float) -> int:
+    return max(1, round((time.perf_counter() - started) * 1000))
 
 
 def _safe_limit(limit: int | None) -> int:
@@ -1423,6 +1544,15 @@ def _safety_summary(sources: list[dict]) -> dict:
             "nao sao executadas e trechos suspeitos sao sanitizados antes do uso."
         ),
     }
+
+
+def _profile_float(
+    profile: dict | None,
+    key: str,
+    config_key: str,
+) -> float:
+    value = (profile or {}).get(key)
+    return float(current_app.config[config_key] if value is None else value)
 
 
 def query_audit_payload(answer: dict) -> dict:

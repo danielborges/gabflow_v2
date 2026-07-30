@@ -108,6 +108,18 @@ considerados completos no alvo hierárquico:
 - **RIA-090** Gerar resposta substantiva exclusivamente a partir de chunks autorizados, sanitizados e aprovados pelo retrieval, exigindo contrato estruturado com afirmações e IDs de fontes. **Implementado no incremento 4.8.5.**
 - **RIA-091** Validar cada afirmação contra os chunks citados, rejeitar fontes desconhecidas ou afirmações sem suporte e recusar conclusivamente em qualquer falha, sem usar texto genérico como resposta fundamentada. **Implementado no incremento 4.8.5.**
 - **RIA-092** Expor e auditar modelo, versão do prompt, afirmações, citações, validação cruzada e fallback, medindo precisão sobre as fontes efetivamente citadas. **Implementado no incremento 4.8.5.**
+- **RIA-093** Verificar semanticamente se cada afirmação é integralmente sustentada pelos chunks citados, considerando contradições, negações, sujeitos, datas, números e modalidade normativa. **Implementado no incremento 4.9.1.**
+- **RIA-094** Manter a validação determinística e lexical como requisito anterior ao entailment e recusar a resposta quando o verificador obrigatório estiver indisponível ou abaixo do limiar. **Implementado com política fail-closed configurável no incremento 4.9.1.**
+- **RIA-095** Avaliar perfis candidatos de thresholds no mesmo dataset e tenant do baseline, bloqueando regressões além da tolerância antes da ativação. **Implementado no incremento 4.9.1.**
+- **RIA-096** Aplicar perfis de qualidade em canário determinístico, medir fallback e rejeição semântica e executar rollback quando os gates online forem violados. **Implementado no incremento 4.9.1.**
+- **RIA-097** Iniciar automaticamente o perfil aprovado em etapas progressivas tenant-scoped, exigindo janela e amostra mínimas antes de cada expansão. **Implementado no incremento 4.9.2.**
+- **RIA-098** Manter o baseline anterior atendendo o tráfego fora do bucket durante todo o canário e registrar métricas e decisão por etapa. **Implementado no incremento 4.9.2.**
+- **RIA-099** Promover automaticamente após a validação de 100% e executar rollback atômico quando houver regressão de fallback, rejeição semântica, recusa ou feedback negativo. **Implementado no incremento 4.9.2.**
+- **RIA-100** Renovar o lease de avaliações longas e expor administrativamente etapa, histórico, próxima avaliação e motivo da promoção ou rollback. **Implementado no incremento 4.9.2.**
+- **RIA-101** Executar a validação semântica em provider e modelo NLI independentes do gerador, recusando configuração que reutilize o mesmo modelo quando a separação for obrigatória. **Implementado no incremento 4.9.3.**
+- **RIA-102** Suportar classificador NLI dedicado por contrato fechado de premissa, hipótese, rótulo e confiança. **Implementado no incremento 4.9.3.**
+- **RIA-103** Reduzir o caminho crítico por reranking adaptativo e limites de fontes, contexto, afirmações e tokens, preservando os gates existentes. **Implementado no incremento 4.9.3.**
+- **RIA-104** Medir latência por etapa e bloquear rollout cuja taxa de estouro do orçamento exceda o limite tenant-scoped. **Implementado no incremento 4.9.3.**
 
 ## Avaliação
 

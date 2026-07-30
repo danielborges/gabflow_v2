@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from app.models import RagLearningArtifactType
 from app.rag.analytics import structured_query
+from app.rag.calibration import quality_parameters_from_artifact
 from app.rag.learning import active_learning_artifacts, learning_influence_data
 from app.rag.query_understanding import (
     DOCUMENTARY_FILTER_KEYS,
@@ -98,6 +99,17 @@ def route_query(
         if routing_applied:
             applied_artifacts.append(learning_influence_data(routing_artifact))
     rerank_artifact = artifacts.get(RagLearningArtifactType.RERANK_PROFILE)
+    quality_artifact = artifacts.get(RagLearningArtifactType.QUALITY_PROFILE)
+    quality_profile = (
+        quality_parameters_from_artifact(quality_artifact)
+        if quality_artifact is not None
+        else None
+    )
+    if quality_artifact is not None and intent.method in {
+        QueryMethod.DOCUMENTAL,
+        QueryMethod.HIBRIDO,
+    }:
+        applied_artifacts.append(learning_influence_data(quality_artifact))
     documentary_plan = (
         understand_documentary_query(query, explicit_filters=explicit_filters)
         if intent.method in {QueryMethod.DOCUMENTAL, QueryMethod.HIBRIDO}
@@ -112,6 +124,7 @@ def route_query(
             rerank_artifact=rerank_artifact,
             applied_artifacts=applied_artifacts,
             retrieval_plan=documentary_plan,
+            quality_profile=quality_profile,
         )
         return _with_routing(
             answer,
@@ -135,6 +148,7 @@ def route_query(
         rerank_artifact=rerank_artifact,
         applied_artifacts=applied_artifacts,
         retrieval_plan=documentary_plan,
+        quality_profile=quality_profile,
     )
     documentary["resposta"] = (
         f"{_structured_response(structured)} "

@@ -168,6 +168,12 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "activated_by_id",
         "activation_mode",
         "rollout_percentage",
+        "rollout_state",
+        "rollout_stage_index",
+        "rollout_started_at",
+        "rollout_stage_started_at",
+        "rollout_next_check_at",
+        "rollout_history",
         "online_metrics",
     }.issubset(learning_artifact_columns)
     assert "UNIQUE INDEX" in active_artifact_index
@@ -307,6 +313,9 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         feedback_judgments = connection.execute(
             enum_query, {"enum_name": "rag_feedback_source_judgment"}
         ).scalars().all()
+        learning_artifact_types = connection.execute(
+            enum_query, {"enum_name": "rag_learning_artifact_type"}
+        ).scalars().all()
 
     assert request_statuses == [
         "NOVA",
@@ -349,6 +358,13 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         "SUPERADO",
     ]
     assert feedback_judgments == ["RELEVANTE", "IRRELEVANTE", "AUSENTE"]
+    assert learning_artifact_types == [
+        "RERANK_PROFILE",
+        "ROUTING_EXAMPLES",
+        "EVALUATION_CASES",
+        "ANSWER_EXEMPLARS",
+        "QUALITY_PROFILE",
+    ]
 
 
 def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
@@ -506,8 +522,12 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "source_feedback_id" in rolled_back_evaluation_columns
         assert "case_origin" in rolled_back_evaluation_columns
         assert "source_query_id" in rolled_back_evaluation_columns
-        assert "embedding_vector" not in rolled_back_chunk_columns
-        assert "search_vector" not in rolled_back_chunk_columns
+        assert "rollout_state" not in rolled_back_learning_artifact_columns
+        assert "rollout_history" not in rolled_back_learning_artifact_columns
+        # O downgrade do rollout preserva o QUALITY_PROFILE entregue no
+        # incremento imediatamente anterior.
+        assert "embedding_vector" in rolled_back_chunk_columns
+        assert "search_vector" in rolled_back_chunk_columns
         assert "routing_accuracy" in rolled_back_evaluation_run_columns
         assert "location_geography" in rolled_back_service_columns
         assert "jurisdiction_name" in rolled_back_tenant_columns

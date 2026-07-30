@@ -22,6 +22,10 @@ from app.rag.grounded_generation import (
     OllamaGroundedAnswerProvider,
 )
 from app.rag.retrieval import answer_query
+from app.rag.semantic_entailment import (
+    EntailmentJudgment,
+    EntailmentOutcome,
+)
 from app.rag.service import LocalHashEmbeddingProvider
 
 
@@ -314,3 +318,114 @@ def test_application_rejects_unknown_source_from_alternative_provider(
         assert answer["recusaConclusiva"] is True
         assert answer["geracao"]["validacaoCruzada"]["contratoValido"] is False
         assert answer["geracao"]["validacaoCruzada"]["fontesRestritasAoContexto"] is False
+
+
+def test_semantic_entailment_rejects_lexically_similar_contradiction(
+    app,
+    monkeypatch,
+):
+    with app.app_context():
+        tenant, user = _tenant_user()
+        _seed_source(
+            tenant,
+            user,
+            "Plano municipal de mobilidade",
+            "O plano proíbe transporte individual na área central aos domingos.",
+        )
+        db.session.commit()
+        app.config.update(
+            RAG_ANSWER_GENERATION_ENABLED=True,
+            RAG_NLI_ENABLED=True,
+            RAG_NLI_FAIL_CLOSED=True,
+            RAG_NLI_MIN_SCORE=0.72,
+        )
+        fake = _FakeGenerator(
+            "O plano permite transporte individual na área central aos domingos."
+        )
+        monkeypatch.setattr(
+            "app.rag.grounded_generation.grounded_answer_provider",
+            lambda: fake,
+        )
+        monkeypatch.setattr(
+            "app.rag.grounded_generation.verify_entailment",
+            lambda cases: EntailmentOutcome(
+                judgments={
+                    "1": EntailmentJudgment(
+                        entailed=False,
+                        contradicted=True,
+                        score=0.98,
+                        reason="A evidência proíbe, enquanto a afirmação permite.",
+                    )
+                },
+                model="entailment-test",
+                prompt_version="entailment-test-v1",
+                applied=True,
+                fallback_used=False,
+                fallback_error=None,
+            ),
+        )
+
+        answer = answer_query(
+            tenant.id,
+            "admin",
+            "O transporte individual é permitido na área central aos domingos?",
+            limit=5,
+        )
+
+        semantic = answer["geracao"]["validacaoCruzada"]["entailmentSemantico"]
+        assert answer["recusaConclusiva"] is True
+        assert semantic["aplicado"] is True
+        assert semantic["valida"] is False
+        assert semantic["verificacoes"][0]["contradita"] is True
+
+
+def test_semantic_entailment_failure_is_fail_closed(app, monkeypatch):
+    with app.app_context():
+        tenant, user = _tenant_user()
+        _seed_source(
+            tenant,
+            user,
+            "Plano municipal de mobilidade",
+            "O plano disciplina mobilidade urbana e transporte coletivo.",
+        )
+        db.session.commit()
+        app.config.update(
+            RAG_ANSWER_GENERATION_ENABLED=True,
+            RAG_NLI_ENABLED=True,
+            RAG_NLI_FAIL_CLOSED=True,
+        )
+        monkeypatch.setattr(
+            "app.rag.grounded_generation.grounded_answer_provider",
+            lambda: _FakeGenerator(
+                "O plano disciplina mobilidade urbana e transporte coletivo."
+            ),
+        )
+        monkeypatch.setattr(
+            "app.rag.grounded_generation.verify_entailment",
+            lambda cases: EntailmentOutcome(
+                judgments={},
+                model="entailment-test",
+                prompt_version="entailment-test-v1",
+                applied=False,
+                fallback_used=True,
+                fallback_error="timeout controlado",
+                provider="http",
+                independent_model=True,
+                duration_ms=8_000,
+            ),
+        )
+
+        answer = answer_query(
+            tenant.id,
+            "admin",
+            "O que o plano disciplina sobre mobilidade urbana?",
+            limit=5,
+        )
+
+        semantic = answer["geracao"]["validacaoCruzada"]["entailmentSemantico"]
+        assert answer["recusaConclusiva"] is True
+        assert semantic["fallbackUtilizado"] is True
+        assert semantic["valida"] is False
+        assert answer["geracao"]["latencia"]["geracaoMs"] >= 1
+        assert answer["geracao"]["latencia"]["validacaoMs"] >= 1
+        assert answer["geracao"]["latencia"]["nliMs"] == 8_000

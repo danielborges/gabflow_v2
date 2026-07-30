@@ -87,7 +87,7 @@ class Config:
         "RAG_NEURAL_RERANK_PROMPT_VERSION", "rag-neural-rerank-v1"
     )
     RAG_NEURAL_RERANK_TIMEOUT_SECONDS = int(
-        os.getenv("RAG_NEURAL_RERANK_TIMEOUT_SECONDS", "45")
+        os.getenv("RAG_NEURAL_RERANK_TIMEOUT_SECONDS", "8")
     )
     RAG_NEURAL_RERANK_CANDIDATE_LIMIT = int(
         os.getenv("RAG_NEURAL_RERANK_CANDIDATE_LIMIT", "12")
@@ -104,6 +104,18 @@ class Config:
     RAG_NEURAL_RERANK_FALLBACK_ENABLED = (
         os.getenv("RAG_NEURAL_RERANK_FALLBACK_ENABLED", "true").lower() == "true"
     )
+    RAG_NEURAL_RERANK_ADAPTIVE_ENABLED = (
+        os.getenv("RAG_NEURAL_RERANK_ADAPTIVE_ENABLED", "true").lower() == "true"
+    )
+    RAG_NEURAL_RERANK_SKIP_MIN_SCORE = float(
+        os.getenv("RAG_NEURAL_RERANK_SKIP_MIN_SCORE", "0.70")
+    )
+    RAG_NEURAL_RERANK_SKIP_MIN_MARGIN = float(
+        os.getenv("RAG_NEURAL_RERANK_SKIP_MIN_MARGIN", "0.10")
+    )
+    RAG_NEURAL_RERANK_MAX_TOKENS = int(
+        os.getenv("RAG_NEURAL_RERANK_MAX_TOKENS", "384")
+    )
     RAG_ANSWER_GENERATION_ENABLED = (
         os.getenv("RAG_ANSWER_GENERATION_ENABLED", "true").lower() == "true"
     )
@@ -115,17 +127,59 @@ class Config:
         "RAG_ANSWER_PROMPT_VERSION", "rag-grounded-answer-v1"
     )
     RAG_ANSWER_TIMEOUT_SECONDS = int(
-        os.getenv("RAG_ANSWER_TIMEOUT_SECONDS", "60")
+        os.getenv("RAG_ANSWER_TIMEOUT_SECONDS", "20")
     )
-    RAG_ANSWER_MAX_SOURCES = int(os.getenv("RAG_ANSWER_MAX_SOURCES", "5"))
-    RAG_ANSWER_SOURCE_CHARS = int(os.getenv("RAG_ANSWER_SOURCE_CHARS", "1800"))
-    RAG_ANSWER_MAX_CLAIMS = int(os.getenv("RAG_ANSWER_MAX_CLAIMS", "8"))
+    RAG_ANSWER_MAX_SOURCES = int(os.getenv("RAG_ANSWER_MAX_SOURCES", "3"))
+    RAG_ANSWER_SOURCE_CHARS = int(os.getenv("RAG_ANSWER_SOURCE_CHARS", "900"))
+    RAG_ANSWER_MAX_CLAIMS = int(os.getenv("RAG_ANSWER_MAX_CLAIMS", "5"))
     RAG_ANSWER_MAX_CHARS = int(os.getenv("RAG_ANSWER_MAX_CHARS", "5000"))
+    RAG_ANSWER_MAX_TOKENS = int(os.getenv("RAG_ANSWER_MAX_TOKENS", "512"))
     RAG_ANSWER_CITATION_SUPPORT_THRESHOLD = float(
         os.getenv("RAG_ANSWER_CITATION_SUPPORT_THRESHOLD", "0.18")
     )
     RAG_ANSWER_FALLBACK_REFUSAL_ENABLED = (
         os.getenv("RAG_ANSWER_FALLBACK_REFUSAL_ENABLED", "true").lower() == "true"
+    )
+    RAG_ENTAILMENT_ENABLED = (
+        os.getenv("RAG_ENTAILMENT_ENABLED", "true").lower() == "true"
+    )
+    RAG_ENTAILMENT_PROVIDER = os.getenv("RAG_ENTAILMENT_PROVIDER", "ollama")
+    RAG_ENTAILMENT_MODEL = os.getenv(
+        "RAG_ENTAILMENT_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
+    )
+    RAG_ENTAILMENT_PROMPT_VERSION = os.getenv(
+        "RAG_ENTAILMENT_PROMPT_VERSION", "rag-entailment-v1"
+    )
+    RAG_ENTAILMENT_TIMEOUT_SECONDS = int(
+        os.getenv("RAG_ENTAILMENT_TIMEOUT_SECONDS", "45")
+    )
+    RAG_ENTAILMENT_MIN_SCORE = float(
+        os.getenv("RAG_ENTAILMENT_MIN_SCORE", "0.72")
+    )
+    RAG_ENTAILMENT_FAIL_CLOSED = (
+        os.getenv("RAG_ENTAILMENT_FAIL_CLOSED", "true").lower() == "true"
+    )
+    RAG_NLI_ENABLED = os.getenv("RAG_NLI_ENABLED", "true").lower() == "true"
+    RAG_NLI_PROVIDER = os.getenv("RAG_NLI_PROVIDER", "ollama")
+    RAG_NLI_BASE_URL = os.getenv("RAG_NLI_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"))
+    RAG_NLI_MODEL = os.getenv("RAG_NLI_MODEL", "qwen2.5:0.5b")
+    RAG_NLI_PROMPT_VERSION = os.getenv("RAG_NLI_PROMPT_VERSION", "rag-nli-v2")
+    RAG_NLI_TIMEOUT_SECONDS = int(os.getenv("RAG_NLI_TIMEOUT_SECONDS", "12"))
+    RAG_NLI_MIN_SCORE = float(
+        os.getenv("RAG_NLI_MIN_SCORE", os.getenv("RAG_ENTAILMENT_MIN_SCORE", "0.72"))
+    )
+    RAG_NLI_FAIL_CLOSED = (
+        os.getenv("RAG_NLI_FAIL_CLOSED", "true").lower() == "true"
+    )
+    RAG_NLI_REQUIRE_DISTINCT_MODEL = (
+        os.getenv("RAG_NLI_REQUIRE_DISTINCT_MODEL", "true").lower() == "true"
+    )
+    RAG_NLI_MAX_EVIDENCE_CHARS = int(
+        os.getenv("RAG_NLI_MAX_EVIDENCE_CHARS", "2400")
+    )
+    RAG_NLI_MAX_TOKENS = int(os.getenv("RAG_NLI_MAX_TOKENS", "256"))
+    RAG_QUERY_LATENCY_BUDGET_MS = int(
+        os.getenv("RAG_QUERY_LATENCY_BUDGET_MS", "30000")
     )
     RAG_LEARNING_MIN_SIGNALS = int(os.getenv("RAG_LEARNING_MIN_SIGNALS", "3"))
     RAG_LEARNING_MAX_ADJUSTMENT = float(
@@ -150,6 +204,36 @@ class Config:
     RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE = float(
         os.getenv("RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE", "0.60")
     )
+    RAG_QUALITY_ONLINE_MIN_SAMPLES = int(
+        os.getenv("RAG_QUALITY_ONLINE_MIN_SAMPLES", "20")
+    )
+    RAG_QUALITY_ONLINE_MAX_FALLBACK_RATE = float(
+        os.getenv("RAG_QUALITY_ONLINE_MAX_FALLBACK_RATE", "0.20")
+    )
+    RAG_QUALITY_ONLINE_MAX_SEMANTIC_REJECTION_RATE = float(
+        os.getenv("RAG_QUALITY_ONLINE_MAX_SEMANTIC_REJECTION_RATE", "0.30")
+    )
+    RAG_QUALITY_ONLINE_MAX_REFUSAL_RATE = float(
+        os.getenv("RAG_QUALITY_ONLINE_MAX_REFUSAL_RATE", "0.50")
+    )
+    RAG_QUALITY_ONLINE_MAX_LATENCY_BUDGET_RATE = float(
+        os.getenv("RAG_QUALITY_ONLINE_MAX_LATENCY_BUDGET_RATE", "0.10")
+    )
+    RAG_QUALITY_ROLLOUT_STAGES = os.getenv(
+        "RAG_QUALITY_ROLLOUT_STAGES", "5,20,50,100"
+    )
+    RAG_QUALITY_ROLLOUT_MIN_SAMPLES = int(
+        os.getenv("RAG_QUALITY_ROLLOUT_MIN_SAMPLES", "20")
+    )
+    RAG_QUALITY_ROLLOUT_MIN_WINDOW_SECONDS = int(
+        os.getenv("RAG_QUALITY_ROLLOUT_MIN_WINDOW_SECONDS", "3600")
+    )
+    RAG_QUALITY_ROLLOUT_CHECK_INTERVAL_SECONDS = int(
+        os.getenv("RAG_QUALITY_ROLLOUT_CHECK_INTERVAL_SECONDS", "300")
+    )
+    RAG_QUALITY_ROLLOUT_MAX_RATE_REGRESSION = float(
+        os.getenv("RAG_QUALITY_ROLLOUT_MAX_RATE_REGRESSION", "0.05")
+    )
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL")
     RESEND_TIMEOUT_SECONDS = int(os.getenv("RESEND_TIMEOUT_SECONDS", "10"))
@@ -164,6 +248,7 @@ class Config:
     WORKER_RETRY_BASE_SECONDS = int(os.getenv("WORKER_RETRY_BASE_SECONDS", "30"))
     WORKER_RETRY_MAX_SECONDS = int(os.getenv("WORKER_RETRY_MAX_SECONDS", "3600"))
     WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv("WORKER_LOCK_TIMEOUT_SECONDS", "300"))
+    WORKER_HEARTBEAT_SECONDS = int(os.getenv("WORKER_HEARTBEAT_SECONDS", "60"))
     WORKER_QUEUE = os.getenv("WORKER_QUEUE", "all").lower()
     WORKER_RUN_SCHEDULER = (
         os.getenv("WORKER_RUN_SCHEDULER", "true").lower() == "true"
@@ -278,9 +363,17 @@ class TestConfig(Config):
     SENTRY_DSN = None
     RAG_OPERATIONAL_MEMORY_ENABLED = False
     RAG_NEURAL_RERANK_ENABLED = False
+    RAG_NEURAL_RERANK_ADAPTIVE_ENABLED = False
     RAG_ANSWER_GENERATION_ENABLED = False
+    RAG_ENTAILMENT_ENABLED = False
+    RAG_NLI_ENABLED = False
     RAG_LEARNING_MIN_SIGNALS = 1
     RAG_LEARNING_ONLINE_MIN_SAMPLES = 2
+    RAG_QUALITY_ONLINE_MIN_SAMPLES = 2
+    RAG_QUALITY_ROLLOUT_MIN_SAMPLES = 2
+    RAG_QUALITY_ROLLOUT_MIN_WINDOW_SECONDS = 0
+    RAG_QUALITY_ROLLOUT_CHECK_INTERVAL_SECONDS = 0
+    WORKER_HEARTBEAT_SECONDS = 0
     METRICS_BEARER_TOKEN = "test-metrics-token"  # noqa: S105
     WORKER_QUEUE = "all"
     WORKER_RUN_SCHEDULER = True

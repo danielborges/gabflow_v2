@@ -155,7 +155,15 @@ def test_neural_reranker_reorders_only_the_eligible_hybrid_pool(app, monkeypatch
         }
         assert answer["fontes"][0]["pontuacaoRerankerNeural"] == 1.0
         assert answer["fontes"][0]["pontuacaoRankingBase"] != 1.0
-        assert answer["recuperacao"]["rerankingNeural"] == {
+        summary = answer["recuperacao"]["rerankingNeural"]
+        assert summary["latenciaMs"] >= 0
+        assert summary["skipAdaptativo"] is False
+        assert summary["motivoSkip"] is None
+        assert {
+            key: value
+            for key, value in summary.items()
+            if key not in {"latenciaMs", "skipAdaptativo", "motivoSkip"}
+        } == {
             "habilitado": True,
             "aplicado": True,
             "modelo": "reranker-neural-test",

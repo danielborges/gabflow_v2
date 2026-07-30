@@ -1,5 +1,6 @@
 import json
 import math
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,6 +47,7 @@ class NeuralRerankOutcome:
     fallback_used: bool
     fallback_error: str | None
     candidate_count: int
+    duration_ms: int = 0
 
 
 class NeuralReranker(Protocol):
@@ -66,6 +68,7 @@ class OllamaNeuralReranker:
         model: str,
         prompt_version: str,
         timeout_seconds: int,
+        max_tokens: int = 384,
     ) -> None:
         parsed_url = urllib.parse.urlsplit(base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
@@ -74,6 +77,7 @@ class OllamaNeuralReranker:
         self.model = model
         self.prompt_version = prompt_version
         self.timeout_seconds = timeout_seconds
+        self.max_tokens = max(128, int(max_tokens))
 
     def rerank(
         self,
@@ -86,7 +90,12 @@ class OllamaNeuralReranker:
                 "model": self.model,
                 "stream": False,
                 "format": self._schema(candidates),
-                "options": {"temperature": 0},
+                "keep_alive": "10m",
+                "options": {
+                    "temperature": 0,
+                    "num_predict": self.max_tokens,
+                    "num_ctx": 4096,
+                },
                 "messages": [
                     {"role": "system", "content": self._system_prompt()},
                     {
@@ -242,6 +251,7 @@ def neural_reranker_provider() -> NeuralReranker:
         model=current_app.config["RAG_NEURAL_RERANK_MODEL"],
         prompt_version=current_app.config["RAG_NEURAL_RERANK_PROMPT_VERSION"],
         timeout_seconds=current_app.config["RAG_NEURAL_RERANK_TIMEOUT_SECONDS"],
+        max_tokens=current_app.config["RAG_NEURAL_RERANK_MAX_TOKENS"],
     )
 
 
@@ -249,6 +259,7 @@ def run_neural_rerank(
     query: str,
     candidates: tuple[NeuralCandidate, ...],
 ) -> NeuralRerankOutcome:
+    started = time.perf_counter()
     if not current_app.config["RAG_NEURAL_RERANK_ENABLED"] or not candidates:
         return NeuralRerankOutcome(
             judgments={},
@@ -258,6 +269,7 @@ def run_neural_rerank(
             fallback_used=False,
             fallback_error=None,
             candidate_count=len(candidates),
+            duration_ms=0,
         )
     try:
         provider = neural_reranker_provider()
@@ -270,6 +282,7 @@ def run_neural_rerank(
             fallback_used=False,
             fallback_error=None,
             candidate_count=len(candidates),
+            duration_ms=_duration_ms(started),
         )
     except (NeuralRerankerError, ValueError) as error:
         if not current_app.config["RAG_NEURAL_RERANK_FALLBACK_ENABLED"]:
@@ -286,4 +299,9 @@ def run_neural_rerank(
             fallback_used=True,
             fallback_error=str(error)[:300],
             candidate_count=len(candidates),
+            duration_ms=_duration_ms(started),
         )
+
+
+def _duration_ms(started: float) -> int:
+    return max(1, round((time.perf_counter() - started) * 1000))

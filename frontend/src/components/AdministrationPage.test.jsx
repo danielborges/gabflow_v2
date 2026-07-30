@@ -107,6 +107,41 @@ describe("AdministrationPage office settings", () => {
     expect(phone).toHaveValue("(32) 99999-0000");
   });
 
+  it("acompanha o rollout progressivo do perfil RAG", async () => {
+    apiRequest.mockImplementation((path, options = {}) => {
+      if (path === "/api/v1/assistente/calibracoes") {
+        const profile = {
+          id: "quality-profile-1",
+          versao: 3,
+          estado: "ATIVO",
+          percentualCanario: 20,
+          metricasOnline: { latencyBudgetExceededRate: 0.08 },
+          rollout: {
+            estado: "MONITORANDO",
+            etapaAtual: 1,
+            proximaAvaliacaoEm: "2026-07-30T18:00:00Z",
+            historico: [{
+              estado: "APROVADA",
+              motivos: ["GATES_ONLINE_ATENDIDOS"],
+            }],
+          },
+        };
+        return Promise.resolve({ content: [profile], perfilAtivo: profile });
+      }
+      return mockAdminApi(path, options);
+    });
+
+    render(<AdministrationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Qualidade RAG" }));
+
+    expect(await screen.findByText("Calibração e rollout do RAG")).toBeInTheDocument();
+    expect(screen.getAllByText("v3")).toHaveLength(2);
+    expect(screen.getAllByText("20%")).toHaveLength(2);
+    expect(screen.getAllByText("MONITORANDO")).toHaveLength(2);
+    expect(screen.getByText("8%")).toBeInTheDocument();
+    expect(screen.getByText(/GATES_ONLINE_ATENDIDOS/)).toBeInTheDocument();
+  });
+
   it("edita usuario selecionado na tabela usando o mesmo formulario", async () => {
     apiRequest.mockImplementation((path, options = {}) => {
       if (path === "/api/v1/admin/usuarios") {

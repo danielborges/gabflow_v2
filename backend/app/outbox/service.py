@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from app.extensions import db
 from app.models import OutboxEvent
 from app.outbox.handlers import NonRetryableEventError, handle_event, handle_exhausted_event
+from app.outbox.lease import renewable_event_lease
 from app.tenant_context import clear_tenant_context, tenant_context
 
 RAG_QUEUE_EVENT_TYPES = {
@@ -17,6 +18,8 @@ RAG_QUEUE_EVENT_TYPES = {
     "IngestaoDocumentoRagGlobal",
     "SincronizacaoMemoriaOperacional",
     "CompilacaoSinaisRag",
+    "AvaliacaoPerfilQualidadeRag",
+    "AvaliacaoRolloutPerfilQualidadeRag",
 }
 WORKER_QUEUES = {"all", "default", "rag"}
 
@@ -96,7 +99,8 @@ def process_event(event_id: uuid.UUID, worker_id: str) -> str:
 
     try:
         if event.tenant_id is None:
-            handle_event(event)
+            with renewable_event_lease(event.id, worker_id):
+                handle_event(event)
             event.published_at = datetime.now(UTC)
             event.locked_at = None
             event.locked_by = None
@@ -114,7 +118,8 @@ def process_event(event_id: uuid.UUID, worker_id: str) -> str:
             db.session.commit()
             return "succeeded"
         with tenant_context(event.tenant_id):
-            handle_event(event)
+            with renewable_event_lease(event.id, worker_id):
+                handle_event(event)
             event.published_at = datetime.now(UTC)
             event.locked_at = None
             event.locked_by = None

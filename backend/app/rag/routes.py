@@ -42,6 +42,7 @@ from app.models import (
 )
 from app.observability import percentile
 from app.rag.analytics import rebuild_thematic_memories, structured_query
+from app.rag.calibration import create_quality_calibration
 from app.rag.curation import (
     CurationConflictError,
     CurationNotFoundError,
@@ -508,7 +509,11 @@ def create_assistant_query():
     )
     db.session.add(query)
     db.session.flush()
-    record_learning_influence(tenant_id, query.learning_artifacts)
+    record_learning_influence(
+        tenant_id,
+        query.learning_artifacts,
+        answer=answer,
+    )
     answer["id"] = str(query.id)
     answer["avaliacao"] = None
     add_audit(
@@ -611,6 +616,41 @@ def assistant_metrics():
         )
         for item in items
     )
+    entailment_applied = sum(
+        bool(
+            ((item.safety_flags or {}).get("geracao") or {})
+            .get("validacaoCruzada", {})
+            .get("entailmentSemantico", {})
+            .get("aplicado")
+        )
+        for item in items
+    )
+    entailment_fallbacks = sum(
+        bool(
+            ((item.safety_flags or {}).get("geracao") or {})
+            .get("validacaoCruzada", {})
+            .get("entailmentSemantico", {})
+            .get("fallbackUtilizado")
+        )
+        for item in items
+    )
+    entailment_rejections = sum(
+        bool(
+            (
+                ((item.safety_flags or {}).get("geracao") or {})
+                .get("validacaoCruzada", {})
+                .get("entailmentSemantico", {})
+                .get("habilitado")
+            )
+            and not (
+                ((item.safety_flags or {}).get("geracao") or {})
+                .get("validacaoCruzada", {})
+                .get("entailmentSemantico", {})
+                .get("valida")
+            )
+        )
+        for item in items
+    )
     return jsonify(
         janelaHoras=current_app.config["RAG_METRICS_WINDOW_HOURS"],
         consultas=total,
@@ -624,6 +664,9 @@ def assistant_metrics():
         respostasGeradas=generated_answers,
         fallbackGeracao=generation_fallbacks,
         rejeicoesValidacaoCitacoes=citation_validation_rejections,
+        entailmentAplicado=entailment_applied,
+        fallbackEntailment=entailment_fallbacks,
+        rejeicoesEntailment=entailment_rejections,
         feedbackPositivo=sum(
             item.feedback_rating == RagQueryFeedbackRating.POSITIVA for item in items
         ),
@@ -1106,6 +1149,60 @@ def create_assistant_learning_run():
             409,
         )
     return jsonify(learning_run_data(item)), 202 if created else 200
+
+
+@rag_bp.post("/assistente/calibracoes")
+@roles_required("admin")
+def create_assistant_quality_calibration():
+    tenant_id, user_id = _context()
+    try:
+        artifact = create_quality_calibration(
+            tenant_id,
+            user_id,
+            str(get_jwt().get("role", "")),
+            request.get_json(silent=True) or {},
+        )
+        db.session.commit()
+    except LearningValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    except IntegrityError:
+        db.session.rollback()
+        return (
+            jsonify(
+                error="conflict",
+                message="Uma calibração concorrente gerou a mesma versão.",
+            ),
+            409,
+        )
+    response = learning_artifact_data(artifact, include_payload=True)
+    response["aprovada"] = None
+    response["motivos"] = ["AVALIACAO_AGENDADA"]
+    return jsonify(response), 202
+
+
+@rag_bp.get("/assistente/calibracoes")
+@roles_required("admin", "manager")
+def list_assistant_quality_calibrations():
+    tenant_id, _ = _context()
+    items = db.session.scalars(
+        select(RagLearningArtifact)
+        .where(
+            RagLearningArtifact.tenant_id == tenant_id,
+            RagLearningArtifact.artifact_type
+            == RagLearningArtifactType.QUALITY_PROFILE,
+        )
+        .order_by(RagLearningArtifact.created_at.desc())
+        .limit(100)
+    )
+    content = [learning_artifact_data(item, include_payload=True) for item in items]
+    return jsonify(
+        content=content,
+        perfilAtivo=next(
+            (item for item in content if item["estado"] == "ATIVO"),
+            None,
+        ),
+    )
 
 
 @rag_bp.get("/assistente/aprendizado/execucoes")

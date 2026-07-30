@@ -420,15 +420,27 @@ esperada pode ser indicada por documento/versão visível ao mesmo tenant.
 - ativado_em
 - modo_ativacao
 - percentual_canario
+- estado_rollout
+- indice_etapa_rollout
+- rollout_iniciado_em
+- etapa_rollout_iniciada_em
+- proxima_avaliacao_rollout_em
+- historico_rollout
 - metricas_online
 - substituido_por_id
 - revogado_em
 - motivo_revogacao
 - criado_em
 
-Tipos iniciais: `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES` e
-`ANSWER_EXEMPLARS`. Existe no máximo um artefato `ATIVO` por tenant e tipo.
+Tipos: `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES`,
+`ANSWER_EXEMPLARS` e `QUALITY_PROFILE`. Existe no máximo um artefato `ATIVO` por tenant e tipo.
 O payload usa schema fechado e não contém comentário bruto.
+
+`QUALITY_PROFILE` não deriva de feedback individual: sua proveniência é uma
+execução de calibração que preserva parâmetros de baseline e candidato, dataset,
+métricas, gates e decisão. Ele reutiliza os campos de canário e rollback.
+Os campos de rollout preservam a máquina de estados `MONITORANDO`, `PROMOVIDO`,
+`ROLLBACK` ou `ERRO`, além das métricas e decisões imutáveis de cada etapa.
 
 ## FeedbackArtefatoAprendizadoRag
 - id

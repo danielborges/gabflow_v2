@@ -224,6 +224,7 @@ class RagLearningArtifactType(str, enum.Enum):
     ROUTING_EXAMPLES = "ROUTING_EXAMPLES"
     EVALUATION_CASES = "EVALUATION_CASES"
     ANSWER_EXEMPLARS = "ANSWER_EXEMPLARS"
+    QUALITY_PROFILE = "QUALITY_PROFILE"
 
 
 class RagLearningArtifactStatus(str, enum.Enum):
@@ -1936,6 +1937,20 @@ class RagLearningArtifact(db.Model):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activation_mode: Mapped[str | None] = mapped_column(String(20))
     rollout_percentage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rollout_state: Mapped[str | None] = mapped_column(String(24), index=True)
+    rollout_stage_index: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    rollout_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    rollout_stage_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    rollout_next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    rollout_history: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     online_metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

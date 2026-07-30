@@ -325,10 +325,30 @@ contexto.
 
 A aplicação é a autoridade final: valida o schema, restringe os IDs, verifica a
 presença de citações e calcula suporte entre cada afirmação e os chunks citados.
-Somente afirmações aprovadas são compostas em texto e recebem marcadores
+Um verificador semântico independente avalia entailment e contradição depois dos
+controles determinísticos e lexicais; sua indisponibilidade causa recusa quando
+a política fail-closed está ativa. Somente afirmações aprovadas são compostas em texto e recebem marcadores
 numerados. Qualquer falha causa recusa conclusiva; não existe fallback para uma
 resposta substantiva sem validação. Modelo, prompt, checks, citações e fallback
 integram a auditoria tenant-scoped.
+
+Os thresholds de retrieval, reranking e validação são materializados em
+`QUALITY_PROFILE`. Cada candidato é comparado ao perfil efetivo no mesmo dataset
+tenant-scoped. A ativação reutiliza bucket determinístico, canário, métricas
+online e rollback atômico dos demais artefatos de aprendizado.
+Perfis aprovados avançam automaticamente pelas etapas configuradas. Enquanto o
+candidato atende apenas seu bucket, a versão substituída permanece como baseline
+efetivo para o restante do tráfego. Cada etapa exige janela e amostra mínimas e
+avalia taxas de fallback, rejeição semântica, recusa e feedback negativo. A
+aprovação da etapa de 100% promove o perfil; qualquer regressão restaura o
+baseline. Eventos longos renovam o lease do outbox durante o processamento.
+
+O verificador NLI possui ciclo operacional independente do gerador: provider,
+endpoint, modelo, prompt, timeout e limites próprios. A configuração padrão usa
+um modelo menor no runtime local, mas proíbe reutilizar o modelo gerador; o
+adapter HTTP permite substituí-lo por classificador NLI dedicado. O reranker
+neural é condicional para candidato único ou liderança híbrida inequívoca.
+Recuperação, geração, validação lexical, NLI e total possuem telemetria separada.
 
 ## Isolamento transacional
 

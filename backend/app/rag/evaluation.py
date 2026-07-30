@@ -1,9 +1,11 @@
+import time
 import uuid
 
 from sqlalchemy import select
 
 from app.extensions import db
 from app.models import RagEvaluationQuestion, RagEvaluationRun
+from app.observability import percentile
 from app.rag.retrieval import answer_query
 from app.rag.router import route_query
 
@@ -72,8 +74,10 @@ def evaluate_tenant_dataset(
     routing_scores = []
     filter_scores = []
     hard_negative_rates = []
+    latencies = []
 
     for question in questions:
+        started = time.perf_counter()
         if question.expected_method or question.expected_filters:
             if learning_artifacts is None:
                 answer = route_query(
@@ -106,6 +110,8 @@ def evaluate_tenant_dataset(
                     limit=safe_k,
                     learning_artifacts=learning_artifacts,
                 )
+        latency_ms = max(1, round((time.perf_counter() - started) * 1000))
+        latencies.append(latency_ms)
         retrieved = list(
             dict.fromkeys(
                 str(source.get("documentoId"))
@@ -216,6 +222,7 @@ def evaluate_tenant_dataset(
                 "filtrosEsperados": question.expected_filters,
                 "filtrosObtidos": actual_filters,
                 "filtrosCorretos": filters_correct,
+                "latenciaMs": latency_ms,
             }
         )
 
@@ -232,6 +239,7 @@ def evaluate_tenant_dataset(
             "routingAccuracy": _average(routing_scores),
             "filterAccuracy": _average(filter_scores),
             "hardNegativeRate": _average(hard_negative_rates),
+            "latencyP95Ms": percentile(latencies, 0.95),
         },
         "results": results,
     }
@@ -287,6 +295,14 @@ def evaluation_run_data(item: RagEvaluationRun, *, include_results: bool = True)
         "acuraciaRoteamento": item.routing_accuracy,
         "acuraciaFiltros": item.filter_accuracy,
         "taxaHardNegatives": item.hard_negative_rate,
+        "latenciaP95Ms": percentile(
+            [
+                int(result["latenciaMs"])
+                for result in (item.results or [])
+                if result.get("latenciaMs") is not None
+            ],
+            0.95,
+        ),
         "criadaEm": item.created_at.isoformat(),
     }
     if include_results:

@@ -119,3 +119,15 @@
 - **RF-122** Recuperar a consulta original e expansões controladas, fundir seus resultados antes do reranking e expor o plano aplicado. **Implementado no incremento 4.8.4.**
 - **RF-123** Produzir resposta substantiva com afirmações vinculadas somente aos chunks autorizados e sanitizados que compõem o contexto do gerador. **Implementado no incremento 4.8.5.**
 - **RF-124** Validar as citações de cada afirmação, recusar a resposta quando o contrato ou o suporte falhar e expor citações rastreáveis até chunk, documento, versão e escopo. **Implementado no incremento 4.8.5.**
+- **RF-125** Criar calibração tenant-scoped de thresholds permitidos, comparar candidato e baseline no mesmo dataset e preservar parâmetros, métricas, decisão e auditoria. **Implementado no incremento 4.9.1.**
+- **RF-126** Versionar a calibração aprovada como `QUALITY_PROFILE` e aplicar seus parâmetros somente às consultas incluídas no canário determinístico. **Implementado no incremento 4.9.1.**
+- **RF-127** Submeter cada afirmação gerada a verificação semântica independente e expor modelo, prompt, score, contradição, justificativa e fallback. **Implementado no incremento 4.9.1.**
+- **RF-128** Monitorar fallback e rejeição semântica do perfil ativo e restaurar atomicamente a versão anterior quando os gates online forem violados. **Implementado no incremento 4.9.1.**
+- **RF-129** Iniciar automaticamente o rollout de um `QUALITY_PROFILE` aprovado nas etapas configuradas e promover somente depois de validar 100% do tráfego. **Implementado no incremento 4.9.2.**
+- **RF-130** Servir o perfil baseline fora do bucket candidato durante o canário e preservar decisão e métricas independentes por etapa. **Implementado no incremento 4.9.2.**
+- **RF-131** Reverter automaticamente o rollout por regressão de fallback, rejeição semântica, recusa ou feedback negativo. **Implementado no incremento 4.9.2.**
+- **RF-132** Listar calibrações com perfil ativo, etapa, próxima avaliação e histórico no painel administrativo do tenant. **Implementado no incremento 4.9.2.**
+- **RF-133** Configurar e auditar provider, endpoint, modelo, versão e latência do classificador NLI independentemente do gerador. **Implementado no incremento 4.9.3.**
+- **RF-134** Pular o reranker neural quando o ranking híbrido já possuir liderança inequívoca, registrando score, margem e motivo. **Implementado no incremento 4.9.3.**
+- **RF-135** Expor tempos de recuperação, geração, validação, NLI e total, juntamente com orçamento e indicador de estouro. **Implementado no incremento 4.9.3.**
+- **RF-136** Considerar a taxa de estouro do orçamento de latência nos gates do rollout progressivo. **Implementado no incremento 4.9.3.**

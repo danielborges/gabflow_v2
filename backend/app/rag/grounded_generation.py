@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -10,6 +11,7 @@ from typing import Protocol
 from flask import current_app
 
 from app.rag.content_security import has_prompt_injection
+from app.rag.semantic_entailment import EntailmentCase, verify_entailment
 
 
 class GroundedGenerationError(RuntimeError):
@@ -50,6 +52,7 @@ class GroundedGenerationOutcome:
     fallback_used: bool
     fallback_error: str | None
     validation: dict
+    timings: dict | None = None
 
 
 class GroundedAnswerProvider(Protocol):
@@ -71,6 +74,7 @@ class OllamaGroundedAnswerProvider:
         prompt_version: str,
         timeout_seconds: int,
         max_claims: int = 8,
+        max_tokens: int = 512,
     ) -> None:
         parsed_url = urllib.parse.urlsplit(base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
@@ -80,6 +84,7 @@ class OllamaGroundedAnswerProvider:
         self.prompt_version = prompt_version
         self.timeout_seconds = timeout_seconds
         self.max_claims = max(1, int(max_claims))
+        self.max_tokens = max(128, int(max_tokens))
 
     def generate(
         self,
@@ -92,7 +97,12 @@ class OllamaGroundedAnswerProvider:
                 "model": self.model,
                 "stream": False,
                 "format": self._schema(tuple(allowed_ids)),
-                "options": {"temperature": 0},
+                "keep_alive": "10m",
+                "options": {
+                    "temperature": 0,
+                    "num_predict": self.max_tokens,
+                    "num_ctx": 4096,
+                },
                 "messages": [
                     {"role": "system", "content": self._system_prompt()},
                     {
@@ -245,13 +255,17 @@ def grounded_answer_provider() -> GroundedAnswerProvider:
         prompt_version=current_app.config["RAG_ANSWER_PROMPT_VERSION"],
         timeout_seconds=current_app.config["RAG_ANSWER_TIMEOUT_SECONDS"],
         max_claims=current_app.config["RAG_ANSWER_MAX_CLAIMS"],
+        max_tokens=current_app.config["RAG_ANSWER_MAX_TOKENS"],
     )
 
 
 def generate_grounded_answer(
     query: str,
     sources: tuple[GroundingSource, ...],
+    *,
+    quality_profile: dict | None = None,
 ) -> GroundedGenerationOutcome:
+    started = time.perf_counter()
     if not current_app.config["RAG_ANSWER_GENERATION_ENABLED"]:
         return _outcome(
             model=None,
@@ -268,8 +282,16 @@ def generate_grounded_answer(
         )
     try:
         provider = grounded_answer_provider()
+        provider_started = time.perf_counter()
         claims = provider.generate(query, sources)
-        validation = _validate_claims(claims, sources)
+        generation_ms = _duration_ms(provider_started)
+        validation_started = time.perf_counter()
+        validation = _validate_claims(
+            claims,
+            sources,
+            quality_profile=quality_profile,
+        )
+        validation_ms = _duration_ms(validation_started)
         if not validation["valida"]:
             raise GroundedGenerationInvalidResponse(
                 "A validacao cruzada rejeitou uma ou mais citacoes."
@@ -289,6 +311,17 @@ def generate_grounded_answer(
             fallback_used=False,
             fallback_error=None,
             validation=validation,
+            timings={
+                "geracaoMs": generation_ms,
+                "validacaoMs": validation_ms,
+                "nliMs": int(
+                    validation.get("entailmentSemantico", {}).get(
+                        "latenciaMs",
+                        0,
+                    )
+                ),
+                "totalMs": _duration_ms(started),
+            },
         )
     except (GroundedGenerationError, ValueError) as error:
         if not current_app.config["RAG_ANSWER_FALLBACK_REFUSAL_ENABLED"]:
@@ -297,29 +330,55 @@ def generate_grounded_answer(
             "Falha na geracao fundamentada; recusando resposta substantiva: %s",
             error,
         )
+        failure_validation = (
+            validation
+            if "validation" in locals()
+            else {"valida": False, "motivo": "FALHA_DO_GERADOR"}
+        )
+        failure_timings = {"totalMs": _duration_ms(started)}
+        if "generation_ms" in locals():
+            failure_timings["geracaoMs"] = generation_ms
+        if "validation_ms" in locals():
+            failure_timings["validacaoMs"] = validation_ms
+        semantic_validation = failure_validation.get("entailmentSemantico", {})
+        if semantic_validation:
+            failure_timings["nliMs"] = int(
+                semantic_validation.get("latenciaMs", 0)
+            )
         return _outcome(
             model=current_app.config["RAG_ANSWER_MODEL"],
             prompt_version=current_app.config["RAG_ANSWER_PROMPT_VERSION"],
             applied=False,
             fallback_used=True,
             fallback_error=str(error)[:300],
-            validation=(
-                validation
-                if "validation" in locals()
-                else {"valida": False, "motivo": "FALHA_DO_GERADOR"}
-            ),
+            validation=failure_validation,
+            timings=failure_timings,
         )
 
 
 def _validate_claims(
     claims: tuple[GeneratedClaim, ...],
     sources: tuple[GroundingSource, ...],
+    *,
+    quality_profile: dict | None = None,
 ) -> dict:
     source_map = {source.id: source for source in sources}
     max_claims = max(1, int(current_app.config["RAG_ANSWER_MAX_CLAIMS"]))
+    lexical_threshold = (
+        (quality_profile or {}).get("citationLexicalThreshold")
+        if quality_profile
+        else None
+    )
     threshold = max(
         0.0,
-        min(1.0, current_app.config["RAG_ANSWER_CITATION_SUPPORT_THRESHOLD"]),
+        min(
+            1.0,
+            float(
+                lexical_threshold
+                if lexical_threshold is not None
+                else current_app.config["RAG_ANSWER_CITATION_SUPPORT_THRESHOLD"]
+            ),
+        ),
     )
     checks = []
     contract_valid = bool(claims) and len(claims) <= max_claims
@@ -355,8 +414,69 @@ def _validate_claims(
                 "valida": supported,
             }
         )
+    deterministic_valid = contract_valid and all(
+        check["valida"] for check in checks
+    )
+    entailment_cases = tuple(
+        EntailmentCase(
+            id=str(position),
+            claim=claim.text,
+            evidence=" ".join(
+                source_map[source_id].content
+                for source_id in claim.source_ids
+                if source_id in source_map
+            )[: max(300, int(current_app.config["RAG_NLI_MAX_EVIDENCE_CHARS"]))],
+        )
+        for position, claim in enumerate(claims, start=1)
+        if deterministic_valid
+    )
+    entailment = verify_entailment(entailment_cases)
+    entailment_threshold_value = (
+        (quality_profile or {}).get("entailmentMinScore")
+        if quality_profile
+        else None
+    )
+    entailment_threshold = max(
+        0.0,
+        min(
+            1.0,
+            float(
+                entailment_threshold_value
+                if entailment_threshold_value is not None
+                else current_app.config["RAG_NLI_MIN_SCORE"]
+            ),
+        ),
+    )
+    semantic_required = bool(current_app.config["RAG_NLI_ENABLED"])
+    fail_closed = bool(current_app.config["RAG_NLI_FAIL_CLOSED"])
+    semantic_checks = []
+    semantic_valid = not semantic_required
+    if entailment.applied:
+        semantic_valid = True
+        for position in range(1, len(claims) + 1):
+            judgment = entailment.judgments.get(str(position))
+            valid = bool(
+                judgment
+                and judgment.entailed
+                and not judgment.contradicted
+                and judgment.score >= entailment_threshold
+            )
+            semantic_valid = semantic_valid and valid
+            semantic_checks.append(
+                {
+                    "afirmacao": position,
+                    "sustentada": judgment.entailed if judgment else False,
+                    "contradita": judgment.contradicted if judgment else False,
+                    "pontuacao": round(judgment.score, 4) if judgment else 0.0,
+                    "limiar": entailment_threshold,
+                    "justificativa": judgment.reason if judgment else None,
+                    "valida": valid,
+                }
+            )
+    elif semantic_required:
+        semantic_valid = not fail_closed
     return {
-        "valida": contract_valid and all(check["valida"] for check in checks),
+        "valida": deterministic_valid and semantic_valid,
         "contratoValido": contract_valid,
         "todasAfirmacoesCitadas": bool(claims)
         and all(claim.source_ids for claim in claims),
@@ -366,6 +486,21 @@ def _validate_claims(
             for source_id in claim.source_ids
         ),
         "verificacoes": checks,
+        "entailmentSemantico": {
+            "habilitado": semantic_required,
+            "aplicado": entailment.applied,
+            "modelo": entailment.model,
+            "provider": entailment.provider,
+            "modeloIndependente": entailment.independent_model,
+            "versaoPrompt": entailment.prompt_version,
+            "latenciaMs": entailment.duration_ms,
+            "limiar": entailment_threshold,
+            "failClosed": fail_closed,
+            "fallbackUtilizado": entailment.fallback_used,
+            "erroFallback": entailment.fallback_error,
+            "valida": semantic_valid,
+            "verificacoes": semantic_checks,
+        },
     }
 
 
@@ -405,6 +540,7 @@ def _outcome(
     fallback_used: bool = False,
     fallback_error: str | None = None,
     validation: dict,
+    timings: dict | None = None,
 ) -> GroundedGenerationOutcome:
     return GroundedGenerationOutcome(
         answer=None,
@@ -416,7 +552,12 @@ def _outcome(
         fallback_used=fallback_used,
         fallback_error=fallback_error,
         validation=validation,
+        timings=timings,
     )
+
+
+def _duration_ms(started: float) -> int:
+    return max(1, round((time.perf_counter() - started) * 1000))
 
 
 def _tokens(value: str) -> list[str]:

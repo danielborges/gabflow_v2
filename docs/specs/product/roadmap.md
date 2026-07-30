@@ -89,6 +89,15 @@
   pré-ranking, expansões controladas e fusão multi-query por RRF.
 - **Entregue:** geração substantiva por afirmações, contrato fechado de fontes,
   validação cruzada das citações e recusa segura em caso de falha.
+- **Entregue:** verificação semântica independente de entailment, calibração
+  tenant-scoped de thresholds, avaliação contra baseline, rollout em canário e
+  rollback por regressão operacional.
+- **Entregue:** rollout automatizado `5% -> 20% -> 50% -> 100%`, baseline real
+  fora do bucket, gates por etapa, promoção/rollback automáticos, lease renovável
+  e acompanhamento administrativo tenant-scoped.
+- **Entregue:** classificador NLI independente do gerador, provider HTTP
+  dedicado, reranking adaptativo, contexto compacto, limites de tokens e
+  telemetria/orçamento de latência por etapa.
 
 ## Release 5 — Inteligência territorial
 

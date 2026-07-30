@@ -75,6 +75,19 @@ def active_learning_artifacts(
                 16,
             ) % 100
             if bucket >= percentage:
+                previous = db.session.scalar(
+                    select(RagLearningArtifact)
+                    .where(
+                        RagLearningArtifact.tenant_id == tenant_id,
+                        RagLearningArtifact.artifact_type == item.artifact_type,
+                        RagLearningArtifact.status
+                        == RagLearningArtifactStatus.SUBSTITUIDO,
+                        RagLearningArtifact.replaced_by_id == item.id,
+                    )
+                    .order_by(RagLearningArtifact.version.desc())
+                )
+                if previous is not None:
+                    result[item.artifact_type] = previous
                 continue
         result[item.artifact_type] = item
     return result
@@ -286,7 +299,28 @@ def activate_learning_artifact(
         "positiveRatings": 0,
         "negativeRatings": 0,
         "negativeRate": 0.0,
+        "qualitySamples": 0,
+        "generationFallbacks": 0,
+        "semanticRejections": 0,
+        "refusedQueries": 0,
+        "fallbackRate": 0.0,
+        "semanticRejectionRate": 0.0,
+        "refusalRate": 0.0,
+        "stageQualitySamples": 0,
+        "stageGenerationFallbacks": 0,
+        "stageSemanticRejections": 0,
+        "stageRefusedQueries": 0,
+        "stageRatedQueries": 0,
+        "stageNegativeRatings": 0,
+        "stageNegativeRate": 0.0,
+        "latencyBudgetExceeded": 0,
+        "latencyBudgetExceededRate": 0.0,
+        "stageLatencyBudgetExceeded": 0,
+        "stageLatencyBudgetExceededRate": 0.0,
         "activatedAt": now.isoformat(),
+        "rolloutBaselineMetrics": dict(current.online_metrics or {})
+        if current is not None
+        else {},
     }
     add_audit(
         item.tenant_id,
@@ -334,10 +368,28 @@ def rollback_learning_artifact(
     if previous is None and not automatic:
         raise LearningConflictError("Não existe versão anterior elegível para rollback.")
     now = utc_now()
+    rollout_percentage_before = item.rollout_percentage
     item.status = RagLearningArtifactStatus.REVOGADO
     item.revoked_at = now
     item.revocation_reason = normalized_reason
     item.rollout_percentage = 0
+    if (
+        item.artifact_type == RagLearningArtifactType.QUALITY_PROFILE
+        and item.rollout_state == "MONITORANDO"
+    ):
+        item.rollout_state = "ROLLBACK"
+        item.rollout_next_check_at = None
+        history = list(item.rollout_history or [])
+        history.append(
+            {
+                "etapa": item.rollout_stage_index,
+                "percentual": rollout_percentage_before,
+                "estado": "REVERTIDA",
+                "instante": now.isoformat(),
+                "motivos": [normalized_reason],
+            }
+        )
+        item.rollout_history = history
     if previous is not None:
         previous.status = RagLearningArtifactStatus.ATIVO
         previous.activated_by_id = user_id
@@ -367,6 +419,8 @@ def rollback_learning_artifact(
 def record_learning_influence(
     tenant_id: uuid.UUID,
     influences: list[dict],
+    *,
+    answer: dict | None = None,
 ) -> None:
     for value in influences:
         try:
@@ -377,14 +431,141 @@ def record_learning_influence(
             select(RagLearningArtifact).where(
                 RagLearningArtifact.tenant_id == tenant_id,
                 RagLearningArtifact.id == artifact_id,
-                RagLearningArtifact.status == RagLearningArtifactStatus.ATIVO,
+                RagLearningArtifact.status.in_(
+                    {
+                        RagLearningArtifactStatus.ATIVO,
+                        RagLearningArtifactStatus.SUBSTITUIDO,
+                    }
+                ),
             )
         )
         if item is None:
             continue
         metrics = dict(item.online_metrics or {})
         metrics["influencedQueries"] = int(metrics.get("influencedQueries", 0)) + 1
+        if (
+            item.artifact_type == RagLearningArtifactType.QUALITY_PROFILE
+            and answer is not None
+        ):
+            _record_quality_online_result(item, metrics, answer)
         item.online_metrics = metrics
+
+
+def _record_quality_online_result(
+    item: RagLearningArtifact,
+    metrics: dict,
+    answer: dict,
+) -> None:
+    samples = int(metrics.get("qualitySamples", 0)) + 1
+    fallback_count = int(metrics.get("generationFallbacks", 0)) + int(
+        bool((answer.get("geracao") or {}).get("fallbackUtilizado"))
+    )
+    semantic = (
+        (answer.get("geracao") or {})
+        .get("validacaoCruzada", {})
+        .get("entailmentSemantico", {})
+    )
+    semantic_rejections = int(metrics.get("semanticRejections", 0)) + int(
+        bool(semantic.get("habilitado"))
+        and not bool(semantic.get("valida"))
+    )
+    fallback_rate = fallback_count / samples
+    rejection_rate = semantic_rejections / samples
+    refused_count = int(metrics.get("refusedQueries", 0)) + int(
+        bool(answer.get("recusaConclusiva"))
+    )
+    stage_samples = int(metrics.get("stageQualitySamples", 0)) + 1
+    stage_fallbacks = int(metrics.get("stageGenerationFallbacks", 0)) + int(
+        bool((answer.get("geracao") or {}).get("fallbackUtilizado"))
+    )
+    stage_rejections = int(metrics.get("stageSemanticRejections", 0)) + int(
+        bool(semantic.get("habilitado")) and not bool(semantic.get("valida"))
+    )
+    stage_refusals = int(metrics.get("stageRefusedQueries", 0)) + int(
+        bool(answer.get("recusaConclusiva"))
+    )
+    latency_exceeded = int(metrics.get("latencyBudgetExceeded", 0)) + int(
+        bool((answer.get("latenciaEtapas") or {}).get("orcamentoExcedido"))
+    )
+    stage_latency_exceeded = int(
+        metrics.get("stageLatencyBudgetExceeded", 0)
+    ) + int(
+        bool((answer.get("latenciaEtapas") or {}).get("orcamentoExcedido"))
+    )
+    metrics.update(
+        {
+            "qualitySamples": samples,
+            "generationFallbacks": fallback_count,
+            "semanticRejections": semantic_rejections,
+            "refusedQueries": refused_count,
+            "fallbackRate": round(fallback_rate, 6),
+            "semanticRejectionRate": round(rejection_rate, 6),
+            "refusalRate": round(refused_count / samples, 6),
+            "stageQualitySamples": stage_samples,
+            "stageGenerationFallbacks": stage_fallbacks,
+            "stageSemanticRejections": stage_rejections,
+            "stageRefusedQueries": stage_refusals,
+            "stageFallbackRate": round(stage_fallbacks / stage_samples, 6),
+            "stageSemanticRejectionRate": round(
+                stage_rejections / stage_samples, 6
+            ),
+            "stageRefusalRate": round(stage_refusals / stage_samples, 6),
+            "latencyBudgetExceeded": latency_exceeded,
+            "latencyBudgetExceededRate": round(
+                latency_exceeded / samples,
+                6,
+            ),
+            "stageLatencyBudgetExceeded": stage_latency_exceeded,
+            "stageLatencyBudgetExceededRate": round(
+                stage_latency_exceeded / stage_samples,
+                6,
+            ),
+            "lastQualitySampleAt": utc_now().isoformat(),
+        }
+    )
+    minimum = max(1, int(current_app.config["RAG_QUALITY_ONLINE_MIN_SAMPLES"]))
+    max_fallback = max(
+        0.0,
+        min(
+            1.0,
+            float(current_app.config["RAG_QUALITY_ONLINE_MAX_FALLBACK_RATE"]),
+        ),
+    )
+    max_rejection = max(
+        0.0,
+        min(
+            1.0,
+            float(
+                current_app.config[
+                    "RAG_QUALITY_ONLINE_MAX_SEMANTIC_REJECTION_RATE"
+                ]
+            ),
+        ),
+    )
+    if samples < minimum:
+        return
+    reason = None
+    if fallback_rate > max_fallback:
+        reason = (
+            "Rollback automático do perfil de qualidade: taxa de fallback "
+            f"{fallback_rate:.2%} acima de {max_fallback:.2%}."
+        )
+    elif rejection_rate > max_rejection:
+        reason = (
+            "Rollback automático do perfil de qualidade: rejeição semântica "
+            f"{rejection_rate:.2%} acima de {max_rejection:.2%}."
+        )
+    if (
+        reason
+        and item.status == RagLearningArtifactStatus.ATIVO
+        and item.activated_by_id is not None
+    ):
+        rollback_learning_artifact(
+            item,
+            item.activated_by_id,
+            reason,
+            automatic=True,
+        )
 
 
 def record_learning_feedback(feedback: RagQueryFeedback) -> None:
@@ -430,6 +611,21 @@ def record_learning_feedback(feedback: RagQueryFeedback) -> None:
                 "lastRatingAt": utc_now().isoformat(),
             }
         )
+        if item.artifact_type == RagLearningArtifactType.QUALITY_PROFILE:
+            stage_rated = int(metrics.get("stageRatedQueries", 0)) + 1
+            stage_negative = int(metrics.get("stageNegativeRatings", 0))
+            if feedback.rating != RagQueryFeedbackRating.POSITIVA:
+                stage_negative += 1
+            metrics.update(
+                {
+                    "stageRatedQueries": stage_rated,
+                    "stageNegativeRatings": stage_negative,
+                    "stageNegativeRate": round(
+                        stage_negative / stage_rated,
+                        6,
+                    ),
+                }
+            )
         item.online_metrics = metrics
         minimum = max(
             1,
@@ -797,6 +993,20 @@ def learning_artifact_data(
         "ativadoPorId": str(item.activated_by_id) if item.activated_by_id else None,
         "modoAtivacao": item.activation_mode,
         "percentualCanario": item.rollout_percentage,
+        "rollout": {
+            "estado": item.rollout_state,
+            "etapaAtual": item.rollout_stage_index,
+            "iniciadoEm": item.rollout_started_at.isoformat()
+            if item.rollout_started_at
+            else None,
+            "etapaIniciadaEm": item.rollout_stage_started_at.isoformat()
+            if item.rollout_stage_started_at
+            else None,
+            "proximaAvaliacaoEm": item.rollout_next_check_at.isoformat()
+            if item.rollout_next_check_at
+            else None,
+            "historico": item.rollout_history,
+        },
         "metricasOnline": item.online_metrics,
         "criadoEm": item.created_at.isoformat(),
         "ativadoEm": item.activated_at.isoformat() if item.activated_at else None,
@@ -1144,7 +1354,11 @@ def _baseline_snapshot(tenant_id):
 
 def _artifact_types(value):
     if value is None:
-        return list(RagLearningArtifactType)
+        return [
+            item
+            for item in RagLearningArtifactType
+            if item != RagLearningArtifactType.QUALITY_PROFILE
+        ]
     if not isinstance(value, list) or not value:
         raise LearningValidationError("tiposArtefato deve ser uma lista não vazia.")
     try:
@@ -1153,6 +1367,10 @@ def _artifact_types(value):
         raise LearningValidationError("Tipo de artefato inválido.") from error
     if len(resolved) != len(set(resolved)):
         raise LearningValidationError("tiposArtefato não pode conter duplicidades.")
+    if RagLearningArtifactType.QUALITY_PROFILE in resolved:
+        raise LearningValidationError(
+            "QUALITY_PROFILE deve ser criado pelo endpoint de calibração."
+        )
     return resolved
 
 
@@ -1198,6 +1416,9 @@ def _hash(value):
 
 def _artifact_eligibility_errors(item):
     errors = []
+    quality_profile = (
+        item.artifact_type == RagLearningArtifactType.QUALITY_PROFILE
+    )
     links = list(
         db.session.scalars(
             select(RagLearningArtifactFeedback).where(
@@ -1219,7 +1440,9 @@ def _artifact_eligibility_errors(item):
         if feedback_ids
         else []
     )
-    if not feedback_ids or len(feedbacks) != len(feedback_ids):
+    if not quality_profile and (
+        not feedback_ids or len(feedbacks) != len(feedback_ids)
+    ):
         errors.append("PROVENIENCIA_INCOMPLETA")
     if any(value.status != RagFeedbackStatus.APROVADO for value in feedbacks):
         errors.append("FEEDBACK_NAO_APROVADO_OU_INELEGIVEL")
@@ -1230,10 +1453,17 @@ def _artifact_eligibility_errors(item):
         )
     )
     if run is None or (
-        len(feedbacks) < int((run.configuration or {}).get("minimumSignals", 1))
+        not quality_profile
+        and len(feedbacks) < int((run.configuration or {}).get("minimumSignals", 1))
         and not (run.configuration or {}).get("smallSampleExplicitlyApproved")
     ):
         errors.append("QUANTIDADE_MINIMA_NAO_ATINGIDA")
+    if quality_profile:
+        from app.rag.calibration import validate_quality_profile_payload
+
+        if run is None or (run.configuration or {}).get("origin") != "QUALITY_CALIBRATION":
+            errors.append("ORIGEM_CALIBRACAO_INVALIDA")
+        errors.extend(validate_quality_profile_payload(item.payload))
     if item.payload_hash != _hash(item.payload):
         errors.append("CHECKSUM_DO_ARTEFATO_INVALIDO")
     references = _artifact_source_references(item)
@@ -1358,13 +1588,18 @@ def _quality_gate(artifact_type, before, after):
         "routingAccuracy",
         "filterAccuracy",
     }
-    lower_is_better = {"disconnectedSourceRate", "hardNegativeRate"}
+    lower_is_better = {
+        "disconnectedSourceRate",
+        "hardNegativeRate",
+        "latencyP95Ms",
+    }
     target_metrics = {
         RagLearningArtifactType.RERANK_PROFILE: {
             "precisionAtK",
             "recallAtK",
             "disconnectedSourceRate",
             "hardNegativeRate",
+            "latencyP95Ms",
         },
         RagLearningArtifactType.ROUTING_EXAMPLES: {
             "routingAccuracy",
@@ -1372,6 +1607,16 @@ def _quality_gate(artifact_type, before, after):
         },
         RagLearningArtifactType.EVALUATION_CASES: set(),
         RagLearningArtifactType.ANSWER_EXEMPLARS: set(),
+        RagLearningArtifactType.QUALITY_PROFILE: {
+            "precisionAtK",
+            "recallAtK",
+            "groundedness",
+            "citationPrecision",
+            "disconnectedSourceRate",
+            "refusalAccuracy",
+            "hardNegativeRate",
+            "latencyP95Ms",
+        },
     }[artifact_type]
     tolerance = max(
         0.0,
@@ -1384,8 +1629,13 @@ def _quality_gate(artifact_type, before, after):
         old = float(before.get(metric) or 0)
         new = float(after.get(metric) or 0)
         delta = new - old
-        regression = -delta if metric in higher_is_better else delta
-        improvement = delta if metric in higher_is_better else -delta
+        if metric == "latencyP95Ms":
+            denominator = max(1.0, old)
+            regression = max(0.0, delta) / denominator
+            improvement = max(0.0, -delta) / denominator
+        else:
+            regression = -delta if metric in higher_is_better else delta
+            improvement = delta if metric in higher_is_better else -delta
         comparisons[metric] = {
             "baseline": old,
             "candidate": new,
@@ -1397,6 +1647,12 @@ def _quality_gate(artifact_type, before, after):
             regressions.append(f"REGRESSAO_{metric.upper()}")
         if metric in target_metrics and improvement > 0.000001:
             improved = True
+    if (
+        artifact_type == RagLearningArtifactType.QUALITY_PROFILE
+        and float(after.get("latencyP95Ms") or 0)
+        > float(current_app.config["RAG_SLO_QUERY_P95_MS"])
+    ):
+        regressions.append("SLO_LATENCIA_EXCEDIDO")
     return {
         "comparisons": comparisons,
         "regressions": regressions,

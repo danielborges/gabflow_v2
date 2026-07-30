@@ -1566,7 +1566,7 @@ paths:
           name: tipo
           schema:
             type: string
-            enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+            enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS, QUALITY_PROFILE]
         - in: query
           name: estado
           schema:
@@ -1660,6 +1660,44 @@ paths:
                 $ref: "#/components/schemas/RagLearningArtifact"
         "409": { description: Artefato não aprovado ou expansão inválida }
         "422": { description: Percentual inválido }
+  /assistente/calibracoes:
+    get:
+      x-status: implemented
+      summary: Lista calibrações e o rollout ativo do tenant
+      responses:
+        "200":
+          description: Histórico e perfil ativo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content, perfilAtivo]
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagLearningArtifact"
+                  perfilAtivo:
+                    anyOf:
+                      - $ref: "#/components/schemas/RagLearningArtifact"
+                      - type: "null"
+    post:
+      x-status: implemented
+      summary: Avalia um perfil candidato de qualidade contra o baseline do tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagQualityCalibrationRequest"
+      responses:
+        "202":
+          description: Perfil candidato criado e avaliação enfileirada na fila RAG
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "422": { description: Parâmetros ou dataset inválidos }
   /assistente/aprendizado/artefatos/{artefatoId}/rollback:
     post:
       x-status: implemented
@@ -2974,6 +3012,7 @@ components:
         acuraciaRoteamento: { type: number, minimum: 0, maximum: 1 }
         acuraciaFiltros: { type: number, minimum: 0, maximum: 1 }
         taxaHardNegatives: { type: number, minimum: 0, maximum: 1 }
+        latenciaP95Ms: { type: [integer, "null"], minimum: 0 }
         resultados:
           type: array
           items: { type: object, additionalProperties: true }
@@ -3015,6 +3054,23 @@ components:
         iniciadaPorId: { type: string, format: uuid }
         criadoEm: { type: string, format: date-time }
         concluidoEm: { type: [string, "null"], format: date-time }
+    RagQualityCalibrationRequest:
+      type: object
+      additionalProperties: false
+      required: [parametros]
+      properties:
+        k: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        justificativaSemMelhora: { type: string, maxLength: 2000 }
+        parametros:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            retrievalScoreThreshold: { type: number, minimum: 0.05, maximum: 0.95 }
+            minEvidenceScore: { type: number, minimum: 0.05, maximum: 0.95 }
+            neuralMinScore: { type: number, minimum: 0, maximum: 1 }
+            citationLexicalThreshold: { type: number, minimum: 0, maximum: 1 }
+            entailmentMinScore: { type: number, minimum: 0, maximum: 1 }
     RagLearningArtifact:
       type: object
       required: [id, tipo, versao, estado, payloadHash, criadoEm]
@@ -3023,7 +3079,7 @@ components:
         execucaoId: { type: string, format: uuid }
         tipo:
           type: string
-          enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+          enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS, QUALITY_PROFILE]
         versao: { type: integer, minimum: 1 }
         estado:
           type: string
@@ -3054,6 +3110,20 @@ components:
         ativadoPorId: { type: [string, "null"], format: uuid }
         modoAtivacao: { type: [string, "null"], enum: [CANARIO, TOTAL, null] }
         percentualCanario: { type: integer, minimum: 0, maximum: 100 }
+        rollout:
+          type: object
+          required: [estado, etapaAtual, historico]
+          properties:
+            estado:
+              type: [string, "null"]
+              enum: [MONITORANDO, PROMOVIDO, ROLLBACK, ERRO, null]
+            etapaAtual: { type: integer, minimum: 0 }
+            iniciadoEm: { type: [string, "null"], format: date-time }
+            etapaIniciadaEm: { type: [string, "null"], format: date-time }
+            proximaAvaliacaoEm: { type: [string, "null"], format: date-time }
+            historico:
+              type: array
+              items: { type: object, additionalProperties: true }
         metricasOnline: { type: object, additionalProperties: true }
         criadoEm: { type: string, format: date-time }
         ativadoEm: { type: [string, "null"], format: date-time }
@@ -3122,6 +3192,9 @@ components:
             expansaoConsultaAplicada: { type: boolean }
             fusaoMultiConsultaRRF: { type: boolean }
             quantidadeConsultasBusca: { type: integer, minimum: 1 }
+            rerankingNeural:
+              type: object
+              additionalProperties: true
             entendimentoConsulta:
               type: [object, "null"]
               additionalProperties: true
@@ -3149,6 +3222,20 @@ components:
               type: object
               additionalProperties: true
               description: Resultado dos checks por afirmação e fontes citadas.
+            latencia:
+              type: object
+              additionalProperties: true
+        latenciaEtapas:
+          type: object
+          required: [recuperacaoMs, totalMs, orcamentoMs, orcamentoExcedido]
+          properties:
+            recuperacaoMs: { type: integer, minimum: 0 }
+            geracaoMs: { type: integer, minimum: 0 }
+            validacaoMs: { type: integer, minimum: 0 }
+            nliMs: { type: integer, minimum: 0 }
+            totalMs: { type: integer, minimum: 0 }
+            orcamentoMs: { type: integer, minimum: 1000 }
+            orcamentoExcedido: { type: boolean }
         citacoes:
           type: array
           description: Fontes efetivamente citadas na resposta gerada e validada.
@@ -3187,7 +3274,7 @@ components:
               id: { type: string, format: uuid }
               tipo:
                 type: string
-                enum: [RERANK_PROFILE, ROUTING_EXAMPLES]
+                enum: [RERANK_PROFILE, ROUTING_EXAMPLES, QUALITY_PROFILE]
               versao: { type: integer, minimum: 1 }
               modoAtivacao: { type: string, enum: [CANARIO, TOTAL] }
               percentualCanario: { type: integer, minimum: 1, maximum: 100 }

@@ -39,9 +39,18 @@ from app.models import (
     GlobalKnowledgeDocumentVersion,
     OutboxEvent,
     RagDocumentVersion,
+    RagLearningArtifact,
     RagLearningRun,
     RequestHistory,
     ServiceRequest,
+)
+from app.rag.calibration import (
+    QUALITY_CALIBRATION_EVENT,
+    QUALITY_ROLLOUT_EVENT,
+    execute_quality_calibration,
+    execute_quality_rollout_check,
+    fail_quality_calibration,
+    fail_quality_rollout,
 )
 from app.rag.global_service import (
     GLOBAL_RAG_INGESTION_EVENT,
@@ -130,6 +139,15 @@ def handle_event(event: OutboxEvent) -> None:
     if event.event_type == LEARNING_COMPILATION_EVENT:
         execute_learning_run(_rag_learning_run(event))
         return
+    if event.event_type == QUALITY_CALIBRATION_EVENT:
+        execute_quality_calibration(_rag_learning_artifact(event))
+        return
+    if event.event_type == QUALITY_ROLLOUT_EVENT:
+        execute_quality_rollout_check(
+            _rag_learning_artifact(event),
+            expected_stage_index=int(event.payload.get("stageIndex", -1)),
+        )
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
         return
@@ -197,6 +215,18 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         return
     if event.event_type == LEARNING_COMPILATION_EVENT:
         fail_learning_run(_rag_learning_run(event), error_message)
+        return
+    if event.event_type == QUALITY_CALIBRATION_EVENT:
+        fail_quality_calibration(
+            _rag_learning_artifact(event),
+            error_message,
+        )
+        return
+    if event.event_type == QUALITY_ROLLOUT_EVENT:
+        fail_quality_rollout(
+            _rag_learning_artifact(event),
+            error_message,
+        )
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -373,6 +403,16 @@ def _rag_learning_run(event: OutboxEvent) -> RagLearningRun:
             "Execução de compilação RAG não encontrada."
         )
     return run
+
+
+def _rag_learning_artifact(event: OutboxEvent) -> RagLearningArtifact:
+    artifact_id = _uuid(event.payload, "artifactId")
+    artifact = db.session.get(RagLearningArtifact, artifact_id)
+    if artifact is None or artifact.tenant_id != event.tenant_id:
+        raise NonRetryableEventError(
+            "Perfil candidato da calibração RAG não encontrado."
+        )
+    return artifact
 
 
 def _global_rag_document_version(

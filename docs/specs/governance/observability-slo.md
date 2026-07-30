@@ -83,6 +83,16 @@ A Release 4.7 planeja:
 - ativação, canário, rollback e drift por versão de artefato;
 - correlação sem conteúdo entre consulta, feedback, execução e artefato.
 
+A Release 4.9 adiciona:
+
+- estado, percentual, janela, amostra e próxima avaliação do rollout por tenant;
+- taxas por etapa de fallback, rejeição semântica, recusa e feedback negativo;
+- decisão e motivos de promoção ou rollback em histórico auditável;
+- heartbeat do lease para impedir retomada concorrente de avaliações longas.
+- latência separada de recuperação, geração, validação e NLI;
+- taxa de consultas acima do orçamento e skip adaptativo do reranker;
+- provider/modelo NLI e comprovação de independência em relação ao gerador.
+
 Metas iniciais:
 
 - p95 de consulta RAG menor ou igual a 15 segundos;

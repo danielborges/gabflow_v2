@@ -431,6 +431,60 @@ Funcionalidade: Assistente RAG hierárquico
     Então o trecho deve ser sanitizado e limitado
     E a instrução não deve alterar o contrato, as fontes ou a política do sistema
 
+  Cenário: Rejeitar contradição apesar da semelhança lexical
+    Dado que a fonte proíbe uma conduta
+    E a resposta afirma que a mesma conduta é permitida
+    Quando a validação lexical encontrar palavras em comum
+    Então o verificador semântico deve marcar a afirmação como contradita
+    E o assistente deve recusar a resposta substantiva
+
+  Cenário: Exigir verificador NLI independente
+    Dado que o gerador e o verificador NLI estão habilitados
+    Quando ambos forem configurados com o mesmo modelo
+    Então a validação NLI deve ser considerada indisponível
+    E a resposta deve ser recusada pela política fail-closed
+
+  Cenário: Evitar reranking neural desnecessário
+    Dado que o ranking híbrido possui um único candidato ou líder inequívoco
+    Quando o assistente preparar as fontes
+    Então não deve chamar o reranker neural
+    E deve registrar score, margem e motivo do skip adaptativo
+
+  Cenário: Medir orçamento de latência ponta a ponta
+    Dado que uma consulta documental percorreu recuperação, geração e NLI
+    Quando a resposta for registrada
+    Então deve expor a latência de cada etapa e o tempo total
+    E deve indicar se o orçamento foi excedido
+    E o rollout deve usar a taxa de estouro como gate online
+
+  Cenário: Calibrar perfil de qualidade contra baseline
+    Dado que o tenant possui um dataset de avaliação ativo
+    Quando o administrador propuser novos thresholds permitidos
+    Então baseline e candidato devem executar sobre o mesmo dataset
+    E regressões acima da tolerância devem rejeitar o perfil
+    E um perfil aprovado deve iniciar automaticamente o rollout governado
+
+  Cenário: Promover progressivamente um perfil de qualidade
+    Dado que o perfil candidato venceu o baseline offline
+    Quando cada etapa atingir sua janela e amostra mínimas sem regressão
+    Então o tráfego deve avançar por 5%, 20%, 50% e 100%
+    E usuários fora do canário devem continuar no perfil baseline
+    E o perfil deve ser promovido somente após validar a etapa de 100%
+    E métricas e decisões de cada etapa devem permanecer auditáveis
+
+  Cenário: Reverter rollout progressivo por regressão online
+    Dado que um perfil de qualidade está em rollout automatizado
+    Quando fallback, rejeição semântica, recusa ou feedback negativo violar um gate
+    Então o candidato deve ser revogado sem aguardar a próxima expansão
+    E a versão anterior elegível deve ser restaurada atomicamente
+    E o histórico deve registrar métricas e motivos do rollback
+
+  Cenário: Reverter canário por rejeições semânticas
+    Dado que um perfil de qualidade está ativo em canário
+    Quando a taxa de rejeição semântica exceder o gate após a amostra mínima
+    Então o perfil deve ser revogado automaticamente
+    E a versão anterior elegível deve ser restaurada atomicamente
+
   Cenário: Promover conhecimento privado para o catálogo global
     Dado que o tenant autorizou formalmente o compartilhamento
     E o conteúdo foi anonimizado e revisado
