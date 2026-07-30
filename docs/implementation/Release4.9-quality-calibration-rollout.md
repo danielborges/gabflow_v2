@@ -94,7 +94,7 @@ O caminho crítico foi reduzido por:
 - contexto limitado a três fontes e 900 caracteres por fonte;
 - no máximo cinco afirmações e limites explícitos de tokens/contexto;
 - evidência NLI limitada aos chunks efetivamente citados;
-- timeouts separados de 8 s para reranking, 20 s para geração e 8 s para NLI;
+- timeouts separados de 8 s para reranking, 20 s para geração e 12 s para NLI;
 - manutenção dos modelos carregados no Ollama por `keep_alive`;
 - telemetria por etapa para recuperação, geração, validação e NLI.
 
