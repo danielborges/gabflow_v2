@@ -1,0 +1,86 @@
+asyncapi: 3.0.0
+info:
+  title: GabFlow Electoral Intelligence Events
+  version: 0.1.0
+  description: Eventos internos do módulo.
+channels:
+  datasetImported:
+    address: electoral.dataset.imported
+    messages:
+      datasetImported:
+        $ref: '#/components/messages/DatasetImported'
+  datasetPublished:
+    address: electoral.dataset.published
+    messages:
+      datasetPublished:
+        $ref: '#/components/messages/DatasetPublished'
+  insightRequested:
+    address: electoral.insight.requested
+    messages:
+      insightRequested:
+        $ref: '#/components/messages/TenantJob'
+  insightCompleted:
+    address: electoral.insight.completed
+    messages:
+      insightCompleted:
+        $ref: '#/components/messages/TenantJob'
+  reportRequested:
+    address: electoral.report.requested
+    messages:
+      reportRequested:
+        $ref: '#/components/messages/TenantJob'
+  reportCompleted:
+    address: electoral.report.completed
+    messages:
+      reportCompleted:
+        $ref: '#/components/messages/TenantJob'
+operations:
+  receiveDatasetImported:
+    action: receive
+    channel: { $ref: '#/channels/datasetImported' }
+  sendDatasetPublished:
+    action: send
+    channel: { $ref: '#/channels/datasetPublished' }
+  receiveInsightRequested:
+    action: receive
+    channel: { $ref: '#/channels/insightRequested' }
+  sendInsightCompleted:
+    action: send
+    channel: { $ref: '#/channels/insightCompleted' }
+  receiveReportRequested:
+    action: receive
+    channel: { $ref: '#/channels/reportRequested' }
+  sendReportCompleted:
+    action: send
+    channel: { $ref: '#/channels/reportCompleted' }
+components:
+  messages:
+    DatasetImported:
+      payload:
+        type: object
+        required: [event_id, occurred_at, dataset_version_id, source_hash]
+        properties:
+          event_id: { type: string, format: uuid }
+          occurred_at: { type: string, format: date-time }
+          dataset_version_id: { type: string, format: uuid }
+          source_hash: { type: string }
+    DatasetPublished:
+      payload:
+        type: object
+        required: [event_id, occurred_at, dataset_version_id, quality_score]
+        properties:
+          event_id: { type: string, format: uuid }
+          occurred_at: { type: string, format: date-time }
+          dataset_version_id: { type: string, format: uuid }
+          quality_score: { type: number, minimum: 0, maximum: 1 }
+    TenantJob:
+      payload:
+        type: object
+        required: [event_id, occurred_at, tenant_id, user_id, job_id]
+        properties:
+          event_id: { type: string, format: uuid }
+          occurred_at: { type: string, format: date-time }
+          tenant_id: { type: string, format: uuid }
+          user_id: { type: string, format: uuid }
+          job_id: { type: string, format: uuid }
+          correlation_id: { type: string }

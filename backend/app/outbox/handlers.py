@@ -36,11 +36,23 @@ from app.models import (
     ContactAttemptOutcome,
     DocumentOcr,
     DocumentOcrStatus,
+    GlobalKnowledgeDocumentVersion,
     OutboxEvent,
     RagDocumentVersion,
     RequestHistory,
     ServiceRequest,
 )
+from app.rag.global_service import (
+    GLOBAL_RAG_INGESTION_EVENT,
+    execute_global_ingestion,
+    fail_global_ingestion,
+)
+from app.rag.operational_memory import (
+    OPERATIONAL_MEMORY_EVENT,
+    execute_operational_memory_sync,
+    fail_operational_memory_sync,
+)
+from app.rag.projectors import ProjectorAction
 from app.rag.service import (
     RAG_INGESTION_EVENT,
     NonRetryableRagError,
@@ -85,6 +97,30 @@ def handle_event(event: OutboxEvent) -> None:
         except NonRetryableRagError as error:
             raise NonRetryableEventError(str(error)) from error
         return
+    if event.event_type == GLOBAL_RAG_INGESTION_EVENT:
+        try:
+            execute_global_ingestion(_global_rag_document_version(event))
+        except NonRetryableRagError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
+    if event.event_type == OPERATIONAL_MEMORY_EVENT:
+        try:
+            execute_operational_memory_sync(
+                event.tenant_id,
+                str(event.payload.get("entityType") or ""),
+                _uuid(event.payload, "entityId"),
+                action=ProjectorAction(
+                    str(
+                        event.payload.get("action")
+                        or ProjectorAction.RECONCILE.value
+                    ).upper()
+                ),
+                revision=int(event.payload.get("revision") or 1),
+                source_module=event.payload.get("sourceModule"),
+            )
+        except (TypeError, ValueError) as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
         return
@@ -119,7 +155,36 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         ocr.error = error_message[:2000]
         return
     if event.event_type == RAG_INGESTION_EVENT:
-        fail_ingestion(_rag_document_version(event), error_message)
+        fail_ingestion(
+            _rag_document_version(event),
+            error_message,
+            attempts=event.attempt_count,
+        )
+        return
+    if event.event_type == GLOBAL_RAG_INGESTION_EVENT:
+        fail_global_ingestion(_global_rag_document_version(event), error_message)
+        return
+    if event.event_type == OPERATIONAL_MEMORY_EVENT:
+        payload = event.payload
+        try:
+            action = ProjectorAction(
+                str(
+                    payload.get("action") or ProjectorAction.RECONCILE.value
+                ).upper()
+            )
+            entity_id = _uuid(payload, "entityId")
+            revision = int(payload.get("revision") or 1)
+        except (TypeError, ValueError):
+            return
+        fail_operational_memory_sync(
+            event.tenant_id,
+            str(payload.get("entityType") or ""),
+            entity_id,
+            action=action,
+            revision=revision,
+            error_message=error_message,
+            attempts=event.attempt_count,
+        )
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -285,4 +350,16 @@ def _rag_document_version(event: OutboxEvent) -> RagDocumentVersion:
     version = db.session.get(RagDocumentVersion, version_id)
     if version is None or version.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Versão da base documental não encontrada.")
+    return version
+
+
+def _global_rag_document_version(
+    event: OutboxEvent,
+) -> GlobalKnowledgeDocumentVersion:
+    version_id = _uuid(event.payload, "versionId")
+    version = db.session.get(GlobalKnowledgeDocumentVersion, version_id)
+    if version is None or event.tenant_id is not None:
+        raise NonRetryableEventError(
+            "Versão do catálogo global não encontrada ou evento com tenant inválido."
+        )
     return version

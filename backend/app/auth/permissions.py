@@ -39,6 +39,10 @@ def platform_admin_required(fn):
     return roles_required("platform_admin")(fn)
 
 
+def global_knowledge_admin_required(fn):
+    return roles_required("global_knowledge_admin")(fn)
+
+
 def is_chief_of_staff() -> bool:
     claims = get_jwt()
     if claims.get("is_chief_of_staff") is True:

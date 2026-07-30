@@ -7,6 +7,7 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 from app.config import Config
 from app.extensions import db, jwt, limiter, migrate
 from app.http import register_http_hooks
+from app.observability import configure_logging
 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
@@ -14,6 +15,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.config.from_object(config_object)
     app.json.ensure_ascii = False
 
+    configure_logging(app)
     _init_sentry(app)
     db.init_app(app)
     migrate.init_app(app, db)
@@ -21,6 +23,9 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     _init_jwt_session_guard()
     limiter.init_app(app)
     register_http_hooks(app)
+    from app.rag.operational_memory import register_operational_memory_events
+
+    register_operational_memory_events()
 
     from app.admin.routes import admin_bp
     from app.agenda.routes import agenda_bp
@@ -37,6 +42,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.platform.routes import platform_bp
     from app.privacy.routes import privacy_bp
     from app.public.routes import public_site_bp
+    from app.rag.global_routes import global_rag_bp
     from app.rag.routes import rag_bp
     from app.requests.operations import request_ops_bp
     from app.requests.routes import requests_bp
@@ -59,6 +65,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(agenda_bp, url_prefix="/api/v1")
     app.register_blueprint(oversight_bp, url_prefix="/api/v1")
     app.register_blueprint(platform_bp, url_prefix="/api/v1/platform")
+    app.register_blueprint(global_rag_bp, url_prefix="/api/v1/platform/rag-global")
     app.register_blueprint(search_bp, url_prefix="/api/v1")
     app.register_blueprint(public_bp, url_prefix="/api/v1")
     app.register_blueprint(public_site_bp, url_prefix="/api/v1")
@@ -110,7 +117,11 @@ def _init_jwt_session_guard() -> None:
         except (TypeError, ValueError):
             return False
         user = db.session.get(User, user_uuid)
-        return bool(user and user.current_session_id == session_id)
+        if user is None or user.current_session_id != session_id:
+            return False
+        tenant_claim = jwt_payload.get("tenant_id")
+        expected_tenant = str(user.tenant_id) if user.tenant_id else None
+        return tenant_claim == expected_tenant
 
     @jwt.token_verification_failed_loader
     def invalid_session(_jwt_header, _jwt_payload):

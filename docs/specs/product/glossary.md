@@ -13,3 +13,29 @@
 - **SLA:** prazo esperado de atendimento ou resposta.
 - **Human-in-the-loop:** etapa obrigatória de revisão humana.
 - **PII:** informação pessoal identificável.
+- **RAG Geral:** catálogo de conhecimento comum, curado e versionado pela plataforma.
+- **RAG Privado:** conhecimento exclusivo de um tenant, protegido por isolamento transacional e de armazenamento.
+- **RAG hierárquico:** recuperação que combina fontes globais autorizadas e fontes privadas do tenant.
+- **Política de distribuição:** regra que define quais tenants podem utilizar uma coleção global.
+- **Concessão global:** vínculo auditável que autoriza um tenant a usar uma coleção global.
+- **Versão fixada:** versão global mantida para um tenant até aprovação de atualização.
+- **Fork privado:** cópia explícita de uma versão global que passa a evoluir exclusivamente dentro do tenant.
+- **Promoção:** processo controlado de criar fonte global a partir de conteúdo privado autorizado, anonimizado e revisado.
+- **RLS:** Row-Level Security do PostgreSQL, usada para negar acesso a linhas privadas fora do tenant da transação.
+- **Groundedness:** grau em que a resposta é sustentada pelas fontes citadas.
+- **Memória operacional:** conhecimento privado derivado de uma entidade interna por projeção governada, versionada e recuperável; não implica treinamento do modelo.
+- **Projetor de conhecimento:** componente registrado que decide elegibilidade, seleciona campos permitidos, minimiza dados e produz o snapshot canônico de uma entidade.
+- **Consulta estruturada:** leitura tenant-scoped usada para fatos exatos como contagens, estados, prazos e agrupamentos.
+- **Tombstone:** registro mínimo que despublica uma fonte e representa sua exclusão até a conclusão do purge.
+- **Purge:** eliminação dos chunks, embeddings, textos, versões e objetos derivados, preservando somente auditoria sem conteúdo.
+- **Quarentena:** estado que impede indexação ou publicação de conteúdo suspeito até revisão.
+- **Feedback RAG:** revisão humana tenant-scoped sobre uma consulta, suas fontes,
+  rota ou resposta; não constitui conhecimento nem treinamento por si só.
+- **Artefato de aprendizado:** configuração derivada de feedback aprovado,
+  versionada e reversível, que pode orientar ranking, roteamento ou avaliação.
+- **Baseline:** versão ativa e conjunto de métricas usados como referência para
+  decidir se um artefato candidato pode ser promovido.
+- **Hard negative:** fonte julgada semanticamente próxima, porém irrelevante para a
+  pergunta, usada para avaliar ou melhorar o ranking.
+- **Canário:** ativação limitada de uma nova versão para observar qualidade antes
+  da adoção integral.

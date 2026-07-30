@@ -37,6 +37,47 @@
 - Avaliação de relevância e confiança.
 - Proteção contra prompt injection documental.
 
+### Evolução RAG hierárquica
+
+- Catálogo RAG Geral e administração global.
+- RAG Privado alimentado por projeções autorizadas dos módulos.
+- RLS, roles segregadas e constraints compostas.
+- Políticas de distribuição e jurisdição.
+- Recuperação federada global + privada.
+- Versão fixada e fork privado.
+- Conectores de APIs globais homologadas.
+- Pipeline tenant-scoped de avaliação e melhoria por feedback.
+
+### Evolução do conhecimento operacional
+
+- **Entregue parcialmente:** solicitações, interações e minutas legislativas
+  concluídas são projetadas de forma versionada no RAG Privado.
+- **Entregue:** correção funcional do ranking sem corte por recência, com limiar por
+  fonte, compatibilidade de embedding, fallback lexical e sem diversidade forçada.
+- **Próximo incremento de infraestrutura:** PostgreSQL FTS + pgvector com índices
+  por modelo/dimensão e reindexação controlada.
+- **Entregue:** contrato e registry versionado de projetores para solicitações e
+  minutas legislativas, com allowlist e políticas de governança.
+- **Entregue:** eventos explícitos V2 de criação, atualização, cancelamento,
+  exclusão, anonimização, expiração e reconciliação, sem conteúdo sensível.
+- **Entregue:** quarentena pré-indexação, estados operacionais completos,
+  despublicação imediata, tombstone, purge físico e reprocessamento.
+- **Entregue:** tombstone, purge LGPD, reconciliação e expiração periódica.
+- **Entregue:** encaminhamentos e respostas oficiais, tramitação, OCR e
+  transcrições revisados, atas concluídas e relatórios de fiscalização concluídos.
+- **Entregue:** memórias temáticas agregadas e consultas estruturadas
+  tenant-scoped para contagens, estados, prazos, médias e agrupamentos.
+- **Entregue:** dataset e execução de avaliação por tenant com `precision@k`,
+  `recall@k`, groundedness, precisão de citações, fontes desconexas e recusa.
+- **Entregue:** roteamento automático entre o fluxo documental, estruturado e
+  híbrido, com decisão e filtros auditáveis.
+- **Entregue:** feedback imutável, taxonomia de falhas, julgamentos por fonte,
+  validação, minimização, quarentena e moderação tenant-scoped.
+- **Entregue:** curadoria explícita para o dataset, expected sources versionadas,
+  hard negatives, expectativas de rota/filtros/recusa e invalidação automática.
+- **Próximo incremento:** compilação de artefatos de aprendizado versionados,
+  avaliação contra baseline, ativação tenant-scoped e rollback.
+
 ## Release 5 — Inteligência territorial
 
 - Geocodificação.

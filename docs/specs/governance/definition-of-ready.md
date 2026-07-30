@@ -12,3 +12,5 @@ Uma história está pronta para desenvolvimento quando:
 - dados e permissões estão definidos;
 - comportamento de falha está especificado;
 - para IA, existem exemplos de entrada, saída e métricas.
+- para RAG, escopo global ou privado, política de distribuição, jurisdição,
+  proveniência e fronteira de tenant estão definidos.

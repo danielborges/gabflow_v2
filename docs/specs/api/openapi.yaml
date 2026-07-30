@@ -1,13 +1,139 @@
 openapi: 3.1.0
 info:
   title: GabFlow API
-  version: 0.4.0
+  version: 0.6.0
   description: API principal para gestão de gabinetes municipais.
 servers:
   - url: https://api.gabflow.example/api/v1
 security:
   - cookieAuth: []
 paths:
+  /health/rag:
+    get:
+      summary: Estado operacional e SLO da fila RAG
+      security:
+        - metricsBearer: []
+      responses:
+        "200": { description: Pipeline saudável }
+        "503": { description: Pipeline degradado }
+  /metrics:
+    get:
+      summary: Métricas Prometheus do pipeline RAG
+      security:
+        - metricsBearer: []
+      responses:
+        "200":
+          description: Métricas operacionais sem conteúdo privado
+          content:
+            text/plain:
+              schema: { type: string }
+  /assistente/metricas:
+    get:
+      summary: Métricas de qualidade RAG do tenant
+      responses:
+        "200":
+          description: Qualidade, feedback, fallback, latência p95 e SLO
+  /assistente/consultas-estruturadas:
+    post:
+      x-status: current
+      summary: Executa consulta analítica estruturada tenant-scoped
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dataset:
+                  type: string
+                  enum: [SOLICITACOES, ENCAMINHAMENTOS, TRAMITACOES, AGENDA, FISCALIZACOES]
+                metrica:
+                  type: string
+                  enum: [CONTAGEM, PRAZOS_VENCIDOS, TEMPO_MEDIO_RESOLUCAO_HORAS]
+                agruparPor:
+                  type: string
+                  enum: [NENHUM, STATUS, TEMA, TERRITORIO, ORGAO, TIPO, ETAPA, MES]
+                inicio: { type: string, format: date }
+                fim: { type: string, format: date }
+                status: { type: string }
+                tema: { type: string }
+                territorioId: { type: string, format: uuid }
+                orgaoId: { type: string, format: uuid }
+      responses:
+        "200": { description: Resultado reproduzível com método, filtros e período }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/perguntas:
+    get:
+      x-status: current
+      summary: Lista perguntas reais do dataset de avaliação do tenant
+      responses:
+        "200":
+          description: Perguntas e expectativas tenant-scoped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagEvaluationQuestion"
+    post:
+      x-status: current
+      summary: Cadastra pergunta com documentos esperados ou expectativa de recusa
+      responses:
+        "201":
+          description: Pergunta de avaliação criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/perguntas/{id}:
+    patch:
+      x-status: current
+      summary: Atualiza ou desativa pergunta de avaliação
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Pergunta atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "404": { $ref: "#/components/responses/NotFound" }
+  /assistente/avaliacoes/executar:
+    post:
+      x-status: current
+      summary: Executa avaliação de retrieval por tenant
+      responses:
+        "201":
+          description: Métricas documentais, recusa, rota, filtros e hard negatives
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationRun"
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/execucoes:
+    get:
+      x-status: current
+      summary: Lista histórico de execuções de avaliação do tenant
+      responses:
+        "200": { description: Série histórica das métricas de retrieval }
+  /rag/memorias-tematicas:
+    get:
+      x-status: current
+      summary: Lista memórias agregadas por tema, território e período
+      responses:
+        "200": { description: Memórias temáticas do tenant }
+  /rag/memorias-tematicas/reconstruir:
+    post:
+      x-status: current
+      summary: Reconstrói memórias temáticas respeitando agregação mínima
+      responses:
+        "202": { description: Agregados reconstruídos e projeções enfileiradas }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /solicitacoes:
     get:
       summary: Lista solicitações
@@ -664,6 +790,77 @@ paths:
       responses:
         "202": { description: Reprocessamento enfileirado }
         "409": { description: Versão já em processamento }
+  /rag/fontes-operacionais:
+    get:
+      x-status: current
+      summary: Lista fontes operacionais e seus estados no tenant
+      parameters:
+        - { in: query, name: modulo, schema: { type: string } }
+        - { in: query, name: entidadeTipo, schema: { type: string } }
+        - { in: query, name: estado, schema: { $ref: "#/components/schemas/EstadoFonteOperacional" } }
+      responses:
+        "200":
+          description: Fontes filtradas pelo tenant e pela autorização do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/FonteOperacional" }
+  /rag/fontes-operacionais/{fonteId}/reprocessar:
+    post:
+      x-status: current
+      summary: Reprocessa uma fonte operacional a partir do estado canônico
+      parameters:
+        - in: path
+          name: fonteId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Reprocessamento tenant-scoped enfileirado }
+        "404": { description: Fonte inexistente no tenant }
+        "409": { description: Fonte já em processamento }
+  /rag/fontes-operacionais/{fonteId}/purge:
+    post:
+      x-status: planned
+      summary: Despublica e agenda purge autorizado dos artefatos derivados
+      parameters:
+        - in: path
+          name: fonteId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justificativa]
+              properties:
+                justificativa: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        "202": { description: Despublicação aplicada e purge enfileirado }
+        "403": { description: Perfil sem permissão ou retenção legal impede purge }
+        "404": { description: Fonte inexistente no tenant }
+  /rag/memoria-operacional/reconciliacoes:
+    post:
+      x-status: planned
+      summary: Agenda reconciliação das fontes operacionais do tenant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                modulo: { type: string }
+                entidadeTipo: { type: string }
+                desde: { type: string, format: date-time }
+      responses:
+        "202": { description: Reconciliação tenant-scoped enfileirada }
+        "409": { description: Já existe reconciliação equivalente em andamento }
   /legislativo/minutas:
     get:
       summary: Lista minutas legislativas do tenant
@@ -1136,7 +1333,9 @@ paths:
                 $ref: "#/components/schemas/RagAnswer"
   /assistente/consultas/{consultaId}/avaliacao:
     patch:
+      x-status: current
       summary: Registra avaliação ou correção humana de uma resposta RAG
+      description: Fachada compatível; na Release 4.7 deverá criar uma revisão imutável de feedback.
       parameters:
         - in: path
           name: consultaId
@@ -1161,6 +1360,192 @@ paths:
           description: Consulta não encontrada
         "422":
           description: Avaliação inválida
+  /assistente/consultas/{consultaId}/feedback:
+    post:
+      x-status: current
+      summary: Cria uma revisão imutável de feedback da consulta
+      parameters:
+        - in: path
+          name: consultaId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagFeedbackCreateRequest"
+      responses:
+        "201":
+          description: Feedback capturado para validação ou moderação
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagFeedback"
+        "200":
+          description: Repetição idempotente; retorna a revisão já criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagFeedback"
+        "404": { description: Consulta ou fonte não encontrada no tenant }
+        "409": { description: Revisão concorrente ou idempotency key já usada com outro conteúdo }
+        "422": { description: Feedback inválido }
+    get:
+      x-status: current
+      summary: Lista o histórico imutável de feedback da consulta
+      parameters:
+        - in: path
+          name: consultaId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Revisões visíveis ao tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content]
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagFeedback"
+  /assistente/feedback:
+    get:
+      x-status: current
+      summary: Lista feedback tenant-scoped para curadoria
+      parameters:
+        - in: query
+          name: estado
+          schema:
+            $ref: "#/components/schemas/RagFeedbackStatus"
+      responses:
+        "200": { description: Fila de feedback do tenant }
+  /assistente/feedback/{feedbackId}/moderacao:
+    patch:
+      x-status: current
+      summary: Aprova, rejeita, revoga ou coloca feedback em quarentena
+      parameters:
+        - in: path
+          name: feedbackId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagFeedbackModerationRequest"
+      responses:
+        "200":
+          description: Estado de moderação atualizado com auditoria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagFeedback"
+        "404": { description: Feedback não encontrado no tenant }
+        "409": { description: Transição de estado inválida }
+        "422": { description: Decisão inválida }
+  /assistente/feedback/{feedbackId}/promover-avaliacao:
+    post:
+      x-status: current
+      summary: Promove feedback aprovado para um caso de avaliação tenant-scoped
+      parameters:
+        - in: path
+          name: feedbackId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                observacoes: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Caso curado criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "200":
+          description: Repetição idempotente; retorna o caso já promovido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "404": { description: Feedback não encontrado no tenant }
+        "409": { description: Feedback não está aprovado ou foi superado }
+        "422": { description: Feedback não possui diagnóstico promovível }
+  /assistente/aprendizado/execucoes:
+    post:
+      x-status: planned
+      summary: Compila sinais aprovados em artefatos candidatos do tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagLearningRunRequest"
+      responses:
+        "202":
+          description: Compilação agendada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningRun"
+        "409": { description: Execução idêntica já existe }
+        "422": { description: Janela ou configuração inválida }
+    get:
+      x-status: planned
+      summary: Lista execuções de aprendizado do tenant
+      responses:
+        "200": { description: Histórico de compilações }
+  /assistente/aprendizado/artefatos:
+    get:
+      x-status: planned
+      summary: Lista artefatos candidatos e ativos do tenant
+      responses:
+        "200": { description: Artefatos e métricas antes/depois }
+  /assistente/aprendizado/artefatos/{artefatoId}/ativacao:
+    post:
+      x-status: planned
+      summary: Avalia e ativa um artefato candidato
+      parameters:
+        - in: path
+          name: artefatoId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Artefato ativado atomicamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "409": { description: Gates de qualidade não atendidos }
+  /assistente/aprendizado/artefatos/{artefatoId}/rollback:
+    post:
+      x-status: planned
+      summary: Reverte o artefato ativo para a versão anterior
+      parameters:
+        - in: path
+          name: artefatoId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Versão anterior restaurada atomicamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "409": { description: Não existe versão anterior elegível }
   /insights:
     get:
       summary: Lista insights disponíveis
@@ -1343,12 +1728,262 @@ paths:
       responses:
         "200":
           description: Eventos paginados
+  /platform/rag-global/colecoes:
+    get:
+      summary: Lista as coleções do catálogo RAG Geral
+      description: Requer o papel `global_knowledge_admin`.
+      responses:
+        "200":
+          description: Coleções globais
+    post:
+      summary: Cria uma coleção do catálogo RAG Geral
+      description: Requer o papel `global_knowledge_admin`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, politicaDistribuicao, jurisdicao]
+              properties:
+                nome:
+                  type: string
+                descricao:
+                  type: string
+                politicaDistribuicao:
+                  type: string
+                  enum:
+                    - OBRIGATORIA
+                    - PADRAO
+                    - OPCIONAL
+                    - DIRECIONADA
+                    - RESTRITA_JURISDICAO
+                    - PRIVADA_PLATAFORMA
+                jurisdicao:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Coleção global criada
+        "403":
+          description: Papel de curadoria global ausente
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/documentos:
+    post:
+      summary: Cadastra um documento em uma coleção global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [titulo, tipo, proveniencia, jurisdicao]
+              properties:
+                titulo:
+                  type: string
+                tipo:
+                  type: string
+                orgao:
+                  type: string
+                proveniencia:
+                  type: string
+                jurisdicao:
+                  type: object
+                  additionalProperties: true
+                nivelConfianca:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+      responses:
+        "201":
+          description: Documento global criado
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/documentos/{documentoId}/versoes:
+    post:
+      summary: Envia uma versão imutável para ingestão global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: documentoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo, versao]
+              properties:
+                arquivo:
+                  type: string
+                  format: binary
+                versao:
+                  type: string
+                vigenteDesde:
+                  type: string
+                  format: date
+                vigenteAte:
+                  type: string
+                  format: date
+                urlFonte:
+                  type: string
+                  format: uri
+      responses:
+        "202":
+          description: Versão global enfileirada para ingestão
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/documentos/{documentoId}/versoes/{versaoId}/estado:
+    patch:
+      summary: Publica, suspende ou revoga uma versão global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: documentoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: versaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado]
+              properties:
+                estado:
+                  type: string
+                  enum: [PUBLICADA, SUSPENSA, REVOGADA]
+      responses:
+        "200":
+          description: Estado atualizado e auditado
+        "409":
+          description: Transição inválida ou versão ainda não indexada
+
+  /rag/catalogo-global:
+    get:
+      summary: Lista coleções globais disponíveis para o tenant
+      description: Aplica política, concessão, vigência e jurisdição.
+      responses:
+        "200":
+          description: Catálogo global resolvido para o gabinete autenticado
+  /rag/catalogo-global/colecoes/{colecaoId}/adesao:
+    patch:
+      summary: Configura adesão e versão de uma coleção global
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [habilitada, modoAtualizacao]
+              properties:
+                habilitada:
+                  type: boolean
+                modoAtualizacao:
+                  type: string
+                  enum: [AUTOMATICA, FIXADA]
+                versaoFixadaId:
+                  type: string
+                  format: uuid
+                justificativa:
+                  type: string
+      responses:
+        "200":
+          description: Concessão do tenant atualizada
+        "403":
+          description: Política não permite adesão direta
+        "409":
+          description: Coleção obrigatória ou concessão direcionada
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /platform/rag-global/colecoes/{colecaoId}/concessoes/{tenantId}:
+    put:
+      summary: Concede ou revoga acesso direcionado
+      description: Requer o papel `global_knowledge_admin`.
+      parameters:
+        - in: path
+          name: colecaoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: tenantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado, justificativa]
+              properties:
+                estado:
+                  type: string
+                  enum: [ATIVA, DESATIVADA, REVOGADA]
+                justificativa:
+                  type: string
+                vigenteDesde:
+                  type: string
+                  format: date
+                vigenteAte:
+                  type: string
+                  format: date
+      responses:
+        "200":
+          description: Concessão direcionada atualizada e auditada
+        "409":
+          description: Coleção não utiliza política direcionada
+
 components:
   securitySchemes:
     cookieAuth:
       type: apiKey
       in: cookie
       name: access_token_cookie
+    metricsBearer:
+      type: http
+      scheme: bearer
   parameters:
     Id:
       in: path
@@ -1412,6 +2047,46 @@ components:
         versoes:
           type: array
           items: { $ref: "#/components/schemas/VersaoDocumentoRag" }
+    EstadoFonteOperacional:
+      type: string
+      enum: [PENDENTE, ATIVA, QUARENTENA, INELEGIVEL, EXPIRADA, ERRO, EXCLUIDA]
+    FonteOperacional:
+      type: object
+      required:
+        - id
+        - modulo
+        - entidadeTipo
+        - entidadeId
+        - estado
+        - finalidade
+        - baseLegal
+        - nivelAcesso
+        - versaoLogica
+      properties:
+        id: { type: string, format: uuid }
+        modulo: { type: string }
+        entidadeTipo: { type: string }
+        entidadeId: { type: string, format: uuid }
+        versaoProjetor: { type: string }
+        revisaoOrigem: { type: integer, minimum: 0 }
+        estado: { $ref: "#/components/schemas/EstadoFonteOperacional" }
+        motivoElegibilidade: { type: [string, "null"] }
+        finalidade: { type: string }
+        baseLegal: { type: string }
+        nivelAcesso: { type: string, enum: [INTERNO, RESTRITO] }
+        retencaoAte: { type: [string, "null"], format: date }
+        hashConteudo: { type: [string, "null"] }
+        versaoLogica: { type: integer, minimum: 0 }
+        documentoId: { type: [string, "null"], format: uuid }
+        versaoAtualId: { type: [string, "null"], format: uuid }
+        ultimaProjecaoEm: { type: [string, "null"], format: date-time }
+        codigoErro: { type: [string, "null"] }
+        erro: { type: [string, "null"] }
+        tentativas: { type: integer, minimum: 0 }
+        quarentenaEm: { type: [string, "null"], format: date-time }
+        excluidaEm: { type: [string, "null"], format: date-time }
+        purgeConcluidoEm: { type: [string, "null"], format: date-time }
+        tombstoneHash: { type: [string, "null"] }
     CriarSolicitacaoRequest:
       type: object
       required: [origem, descricao]
@@ -1866,6 +2541,25 @@ components:
           type: integer
           minimum: 1
           maximum: 10
+        filtros:
+          type: object
+          additionalProperties: false
+          properties:
+            dataset:
+              type: string
+              enum: [SOLICITACOES, ENCAMINHAMENTOS, TRAMITACOES, AGENDA, FISCALIZACOES]
+            metrica:
+              type: string
+              enum: [CONTAGEM, PRAZOS_VENCIDOS, TEMPO_MEDIO_RESOLUCAO_HORAS]
+            agruparPor:
+              type: string
+              enum: [NENHUM, STATUS, TEMA, TERRITORIO, ORGAO, TIPO, ETAPA, MES]
+            inicio: { type: string, format: date }
+            fim: { type: string, format: date }
+            status: { type: string }
+            tema: { type: string }
+            territorioId: { type: string, format: uuid }
+            orgaoId: { type: string, format: uuid }
     RagQueryFeedbackRequest:
       type: object
       required: [avaliacao]
@@ -1879,6 +2573,227 @@ components:
         respostaCorrigida:
           type: string
           maxLength: 10000
+    RagFeedbackStatus:
+      type: string
+      enum: [PENDENTE_REVISAO, APROVADO, QUARENTENA, REJEITADO, REVOGADO, SUPERADO]
+    RagFeedbackReason:
+      type: string
+      enum:
+        - FONTES_IRRELEVANTES
+        - FONTE_AUSENTE
+        - RESPOSTA_INCORRETA
+        - CITACAO_INCORRETA
+        - FONTE_DESATUALIZADA
+        - JURISDICAO_INCORRETA
+        - ROTEAMENTO_INCORRETO
+        - FILTROS_INCORRETOS
+        - RECUSA_INDEVIDA
+        - DEVERIA_RECUSAR
+        - PROBLEMA_DE_ESTILO
+    RagFeedbackSourceJudgment:
+      type: object
+      additionalProperties: false
+      required: [documentoId, versaoId, julgamento, motivo]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        documentoId: { type: string, format: uuid }
+        versaoId: { type: string, format: uuid }
+        chunkId: { type: string, format: uuid }
+        escopo: { type: string, enum: [GLOBAL, PRIVADO] }
+        julgamento: { type: string, enum: [RELEVANTE, IRRELEVANTE, AUSENTE] }
+        motivo:
+          $ref: "#/components/schemas/RagFeedbackReason"
+        posicaoOriginal: { type: [integer, "null"], readOnly: true }
+    RagFeedbackCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [avaliacao]
+      properties:
+        idempotencyKey: { type: string, minLength: 8, maxLength: 120 }
+        avaliacao: { type: string, enum: [POSITIVA, NEGATIVA, CORRIGIDA] }
+        motivos:
+          type: array
+          uniqueItems: true
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/RagFeedbackReason"
+        comentario: { type: string, maxLength: 2000 }
+        respostaCorrigida: { type: string, maxLength: 10000 }
+        metodoEsperado: { type: string, enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO] }
+        filtrosEsperados:
+          type: object
+          additionalProperties: false
+          properties:
+            dataset: { type: string }
+            inicio: { type: string, format: date }
+            fim: { type: string, format: date }
+            status: { type: string }
+            tema: { type: string }
+            territorioId: { type: string, format: uuid }
+            orgaoId: { type: string, format: uuid }
+        julgamentosFontes:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/RagFeedbackSourceJudgment"
+    RagFeedbackModerationRequest:
+      type: object
+      additionalProperties: false
+      required: [decisao]
+      properties:
+        decisao:
+          type: string
+          enum: [APROVAR, REJEITAR, QUARENTENAR, REVOGAR]
+        justificativa: { type: string, minLength: 3, maxLength: 2000 }
+    RagFeedback:
+      type: object
+      required: [id, tenantId, consultaId, revisao, avaliacao, estado, hashConteudo, criadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        consultaId: { type: string, format: uuid }
+        revisao: { type: integer, minimum: 1 }
+        revisaoAnteriorId: { type: [string, "null"], format: uuid }
+        avaliacao: { type: string, enum: [POSITIVA, NEGATIVA, CORRIGIDA] }
+        motivos:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagFeedbackReason"
+        comentario: { type: [string, "null"] }
+        respostaCorrigida: { type: [string, "null"] }
+        conteudoRetido:
+          type: boolean
+          description: Indica redação do texto livre em razão de quarentena.
+        metodoEsperado:
+          type: [string, "null"]
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO, null]
+        filtrosEsperados: { type: [object, "null"] }
+        julgamentosFontes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagFeedbackSourceJudgment"
+        estado:
+          $ref: "#/components/schemas/RagFeedbackStatus"
+        hashConteudo: { type: string, pattern: "^[a-f0-9]{64}$" }
+        criadoPorId: { type: string, format: uuid }
+        modoModeracao:
+          type: [string, "null"]
+          enum: [AUTOMATICA, HUMANA, null]
+        regraModeracao: { type: [string, "null"] }
+        moderadoPorId: { type: [string, "null"], format: uuid }
+        criadoEm: { type: string, format: date-time }
+        moderadoEm: { type: [string, "null"], format: date-time }
+        justificativaModeracao: { type: [string, "null"] }
+    RagEvaluationSourceReference:
+      type: object
+      additionalProperties: false
+      required: [documentoId, versaoId, escopo, julgamento, motivo]
+      properties:
+        documentoId: { type: string, format: uuid }
+        versaoId: { type: string, format: uuid }
+        chunkId: { type: [string, "null"], format: uuid }
+        escopo: { type: string, enum: [GLOBAL, PRIVADO] }
+        julgamento: { type: string, enum: [RELEVANTE, IRRELEVANTE, AUSENTE] }
+        motivo:
+          $ref: "#/components/schemas/RagFeedbackReason"
+    RagEvaluationQuestion:
+      type: object
+      required:
+        [id, pergunta, documentosEsperados, fontesEsperadas, hardNegatives,
+         esperaRecusa, filtrosEsperados, ativa, origem, criadaEm, atualizadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        pergunta: { type: string }
+        documentosEsperados:
+          type: array
+          items: { type: string, format: uuid }
+        fontesEsperadas:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagEvaluationSourceReference"
+        hardNegatives:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagEvaluationSourceReference"
+        esperaRecusa: { type: boolean }
+        metodoEsperado:
+          type: [string, "null"]
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO, null]
+        filtrosEsperados: { type: object, additionalProperties: true }
+        observacoes: { type: [string, "null"] }
+        ativa: { type: boolean }
+        origem: { type: string, enum: [MANUAL, FEEDBACK] }
+        feedbackOrigemId: { type: [string, "null"], format: uuid }
+        curadaPorId: { type: [string, "null"], format: uuid }
+        curadaEm: { type: [string, "null"], format: date-time }
+        motivoDesativacao: { type: [string, "null"] }
+        criadaEm: { type: string, format: date-time }
+        atualizadaEm: { type: string, format: date-time }
+    RagEvaluationRun:
+      type: object
+      required:
+        [id, k, perguntas, precisionAtK, recallAtK, groundedness,
+         precisaoCitacoes, taxaFontesDesconexas, acuraciaRecusa,
+         acuraciaRoteamento, acuraciaFiltros, taxaHardNegatives, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        k: { type: integer, minimum: 1, maximum: 10 }
+        perguntas: { type: integer, minimum: 1 }
+        precisionAtK: { type: number, minimum: 0, maximum: 1 }
+        recallAtK: { type: number, minimum: 0, maximum: 1 }
+        groundedness: { type: number, minimum: 0, maximum: 1 }
+        precisaoCitacoes: { type: number, minimum: 0, maximum: 1 }
+        taxaFontesDesconexas: { type: number, minimum: 0, maximum: 1 }
+        acuraciaRecusa: { type: number, minimum: 0, maximum: 1 }
+        acuraciaRoteamento: { type: number, minimum: 0, maximum: 1 }
+        acuraciaFiltros: { type: number, minimum: 0, maximum: 1 }
+        taxaHardNegatives: { type: number, minimum: 0, maximum: 1 }
+        resultados:
+          type: array
+          items: { type: object, additionalProperties: true }
+        criadaEm: { type: string, format: date-time }
+    RagLearningRunRequest:
+      type: object
+      additionalProperties: false
+      required: [inicio, fim]
+      properties:
+        inicio: { type: string, format: date-time }
+        fim: { type: string, format: date-time }
+        tiposArtefato:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+    RagLearningRun:
+      type: object
+      required: [id, estado, inicio, fim, configuracaoHash, criadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        estado: { type: string, enum: [PENDENTE, PROCESSANDO, CONCLUIDA, ERRO] }
+        inicio: { type: string, format: date-time }
+        fim: { type: string, format: date-time }
+        configuracaoHash: { type: string }
+        metricas: { type: object, additionalProperties: true }
+        criadoEm: { type: string, format: date-time }
+    RagLearningArtifact:
+      type: object
+      required: [id, tipo, versao, estado, payloadHash, criadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        tipo:
+          type: string
+          enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+        versao: { type: integer, minimum: 1 }
+        estado:
+          type: string
+          enum: [CANDIDATO, EM_AVALIACAO, REJEITADO, APROVADO, ATIVO, SUBSTITUIDO, REVOGADO]
+        payloadHash: { type: string }
+        baseline: { type: object, additionalProperties: true }
+        metricasAntes: { type: object, additionalProperties: true }
+        metricasDepois: { type: object, additionalProperties: true }
+        criadoEm: { type: string, format: date-time }
+        ativadoEm: { type: [string, "null"], format: date-time }
     RagAnswer:
       type: object
       required: [id, consulta, resposta, fontes, fundamentada, recusaConclusiva]
@@ -1888,6 +2803,21 @@ components:
           format: uuid
         consulta:
           type: string
+        metodo:
+          type: string
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO]
+          description: Método selecionado automaticamente pelo roteador.
+        motivosRoteamento:
+          type: array
+          items: { type: string }
+        filtrosAplicados:
+          type: object
+          additionalProperties: true
+          description: Filtros tenant-scoped e período usados na recuperação ou consulta estruturada.
+        resultadoEstruturado:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Resultado reproduzível de read model quando o método for ESTRUTURADO ou HIBRIDO.
         resposta:
           type: string
         fundamentada:
@@ -1905,6 +2835,24 @@ components:
         erroFallback:
           type: string
           nullable: true
+        recuperacao:
+          type: object
+          properties:
+            total: { type: integer }
+            global: { type: integer }
+            privado: { type: integer }
+            deduplicacaoPorChecksum: { type: boolean }
+            rerankingConjunto: { type: boolean }
+            limiarAplicadoPorFonte: { type: boolean }
+            diversidadeForcada: { type: boolean }
+            compatibilidadeModeloEmbedding: { type: boolean }
+            modo:
+              type: string
+              enum: [HIBRIDO, LEXICAL, MISTO, SEM_RESULTADO]
+            modelosEmbeddingUtilizados:
+              type: array
+              items:
+                type: string
         avaliacao:
           type: string
           nullable: true
@@ -1915,6 +2863,13 @@ components:
         respostaCorrigida:
           type: string
           nullable: true
+        aprendizado:
+          type: object
+          additionalProperties: false
+          description: Versões tenant-scoped que influenciaram esta consulta.
+          properties:
+            rerankProfileVersion: { type: [integer, "null"] }
+            routingExamplesVersion: { type: [integer, "null"] }
         seguranca:
           type: object
           required: [promptInjectionDetectado, fontesComRisco, politica]
@@ -1942,6 +2897,10 @@ components:
               versaoId:
                 type: string
                 format: uuid
+              chunkId:
+                type: string
+                format: uuid
+                description: Fragmento exato que originou a citação e pode ser julgado no feedback.
               titulo:
                 type: string
               tipo:
@@ -1951,7 +2910,42 @@ components:
                 nullable: true
               nivelAcesso:
                 type: string
-                enum: [INTERNO, RESTRITO]
+                enum: [INTERNO, RESTRITO, GLOBAL_PUBLICADO]
+              fonteModulo:
+                type: string
+                nullable: true
+              entidadeOrigemTipo:
+                type: string
+                nullable: true
+              entidadeOrigemId:
+                type: string
+                format: uuid
+                nullable: true
+              versaoProjetor:
+                type: string
+                nullable: true
+                description: Versão semântica do projetor que gerou a fonte operacional.
+              revisaoOrigem:
+                type: integer
+                nullable: true
+                description: Maior revisão de evento aplicada à fonte operacional.
+              estadoFonteOperacional:
+                allOf:
+                  - $ref: "#/components/schemas/EstadoFonteOperacional"
+                nullable: true
+              codigoErroFonte:
+                type: string
+                nullable: true
+              finalidade:
+                type: string
+                nullable: true
+              baseLegal:
+                type: string
+                nullable: true
+              retencaoAte:
+                type: string
+                format: date
+                nullable: true
               trecho:
                 type: string
               paginaInicio:
@@ -1980,10 +2974,24 @@ components:
                 nullable: true
               pontuacao:
                 type: number
+              pontuacaoRanking:
+                type: number
+                description: Ordenação secundária por relevância, autoridade e atualidade.
               similaridadeSemantica:
                 type: number
               similaridadeLexical:
                 type: number
+              autoridade:
+                type: number
+                minimum: 0
+                maximum: 1
+              atualidade:
+                type: number
+                minimum: 0
+                maximum: 1
+              modoRecuperacao:
+                type: string
+                enum: [HIBRIDO, LEXICAL]
               justificativas:
                 type: array
                 items:

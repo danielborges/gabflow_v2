@@ -5,6 +5,7 @@ from flask_jwt_extended import get_jwt, verify_jwt_in_request
 
 from app.extensions import db
 from app.models import ContractStatus, Tenant, TenantStatus
+from app.tenant_context import activate_tenant_context
 
 AVAILABLE_MODULES = {
     "solicitacoes",
@@ -80,12 +81,27 @@ def module_for_endpoint(endpoint: str | None, blueprint: str | None) -> str | No
 def enforce_tenant_access(endpoint: str | None, blueprint: str | None):
     if endpoint in PUBLIC_ENDPOINTS:
         return None
-    if blueprint in {None, "auth", "health", "platform", "public_requests"}:
+    if blueprint in {
+        None,
+        "auth",
+        "health",
+        "platform",
+        "global_rag",
+        "public_requests",
+    }:
         return None
     verify_jwt_in_request(optional=True)
     claims = get_jwt()
     tenant_claim = claims.get("tenant_id")
     if not tenant_claim:
+        if claims.get("role"):
+            return (
+                jsonify(
+                    error="forbidden",
+                    message="Este recurso exige vínculo com um gabinete.",
+                ),
+                403,
+            )
         return None
     tenant = db.session.get(Tenant, uuid.UUID(tenant_claim))
     if tenant is None or tenant.status != TenantStatus.ACTIVE:
@@ -108,4 +124,5 @@ def enforce_tenant_access(endpoint: str | None, blueprint: str | None):
             ),
             403,
         )
+    activate_tenant_context(tenant.id)
     return None

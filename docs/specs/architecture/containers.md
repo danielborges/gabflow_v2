@@ -26,6 +26,9 @@ Responsável por:
 - geocodificação;
 - notificações;
 - indexação;
+- projeção governada das entidades dos módulos;
+- reconciliação, expiração e purge do conhecimento operacional;
+- validação, compilação e reavaliação dos sinais de feedback;
 - geração de relatórios.
 
 ## Serviço de IA
@@ -41,21 +44,31 @@ Camada de abstração para:
 ## Serviço RAG
 
 Responsável por:
-- ingestão;
+- ingestão global e privada;
 - parsing;
 - chunking;
 - embeddings;
-- recuperação híbrida;
-- reranking;
+- distribuição e versionamento do catálogo global;
+- recuperação federada global + privada;
+- registry de projetores e ciclo de vida das fontes operacionais;
+- roteamento documental, estruturado e híbrido;
+- filtros de tenant, ACL, módulo, jurisdição, vigência e finalidade;
+- normalização e reranking;
 - citações;
-- controle de acesso.
+- controle de acesso;
+- avaliação e melhoria tenant-scoped por artefatos versionados e reversíveis.
 
 ## Banco Transacional
 
 Sugestão:
 - PostgreSQL;
 - PostGIS para geodados;
-- row-level security quando aplicável.
+- schemas distintos para RAG global e privado;
+- row-level security forçado no domínio privado;
+- roles separadas para migration, API, worker e backup;
+- pgvector para busca vetorial quando adotado.
+- full-text search para recuperação lexical;
+- read models tenant-scoped para fatos, contagens e indicadores.
 
 ## Armazenamento de Objetos
 
@@ -77,4 +90,5 @@ Sugestão:
 - desacoplamento;
 - integração;
 - processamento assíncrono;
+- outbox transacional com payload mínimo e sem conteúdo sensível;
 - auditoria operacional.

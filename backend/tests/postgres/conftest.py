@@ -32,6 +32,7 @@ def _postgres_test_database_url() -> str:
 def _reset_public_schema() -> None:
     db.session.remove()
     with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(text("DROP SCHEMA IF EXISTS rag_global CASCADE"))
         connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))
 

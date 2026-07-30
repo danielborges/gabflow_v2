@@ -16,7 +16,34 @@
 - **RN-014** Toda minuta gerada por IA deve iniciar como rascunho.
 - **RN-015** Toda resposta RAG deve citar as fontes recuperadas.
 - **RN-016** Na ausência de evidência suficiente, o assistente deve declarar que não encontrou base confiável.
-- **RN-017** Documentos revogados ou expirados devem permanecer pesquisáveis, mas identificados.
+- **RN-017** Documentos normativos ou históricos revogados e expirados podem permanecer pesquisáveis quando a política arquivística permitir, sempre identificados e fora do contexto vigente.
 - **RN-018** Consentimento para comunicação não equivale a consentimento para divulgação pública.
 - **RN-019** Fotos com cidadãos não podem ser usadas em comunicação sem base legal ou consentimento aplicável.
 - **RN-020** Exclusões lógicas não removem registros de auditoria.
+- **RN-021** O conhecimento efetivo de um gabinete é a união das fontes globais autorizadas e das fontes privadas acessíveis ao usuário.
+- **RN-022** Conteúdo global deve ser referenciado, não copiado para cada tenant por padrão.
+- **RN-023** Conteúdo privado nunca pode ser compartilhado, promovido ou usado para melhorar o catálogo global sem autorização explícita, anonimização e revisão humana.
+- **RN-024** O administrador global do conhecimento não possui acesso implícito ao conteúdo privado dos gabinetes.
+- **RN-025** Toda fonte global deve possuir política de distribuição e critérios de elegibilidade.
+- **RN-026** Jurisdição e vigência devem ser consideradas antes do reranking e da geração de resposta.
+- **RN-027** Um fork global torna-se documento privado independente, preservando origem, versão e checksum.
+- **RN-028** Avaliações e correções influenciam apenas processos de melhoria autorizados para o mesmo tenant, salvo dataset global anonimizado e aprovado.
+- **RN-029** Uma resposta deve distinguir claramente citações globais das citações privadas.
+- **RN-030** A ausência de evidência adequada em ambos os escopos obriga recusa conclusiva.
+- **RN-031** Toda informação interna elegível produzida pelo tenant deve ser indexada automaticamente no seu RAG Privado; exclusões por sigilo, retenção, base legal ou minimização devem ser explícitas e auditáveis.
+- **RN-032** Indexação no RAG não equivale a treinamento ou fine-tuning do modelo.
+- **RN-033** Uma entidade interna somente pode originar conhecimento por projetor registrado, com allowlist de campos, finalidade, base legal, retenção, proveniência e ACL explícitas.
+- **RN-034** Cadastro bruto de cidadão, consentimento, solicitação de privacidade, credencial, configuração, notificação, auditoria ou saída de IA não revisada não pode ser indexado como conhecimento operacional.
+- **RN-035** Cancelamento, exclusão, anonimização ou expiração de uma fonte operacional deve despublicá-la imediatamente e executar purge quando a política de retenção determinar eliminação, preservando auditoria sem conteúdo.
+- **RN-036** Eventos de memória operacional não podem transportar conteúdo sensível; o worker deve reler o estado canônico dentro do contexto do tenant.
+- **RN-037** Contagens, agrupamentos, estados e indicadores devem ser obtidos de consultas estruturadas tenant-scoped, nunca inferidos exclusivamente por similaridade vetorial.
+- **RN-038** Uma fonte não pode ser incluída apenas para assegurar diversidade entre escopos; todo resultado deve satisfazer autorização e limiar mínimo de evidência.
+- **RN-039** Feedback bruto não constitui conhecimento, evidência ou instrução e não pode ser indexado no RAG.
+- **RN-040** Uma resposta corrigida somente pode virar exemplar após validação de segurança, aprovação e conferência das fontes; mesmo aprovada, não substitui a citação documental.
+- **RN-041** Feedback positivo avalia a resposta como um todo e não torna automaticamente relevantes todas as fontes recuperadas.
+- **RN-042** Feedback negativo não despublica fontes nem altera o ranking imediatamente; sua influência depende de motivo, julgamento por fonte, validação e artefato aprovado.
+- **RN-043** Ajustes derivados de feedback são aplicados somente a candidatos previamente autorizados e acima do limiar de evidência.
+- **RN-044** Um artefato de aprendizado não pode usar sinal revogado, superado, em quarentena ou ligado a conteúdo eliminado.
+- **RN-045** Somente uma versão de artefato por tenant e tipo pode estar ativa, com troca atômica e rollback auditável.
+- **RN-046** Feedback sem motivo ou julgamento suficiente pode compor métricas de satisfação, mas não pode gerar ajuste comportamental.
+- **RN-047** Somente sinal estruturado de baixo risco pode ser aprovado automaticamente; texto livre, correção, fonte ausente e mudança de alto impacto exigem moderação humana.

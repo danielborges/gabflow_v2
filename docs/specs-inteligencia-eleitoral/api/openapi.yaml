@@ -1,0 +1,330 @@
+openapi: 3.1.0
+info:
+  title: GabFlow Electoral Intelligence API
+  version: 0.1.0
+  description: API inicial do módulo Inteligência Eleitoral e Territorial.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Elections
+  - name: Candidates
+  - name: Analytics
+  - name: Scenarios
+  - name: Reports
+paths:
+  /electoral/elections:
+    get:
+      tags: [Elections]
+      operationId: listElections
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Eleições disponíveis.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ElectionPage'
+  /electoral/candidates:
+    get:
+      tags: [Candidates]
+      operationId: searchCandidates
+      parameters:
+        - name: election_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2, maxLength: 120 }
+        - name: party
+          in: query
+          schema: { type: string }
+        - name: office
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Candidatos encontrados.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Candidate' }
+  /electoral/candidates/{candidate_id}/results:
+    get:
+      tags: [Candidates]
+      operationId: getCandidateResults
+      parameters:
+        - $ref: '#/components/parameters/CandidateId'
+        - $ref: '#/components/parameters/ElectionId'
+        - $ref: '#/components/parameters/TerritoryLevel'
+        - name: parent_territory_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Resultado territorial.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultSet'
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /electoral/comparisons:
+    post:
+      tags: [Analytics]
+      operationId: createComparison
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComparisonRequest'
+      responses:
+        '200':
+          description: Comparativo calculado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comparison'
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/territories/{territory_id}/mandate-overlay:
+    get:
+      tags: [Analytics]
+      operationId: getMandateOverlay
+      parameters:
+        - name: territory_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Indicadores agregados do mandato.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MandateOverlay'
+  /electoral/insights:
+    post:
+      tags: [Analytics]
+      operationId: requestInsight
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InsightRequest'
+      responses:
+        '202':
+          description: Insight em processamento.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/scenarios:
+    post:
+      tags: [Scenarios]
+      operationId: createScenario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioInput' }
+      responses:
+        '201':
+          description: Cenário criado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scenario' }
+  /electoral/reports:
+    post:
+      tags: [Reports]
+      operationId: requestReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportRequest' }
+      responses:
+        '202':
+          description: Relatório em processamento.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    CandidateId:
+      name: candidate_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ElectionId:
+      name: election_id
+      in: query
+      required: true
+      schema: { type: string, format: uuid }
+    TerritoryLevel:
+      name: level
+      in: query
+      required: true
+      schema:
+        type: string
+        enum: [state, municipality, electoral_zone, neighborhood, polling_place, section]
+  responses:
+    Forbidden:
+      description: Usuário sem permissão ou fora do tenant.
+    ValidationError:
+      description: Parâmetros ou regra de negócio inválidos.
+  schemas:
+    Election:
+      type: object
+      required: [id, year, scope, rounds, dataset_version]
+      properties:
+        id: { type: string, format: uuid }
+        year: { type: integer }
+        scope: { type: string, enum: [municipal, general] }
+        rounds: { type: integer, minimum: 1, maximum: 2 }
+        dataset_version: { type: string }
+        quality_score: { type: number, minimum: 0, maximum: 1 }
+    ElectionPage:
+      type: object
+      required: [items, page, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Election' } }
+        page: { type: integer }
+        total: { type: integer }
+    Candidate:
+      type: object
+      required: [id, ballot_name, number, office, party]
+      properties:
+        id: { type: string, format: uuid }
+        ballot_name: { type: string }
+        number: { type: string }
+        office: { type: string }
+        party: { type: string }
+    TerritorialResult:
+      type: object
+      required: [territory_id, territory_name, votes, share]
+      properties:
+        territory_id: { type: string, format: uuid }
+        territory_name: { type: string }
+        votes: { type: integer, minimum: 0 }
+        share: { type: number, minimum: 0, maximum: 1 }
+        rank: { type: integer, minimum: 1 }
+        quality_warning: { type: string }
+    ResultSet:
+      type: object
+      required: [source, dataset_version, denominator, items]
+      properties:
+        source: { type: string }
+        dataset_version: { type: string }
+        denominator: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TerritorialResult' }
+    ComparisonRequest:
+      type: object
+      required: [election_id, candidate_ids, level]
+      properties:
+        election_id: { type: string, format: uuid }
+        candidate_ids:
+          type: array
+          minItems: 2
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        level:
+          type: string
+          enum: [state, municipality, electoral_zone, neighborhood, polling_place, section]
+        territory_ids:
+          type: array
+          items: { type: string, format: uuid }
+    Comparison:
+      type: object
+      required: [id, dataset_version, series]
+      properties:
+        id: { type: string, format: uuid }
+        dataset_version: { type: string }
+        series: { type: array, items: { $ref: '#/components/schemas/ResultSet' } }
+    MandateOverlay:
+      type: object
+      required: [territory_id, privacy_threshold, metrics]
+      properties:
+        territory_id: { type: string, format: uuid }
+        privacy_threshold: { type: integer }
+        metrics:
+          type: object
+          additionalProperties: { type: number }
+        suppressed_metrics:
+          type: array
+          items: { type: string }
+    InsightRequest:
+      type: object
+      required: [type, election_id]
+      properties:
+        type: { type: string, enum: [candidate, comparison, territory, briefing] }
+        election_id: { type: string, format: uuid }
+        candidate_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+        territory_ids:
+          type: array
+          items: { type: string, format: uuid }
+        question: { type: string, maxLength: 1000 }
+    ScenarioInput:
+      type: object
+      required: [name, baseline_election_id, assumptions]
+      properties:
+        name: { type: string, maxLength: 120 }
+        baseline_election_id: { type: string, format: uuid }
+        assumptions:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [territory_id, metric, value]
+            properties:
+              territory_id: { type: string, format: uuid }
+              metric: { type: string }
+              value: { type: number }
+    Scenario:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioInput'
+        - type: object
+          required: [id, created_at, disclaimer]
+          properties:
+            id: { type: string, format: uuid }
+            created_at: { type: string, format: date-time }
+            disclaimer: { type: string }
+    ReportRequest:
+      type: object
+      required: [type, format, filters]
+      properties:
+        type: { type: string, enum: [candidate, comparison, territory, executive] }
+        format: { type: string, enum: [pdf, csv, xlsx] }
+        filters: { type: object, additionalProperties: true }
+    JobAccepted:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued] }

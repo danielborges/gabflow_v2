@@ -20,3 +20,22 @@
 - **RNF-018 Privacidade:** minimização de dados por padrão.
 - **RNF-019 Resiliência:** falha de IA não pode impedir o cadastro manual.
 - **RNF-020 Reversibilidade:** resultados de IA devem ser editáveis e descartáveis.
+- **RNF-021 Defesa em profundidade:** dados privados RAG devem ser protegidos por filtros de aplicação, RLS forçado, constraints compostas e namespace de objetos.
+- **RNF-022 Negação por padrão:** ausência de contexto transacional de tenant não pode retornar nem permitir gravação de dados privados.
+- **RNF-023 Segregação de credenciais:** API e worker não podem usar superusuário, proprietário das tabelas ou role com `BYPASSRLS`.
+- **RNF-024 Não interferência:** conteúdo e feedback de um tenant não podem alterar recuperação, resposta ou aprendizado de outro tenant.
+- **RNF-025 Proveniência:** toda fonte global ou privada deve possuir versão, checksum, escopo e origem reproduzíveis.
+- **RNF-026 Segurança de conectores:** fontes externas devem usar allowlist, proteção SSRF, cofre de segredos, limites de consumo e snapshots versionados.
+- **RNF-027 Concorrência segura:** contexto de tenant não pode vazar pelo pool de conexões, jobs, retries ou processamento concorrente.
+- **RNF-028 Frescor operacional:** alterações elegíveis devem ficar recuperáveis dentro do SLO definido para a fila RAG, e backlog ou fonte desatualizada deve ser observável.
+- **RNF-029 Convergência:** eventos repetidos, fora de ordem e reconciliação devem convergir para uma única versão vigente correspondente ao estado canônico.
+- **RNF-030 Exclusão derivada:** purge deve remover chunks, embeddings, texto extraído, versões derivadas e objeto armazenado, sem remover a trilha mínima de auditoria.
+- **RNF-031 Qualidade de recuperação:** cada tenant deve possuir avaliação periódica de `precision@k`, `recall@k`, groundedness, precisão de citações, fontes desconexas e taxa de recusa adequada. **Implementado com dataset e execuções persistidos por tenant; a periodicidade automática permanece operacionalmente configurável.**
+- **RNF-032 Segurança de conteúdo interno:** conteúdo originado dos módulos deve passar por minimização e avaliação de prompt injection antes da indexação e novamente antes de compor o contexto.
+- **RNF-033 Autorização pré-ranking:** tenant, ACL, finalidade, vigência e estado devem ser filtrados antes da busca ou do ranking, inclusive em consultas estruturadas.
+- **RNF-034 Imutabilidade do feedback:** revisões não podem ser sobrescritas ou apagadas silenciosamente; substituição, revogação e moderação preservam histórico e auditoria.
+- **RNF-035 Aprendizado seguro:** texto livre de feedback não pode integrar prompt, índice ou artefato executável sem validação, minimização e aprovação.
+- **RNF-036 Reprodutibilidade:** todo artefato deve registrar configuração, baseline, dataset, sinais de origem, métricas, versão e checksum suficientes para recompilação.
+- **RNF-037 Reversibilidade do aprendizado:** ativação deve ser atômica por tenant e tipo, manter a versão anterior e permitir rollback sem reprocessar documentos.
+- **RNF-038 Limites de influência:** ajustes de ranking não podem fazer fonte não autorizada, inelegível ou abaixo do limiar participar da resposta.
+- **RNF-039 Resistência a abuso:** compilação deve aplicar mínimo de sinais, limites por usuário/período, detecção de anomalias e revisão para alterações de alto impacto.

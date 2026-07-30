@@ -87,5 +87,27 @@
 - **RF-090** Parametrizar categorias, territórios, status e SLA.
 - **RF-091** Configurar templates. **Implementado no P2.**
 - **RF-092** Configurar integrações. **Implementado na Release 6 como cadastro tenant-safe de configurações; conectores externos ficam para incrementos por provedor.**
-- **RF-093** Gerenciar bases documentais RAG. **Implementado na Release 4 com ingestão assíncrona, versionamento e níveis de acesso.**
+- **RF-093** Gerenciar bases documentais RAG privadas. **Implementado nas Releases 4 e 4.1 com ingestão assíncrona, versionamento, níveis de acesso, contexto transacional, RLS, constraints compostas e armazenamento segregado.**
 - **RF-094** Configurar retenção, anonimização e auditoria. **Implementado no P1.**
+- **RF-095** Administrar coleções privadas e selecionar coleções globais opcionais. **Implementado parcialmente: adesão a coleções globais está disponível; coleções privadas administráveis permanecem planejadas.**
+- **RF-096** Configurar atualização automática, versão fixada ou fork privado para uma fonte global. **Implementado parcialmente para atualização automática e versão fixada; fork privado permanece planejado.**
+- **RF-097** Exibir em respostas e citações se a fonte é global ou privada. **Implementado na recuperação hierárquica.**
+- **RF-098** Monitorar e governar a ingestão automática das entidades internas elegíveis no RAG Privado, conforme finalidade, base legal, retenção e nível de acesso. **Implementado para solicitações, interações, encaminhamentos/respostas oficiais, minutas, tramitações, OCR/transcrições revisados, atas concluídas, fiscalizações concluídas e memórias temáticas.**
+- **RF-099** Consultar histórico de ingestão, concessões, forks, recuperação e feedback do próprio tenant. **Implementado parcialmente para ingestão, concessões, consultas e feedback; forks e visão administrativa consolidada permanecem planejados.**
+- **RF-100** Cadastrar e versionar projetores autorizados por módulo, tipo de entidade e ação, com allowlist de campos e política de elegibilidade. **Implementado como registry em código para todas as fontes operacionais cobertas; administração dinâmica permanece fora do escopo atual.**
+- **RF-101** Exibir estado, origem, versão, hash, finalidade, base legal, ACL, retenção, erro e última projeção de cada fonte operacional. **Implementado na listagem administrativa tenant-scoped.**
+- **RF-102** Permitir reprocessamento, reconciliação, despublicação e purge autorizados, com auditoria e execução assíncrona. **Implementado para reprocessamento, reconciliação e purge dirigido pelo ciclo de vida da origem; endpoint de purge manual permanece reservado.**
+- **RF-103** Propagar criação, atualização, cancelamento, exclusão, anonimização e expiração da entidade para o conhecimento derivado. **Implementado com despublicação imediata, tombstone e purge idempotente.**
+- **RF-104** Rotear perguntas entre recuperação documental, consulta estruturada tenant-scoped ou composição híbrida, informando o método usado. **Implementado automaticamente no endpoint principal, preservando também o endpoint estruturado explícito.**
+- **RF-105** Consultar contagens, estados, prazos, agrupamentos e indicadores por read models estruturados, com filtros reproduzíveis. **Implementado para solicitações, encaminhamentos, tramitações, agenda e fiscalizações, com método, dataset, métrica, agrupamento, filtros e período no retorno.**
+- **RF-106** Gerar memórias temáticas agregadas e anonimizadas por tema, território, período e resultado, respeitando agregação mínima. **Implementado com reconstrução determinística e limiar mínimo configurável por ambiente.**
+- **RF-107** Cadastrar perguntas reais e documentos esperados ou expectativa de recusa por tenant, executar avaliação por `k` e preservar o histórico de métricas. **Implementado.**
+- **RF-108** Registrar revisões imutáveis de feedback, motivos normalizados, método/filtros esperados e julgamentos por fonte, preservando compatibilidade com a avaliação atual. **Implementado na Release 4.7.**
+- **RF-109** Listar e moderar feedback do próprio tenant nos estados pendente, aprovado, quarentena, rejeitado, revogado e superado. **Implementado na Release 4.7.**
+- **RF-110** Executar compilação idempotente de sinais aprovados e consultar histórico, métricas, erros e proveniência da execução. **Especificado; implementação planejada.**
+- **RF-111** Gerenciar artefatos de aprendizado candidatos, aprovados, ativos, substituídos e revogados por tenant e tipo. **Especificado; implementação planejada.**
+- **RF-112** Ativar, aplicar em canário e reverter artefatos de aprendizado com auditoria e apenas uma versão ativa por tenant e tipo. **Especificado; implementação planejada.**
+- **RF-113** Exibir na consulta as versões de perfil de ranking, exemplos de roteamento ou outros artefatos que influenciaram a resposta. **Especificado; implementação planejada.**
+- **RF-114** Promover feedback aprovado de forma explícita e idempotente para o dataset tenant-scoped, preservando proveniência e diagnóstico. **Implementado na Release 4.7.**
+- **RF-115** Avaliar documentos esperados, hard negatives, rota, filtros e recusa nos casos curados, sem alterar o comportamento dos casos manuais existentes. **Implementado na Release 4.7.**
+- **RF-116** Desativar automaticamente casos curados cujo feedback ou fonte deixe de ser elegível. **Implementado na Release 4.7.**
