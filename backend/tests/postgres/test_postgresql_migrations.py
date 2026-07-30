@@ -45,7 +45,9 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "rag_document_versions",
         "rag_evaluation_questions",
         "rag_evaluation_runs",
+        "rag_feedback_source_judgments",
         "rag_knowledge_sources",
+        "rag_query_feedback",
         "rag_thematic_memories",
         "scheduled_returns",
         "service_requests",
@@ -71,6 +73,14 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         outbox_indexes = {
             index["name"] for index in inspector.get_indexes("outbox_events")
         }
+        evaluation_question_columns = {
+            column["name"]
+            for column in inspector.get_columns("rag_evaluation_questions")
+        }
+        evaluation_run_columns = {
+            column["name"]
+            for column in inspector.get_columns("rag_evaluation_runs")
+        }
     assert "latency_ms" in query_columns
     assert {
         "method",
@@ -78,6 +88,21 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "applied_filters",
         "structured_result",
     }.issubset(query_columns)
+    assert {
+        "expected_source_refs",
+        "hard_negative_source_refs",
+        "expected_method",
+        "expected_filters",
+        "source_feedback_id",
+        "curated_by_id",
+        "curated_at",
+        "deactivation_reason",
+    }.issubset(evaluation_question_columns)
+    assert {
+        "routing_accuracy",
+        "filter_accuracy",
+        "hard_negative_rate",
+    }.issubset(evaluation_run_columns)
     assert "processing_duration_ms" in outbox_columns
     assert {
         "ix_outbox_events_claim_ready",
@@ -175,6 +200,12 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         operational_source_statuses = connection.execute(
             enum_query, {"enum_name": "rag_knowledge_source_status"}
         ).scalars().all()
+        feedback_statuses = connection.execute(
+            enum_query, {"enum_name": "rag_feedback_status"}
+        ).scalars().all()
+        feedback_judgments = connection.execute(
+            enum_query, {"enum_name": "rag_feedback_source_judgment"}
+        ).scalars().all()
 
     assert request_statuses == [
         "NOVA",
@@ -208,6 +239,15 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
         "ERRO",
         "EXCLUIDA",
     }
+    assert feedback_statuses == [
+        "PENDENTE_REVISAO",
+        "APROVADO",
+        "QUARENTENA",
+        "REJEITADO",
+        "REVOGADO",
+        "SUPERADO",
+    ]
+    assert feedback_judgments == ["RELEVANTE", "IRRELEVANTE", "AUSENTE"]
 
 
 def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
@@ -321,6 +361,14 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
                 column["name"]
                 for column in inspector.get_columns("rag_knowledge_sources")
             }
+            rolled_back_evaluation_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_evaluation_questions")
+            }
+            rolled_back_evaluation_run_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_evaluation_runs")
+            }
             rls_policies = connection.execute(
                 text(
                     """
@@ -340,6 +388,10 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_chunks" in rolled_back_tables
         assert "rag_assistant_queries" in rolled_back_tables
         assert "rag_knowledge_sources" in rolled_back_tables
+        assert "rag_query_feedback" in rolled_back_tables
+        assert "rag_feedback_source_judgments" in rolled_back_tables
+        assert "source_feedback_id" not in rolled_back_evaluation_columns
+        assert "routing_accuracy" not in rolled_back_evaluation_run_columns
         assert "location_geography" in rolled_back_service_columns
         assert "jurisdiction_name" in rolled_back_tenant_columns
         assert "jurisdiction_geojson" in rolled_back_tenant_columns
@@ -348,9 +400,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "source" in rolled_back_external_agency_columns
         assert "latency_ms" in rolled_back_query_columns
         assert "processing_duration_ms" in rolled_back_outbox_columns
-        assert "tombstone_hash" not in rolled_back_source_columns
-        assert "purge_completed_at" not in rolled_back_source_columns
-        assert rls_policies == 6
+        assert "tombstone_hash" in rolled_back_source_columns
+        assert "purge_completed_at" in rolled_back_source_columns
+        assert rls_policies == 11
 
         upgrade(directory="migrations")
 
@@ -378,6 +430,14 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
                 column["name"]
                 for column in inspector.get_columns("rag_knowledge_sources")
             }
+            reapplied_evaluation_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_evaluation_questions")
+            }
+            reapplied_evaluation_run_columns = {
+                column["name"]
+                for column in inspector.get_columns("rag_evaluation_runs")
+            }
             political_parties_count = connection.execute(
                 text("SELECT count(*) FROM political_parties")
             ).scalar_one()
@@ -395,6 +455,12 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_chunks" in reapplied_tables
         assert "rag_assistant_queries" in reapplied_tables
         assert "rag_knowledge_sources" in reapplied_tables
+        assert "rag_query_feedback" in reapplied_tables
+        assert "rag_feedback_source_judgments" in reapplied_tables
+        assert "source_feedback_id" in reapplied_evaluation_columns
+        assert "hard_negative_source_refs" in reapplied_evaluation_columns
+        assert "routing_accuracy" in reapplied_evaluation_run_columns
+        assert "hard_negative_rate" in reapplied_evaluation_run_columns
         assert "location_geography" in reapplied_service_columns
         assert "jurisdiction_name" in reapplied_tenant_columns
         assert "jurisdiction_geojson" in reapplied_tenant_columns

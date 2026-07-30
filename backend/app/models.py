@@ -178,6 +178,40 @@ class RagQueryFeedbackRating(str, enum.Enum):
     CORRIGIDA = "CORRIGIDA"
 
 
+class RagFeedbackStatus(str, enum.Enum):
+    PENDENTE_REVISAO = "PENDENTE_REVISAO"
+    APROVADO = "APROVADO"
+    QUARENTENA = "QUARENTENA"
+    REJEITADO = "REJEITADO"
+    REVOGADO = "REVOGADO"
+    SUPERADO = "SUPERADO"
+
+
+class RagFeedbackReason(str, enum.Enum):
+    FONTES_IRRELEVANTES = "FONTES_IRRELEVANTES"
+    FONTE_AUSENTE = "FONTE_AUSENTE"
+    RESPOSTA_INCORRETA = "RESPOSTA_INCORRETA"
+    CITACAO_INCORRETA = "CITACAO_INCORRETA"
+    FONTE_DESATUALIZADA = "FONTE_DESATUALIZADA"
+    JURISDICAO_INCORRETA = "JURISDICAO_INCORRETA"
+    ROTEAMENTO_INCORRETO = "ROTEAMENTO_INCORRETO"
+    FILTROS_INCORRETOS = "FILTROS_INCORRETOS"
+    RECUSA_INDEVIDA = "RECUSA_INDEVIDA"
+    DEVERIA_RECUSAR = "DEVERIA_RECUSAR"
+    PROBLEMA_DE_ESTILO = "PROBLEMA_DE_ESTILO"
+
+
+class RagFeedbackSourceJudgmentValue(str, enum.Enum):
+    RELEVANTE = "RELEVANTE"
+    IRRELEVANTE = "IRRELEVANTE"
+    AUSENTE = "AUSENTE"
+
+
+class RagFeedbackModerationMode(str, enum.Enum):
+    AUTOMATICA = "AUTOMATICA"
+    HUMANA = "HUMANA"
+
+
 class GlobalDistributionPolicy(str, enum.Enum):
     OBRIGATORIA = "OBRIGATORIA"
     PADRAO = "PADRAO"
@@ -1540,6 +1574,11 @@ class RagKnowledgeSource(db.Model):
 class RagAssistantQuery(db.Model):
     __tablename__ = "rag_assistant_queries"
     __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_rag_assistant_queries_tenant_id_id",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "user_id"],
             ["users.tenant_id", "users.id"],
@@ -1585,6 +1624,152 @@ class RagAssistantQuery(db.Model):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class RagQueryFeedback(db.Model):
+    __tablename__ = "rag_query_feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_rag_query_feedback_tenant_id_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "query_id",
+            "revision",
+            name="uq_rag_query_feedback_revision",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "query_id",
+            "idempotency_key",
+            name="uq_rag_query_feedback_idempotency",
+        ),
+        CheckConstraint(
+            "revision > 0",
+            name="ck_rag_query_feedback_revision_positive",
+        ),
+        CheckConstraint(
+            "expected_method IS NULL OR expected_method IN "
+            "('DOCUMENTAL', 'ESTRUTURADO', 'HIBRIDO')",
+            name="ck_rag_query_feedback_expected_method",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "query_id"],
+            ["rag_assistant_queries.tenant_id", "rag_assistant_queries.id"],
+            name="fk_rag_query_feedback_tenant_query",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "previous_feedback_id"],
+            ["rag_query_feedback.tenant_id", "rag_query_feedback.id"],
+            name="fk_rag_query_feedback_tenant_previous",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_query_feedback_tenant_creator",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "moderated_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_query_feedback_tenant_moderator",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    query_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_feedback_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120))
+    rating: Mapped[RagQueryFeedbackRating] = mapped_column(
+        Enum(RagQueryFeedbackRating, name="rag_query_feedback_rating"),
+        nullable=False,
+        index=True,
+    )
+    reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    corrected_response: Mapped[str | None] = mapped_column(Text)
+    expected_method: Mapped[str | None] = mapped_column(String(20))
+    expected_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[RagFeedbackStatus] = mapped_column(
+        Enum(RagFeedbackStatus, name="rag_feedback_status"),
+        nullable=False,
+        index=True,
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    moderation_mode: Mapped[RagFeedbackModerationMode | None] = mapped_column(
+        Enum(RagFeedbackModerationMode, name="rag_feedback_moderation_mode")
+    )
+    moderation_rule: Mapped[str | None] = mapped_column(String(120))
+    moderated_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class RagFeedbackSourceJudgment(db.Model):
+    __tablename__ = "rag_feedback_source_judgments"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "feedback_id",
+            "document_id",
+            "version_id",
+            name="uq_rag_feedback_source_judgment",
+        ),
+        CheckConstraint(
+            "source_scope IN ('GLOBAL', 'PRIVADO')",
+            name="ck_rag_feedback_source_scope",
+        ),
+        CheckConstraint(
+            "original_position IS NULL OR original_position >= 0",
+            name="ck_rag_feedback_source_position",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "feedback_id"],
+            ["rag_query_feedback.tenant_id", "rag_query_feedback.id"],
+            name="fk_rag_feedback_source_judgments_tenant_feedback",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    feedback_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    source_scope: Mapped[str] = mapped_column(String(10), nullable=False)
+    judgment: Mapped[RagFeedbackSourceJudgmentValue] = mapped_column(
+        Enum(
+            RagFeedbackSourceJudgmentValue,
+            name="rag_feedback_source_judgment",
+        ),
+        nullable=False,
+        index=True,
+    )
+    reason: Mapped[RagFeedbackReason] = mapped_column(
+        Enum(RagFeedbackReason, name="rag_feedback_reason"),
+        nullable=False,
+        index=True,
+    )
+    original_position: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
     )
 
 
@@ -1634,11 +1819,33 @@ class RagThematicMemory(db.Model):
 class RagEvaluationQuestion(db.Model):
     __tablename__ = "rag_evaluation_questions"
     __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "source_feedback_id",
+            name="uq_rag_evaluation_questions_source_feedback",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "created_by_id"],
             ["users.tenant_id", "users.id"],
             name="fk_rag_evaluation_questions_tenant_creator",
             ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "curated_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_evaluation_questions_tenant_curator",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "source_feedback_id"],
+            ["rag_query_feedback.tenant_id", "rag_query_feedback.id"],
+            name="fk_rag_evaluation_questions_tenant_feedback",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "expected_method IS NULL OR expected_method IN "
+            "('DOCUMENTAL', 'ESTRUTURADO', 'HIBRIDO')",
+            name="ck_rag_evaluation_questions_expected_method",
         ),
     )
 
@@ -1648,9 +1855,19 @@ class RagEvaluationQuestion(db.Model):
     )
     question: Mapped[str] = mapped_column(Text, nullable=False)
     expected_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    expected_source_refs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    hard_negative_source_refs: Mapped[list] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     expected_refusal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expected_method: Mapped[str | None] = mapped_column(String(20), index=True)
+    expected_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    source_feedback_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    curated_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    curated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deactivation_reason: Mapped[str | None] = mapped_column(String(120))
     created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
@@ -1683,6 +1900,9 @@ class RagEvaluationRun(db.Model):
     citation_precision: Mapped[float] = mapped_column(Float, nullable=False)
     disconnected_source_rate: Mapped[float] = mapped_column(Float, nullable=False)
     refusal_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    routing_accuracy: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    filter_accuracy: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    hard_negative_rate: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     results: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(

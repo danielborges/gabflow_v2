@@ -334,10 +334,86 @@ na auditoria nem no evento de sincronização.
 - tenant_id
 - consulta_id
 - avaliacao
+- motivos
 - comentario
 - resposta_corrigida
+- metodo_esperado
+- filtros_esperados
+- estado
+- hash_conteudo
+- revisao_anterior_id
 - revisado_por
 - revisado_em
+- moderado_por
+- moderado_em
+- modo_moderacao
+- regra_moderacao
+- decisao_moderacao
+- criado_em
+
+Cada nova avaliação cria uma revisão imutável. `revisao_anterior_id` forma a cadeia
+de substituição sem apagar o histórico. Comentário e correção permanecem
+não confiáveis até aprovação e não são fontes RAG.
+
+## JulgamentoFonteFeedbackRag
+- id
+- tenant_id
+- feedback_id
+- documento_id
+- versao_id
+- chunk_id
+- escopo
+- julgamento
+- motivo
+- posicao_original
+- criado_em
+
+Documento, versão ou chunk devem pertencer às fontes registradas na consulta. O
+julgamento é `RELEVANTE`, `IRRELEVANTE` ou `AUSENTE`; no último caso, a fonte
+esperada pode ser indicada por documento/versão visível ao mesmo tenant.
+
+## ExecucaoAprendizadoRag
+- id
+- tenant_id
+- janela_inicio
+- janela_fim
+- configuracao
+- configuracao_hash
+- baseline
+- total_feedbacks
+- total_aprovados
+- total_quarentena
+- metricas
+- estado
+- erro
+- iniciada_por
+- criada_em
+- concluida_em
+
+## ArtefatoAprendizadoRag
+- id
+- tenant_id
+- execucao_id
+- tipo
+- versao
+- payload
+- payload_hash
+- feedbacks_origem
+- baseline
+- metricas_antes
+- metricas_depois
+- estado
+- aprovado_por
+- aprovado_em
+- ativado_em
+- substituido_por_id
+- revogado_em
+- motivo_revogacao
+- criado_em
+
+Tipos iniciais: `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES` e
+`ANSWER_EXEMPLARS`. Existe no máximo um artefato `ATIVO` por tenant e tipo.
+O payload usa schema fechado e não contém comentário bruto.
 
 ## MemoriaTematicaRag
 - id
@@ -361,11 +437,24 @@ do limiar mínimo não originam documento privado.
 - tenant_id
 - pergunta
 - documentos_esperados
+- fontes_esperadas
+- hard_negatives
 - espera_recusa
+- metodo_esperado
+- filtros_esperados
 - observacoes
 - ativa
+- feedback_origem_id
+- curada_por
+- curada_em
+- motivo_desativacao
 - criada_por
 - criada_em
+
+Casos manuais mantêm `feedback_origem_id` nulo. Casos curados possuem no máximo
+um registro por feedback e usam FK composta com `tenant_id`. Feedback que deixe o
+estado `APROVADO`, ou referência eliminada/inacessível, desativa o caso antes da
+próxima execução sem apagar seu histórico.
 
 ## ExecucaoAvaliacaoRag
 - id
@@ -378,6 +467,9 @@ do limiar mínimo não originam documento privado.
 - precisao_citacoes
 - taxa_fontes_desconexas
 - acuracia_recusa
+- acuracia_roteamento
+- acuracia_filtros
+- taxa_hard_negatives
 - resultados_por_pergunta
 - criada_por
 - criada_em
@@ -393,3 +485,5 @@ do limiar mínimo não originam documento privado.
 - Forks preservam origem global, mas passam a obedecer exclusivamente ao tenant.
 - Chunks globais e privados residem em domínios distintos e são identificados por
   escopo nas citações e auditorias.
+- Feedback, julgamentos, execuções e artefatos de aprendizado usam foreign keys
+  compostas com `tenant_id`; cache e worker também particionam por tenant.

@@ -24,19 +24,34 @@ parlamentares.
 - templates, retornos agendados e envio transacional de e-mail pelo Resend;
 - RAG privado isolado por tenant e catálogo global distribuído por política;
 - recuperação hierárquica com citações e proveniência;
-- memória operacional versionada para solicitações, interações e minutas
-  legislativas concluídas.
+- memória operacional versionada para solicitações, encaminhamentos, minutas,
+  tramitações, conteúdo revisado, agenda, fiscalização e memórias temáticas;
+- roteamento documental, estruturado e híbrido, com avaliação por tenant.
 
 ## Evolução do conhecimento operacional
 
-A incorporação de informações dos demais módulos está parcialmente implementada.
+A incorporação governada de informações dos módulos previstos está implementada.
 O alvo não é indexar todas as tabelas: cada módulo fornece projeções governadas,
 minimizadas e tenant-scoped. Perguntas quantitativas usam consultas estruturadas;
 o RAG permanece responsável por evidências semânticas e documentais.
 
 - Decisão arquitetural: `docs/specs/adr/ADR-008-operational-knowledge-projections.md`
-- Plano do próximo incremento:
+- Implementação:
   `docs/implementation/Release4.6-operational-knowledge-plan.md`
+
+## Feedback e reaprendizado
+
+O GabFlow captura avaliação positiva, negativa ou corrigida em revisões imutáveis,
+com taxonomia, julgamento por fonte, minimização, quarentena e moderação
+tenant-scoped. O sinal ainda não altera o comportamento do assistente: curadoria,
+promoção explícita para o dataset, hard negatives e expectativas de rota/filtros
+já estão disponíveis. Artefatos versionados, avaliação contra baseline, ativação e
+rollback formam os próximos incrementos. Feedback bruto ou resposta corrigida não
+se torna fonte, prompt ou treinamento automático.
+
+- Decisão arquitetural: `docs/specs/adr/ADR-009-controlled-feedback-learning.md`
+- Plano de implementação:
+  `docs/implementation/Release4.7-controlled-feedback-learning.md`
 
 ## Executar com Docker
 

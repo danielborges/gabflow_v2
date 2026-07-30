@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: GabFlow Events
-  version: 0.2.0
+  version: 0.3.0
   description: Contrato de eventos de domínio e integração.
 channels:
   solicitacaoCriada:
@@ -41,6 +41,18 @@ channels:
     messages:
       SincronizacaoMemoriaOperacionalV2:
         $ref: "#/components/messages/SincronizacaoMemoriaOperacionalV2"
+  feedbackRagModerado:
+    x-status: planned
+    address: gabflow.rag.feedback-moderado.v1
+    messages:
+      FeedbackRagModerado:
+        $ref: "#/components/messages/FeedbackRagModerado"
+  artefatoAprendizadoAtivado:
+    x-status: planned
+    address: gabflow.rag.artefato-aprendizado-ativado.v1
+    messages:
+      ArtefatoAprendizadoAtivado:
+        $ref: "#/components/messages/ArtefatoAprendizadoAtivado"
   insightGerado:
     address: gabflow.analytics.insight-gerado.v1
     messages:
@@ -68,6 +80,16 @@ operations:
     action: receive
     channel:
       $ref: "#/channels/sincronizacaoMemoriaOperacionalV2"
+  processFeedbackRagModerado:
+    x-status: planned
+    action: receive
+    channel:
+      $ref: "#/channels/feedbackRagModerado"
+  processArtefatoAprendizadoAtivado:
+    x-status: planned
+    action: receive
+    channel:
+      $ref: "#/channels/artefatoAprendizadoAtivado"
 components:
   messages:
     SolicitacaoCriada:
@@ -201,6 +223,57 @@ components:
                   revision:
                     type: integer
                     minimum: 1
+            required: [eventType, data]
+    FeedbackRagModerado:
+      x-status: planned
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/DomainEvent"
+          - type: object
+            properties:
+              eventType:
+                const: FeedbackRagModerado
+              data:
+                type: object
+                additionalProperties: false
+                required: [feedbackId, state, revision]
+                properties:
+                  feedbackId:
+                    type: string
+                    format: uuid
+                  state:
+                    type: string
+                    enum: [APROVADO, QUARENTENA, REJEITADO, REVOGADO, SUPERADO]
+                  revision:
+                    type: integer
+                    minimum: 1
+            required: [eventType, data]
+    ArtefatoAprendizadoAtivado:
+      x-status: planned
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/DomainEvent"
+          - type: object
+            properties:
+              eventType:
+                const: ArtefatoAprendizadoAtivado
+              data:
+                type: object
+                additionalProperties: false
+                required: [artifactId, artifactType, version, payloadHash]
+                properties:
+                  artifactId:
+                    type: string
+                    format: uuid
+                  artifactType:
+                    type: string
+                    enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+                  version:
+                    type: integer
+                    minimum: 1
+                  payloadHash:
+                    type: string
+                    pattern: "^[a-f0-9]{64}$"
             required: [eventType, data]
     InsightGerado:
       payload:

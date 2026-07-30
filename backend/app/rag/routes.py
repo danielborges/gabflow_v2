@@ -27,20 +27,36 @@ from app.models import (
     RagDocumentVersion,
     RagEvaluationQuestion,
     RagEvaluationRun,
+    RagFeedbackStatus,
     RagIngestionStatus,
     RagKnowledgeSource,
     RagKnowledgeSourceStatus,
+    RagQueryFeedback,
     RagQueryFeedbackRating,
     RagThematicMemory,
-    utc_now,
 )
 from app.observability import percentile
 from app.rag.analytics import rebuild_thematic_memories, structured_query
+from app.rag.curation import (
+    CurationConflictError,
+    CurationNotFoundError,
+    CurationValidationError,
+    promote_feedback_to_evaluation,
+    reconcile_curated_questions,
+)
 from app.rag.distribution import collection_access_for_tenant, entitlement_data
 from app.rag.evaluation import (
     evaluation_question_data,
     evaluation_run_data,
     execute_tenant_evaluation,
+)
+from app.rag.feedback import (
+    FeedbackConflictError,
+    FeedbackNotFoundError,
+    FeedbackValidationError,
+    create_feedback_revision,
+    feedback_data,
+    moderate_feedback,
 )
 from app.rag.operational_memory import reprocess_operational_memory
 from app.rag.retrieval import query_audit_payload
@@ -527,7 +543,9 @@ def assistant_metrics():
 @rag_bp.get("/assistente/avaliacoes/perguntas")
 @roles_required("admin", "manager")
 def list_evaluation_questions():
-    tenant_id, _ = _context()
+    tenant_id, user_id = _context()
+    if reconcile_curated_questions(tenant_id, user_id):
+        db.session.commit()
     items = db.session.scalars(
         select(RagEvaluationQuestion)
         .where(RagEvaluationQuestion.tenant_id == tenant_id)
@@ -581,6 +599,60 @@ def update_evaluation_question(question_id: uuid.UUID):
     if item is None:
         return jsonify(error="resource_not_found", message="Pergunta não encontrada."), 404
     payload = request.get_json(silent=True) or {}
+    if item.source_feedback_id:
+        unsupported = set(payload) - {"observacoes", "ativa"}
+        if unsupported:
+            return (
+                jsonify(
+                    error="conflict",
+                    message="Caso curado preserva os sinais do feedback de origem.",
+                ),
+                409,
+            )
+        if payload.get("ativa") is True and not item.active:
+            return (
+                jsonify(
+                    error="conflict",
+                    message=(
+                        "Caso curado desativado deve ser promovido novamente "
+                        "a partir de feedback válido."
+                    ),
+                ),
+                409,
+            )
+        try:
+            notes = _optional_text(
+                payload.get("observacoes", item.notes),
+                2000,
+                "Observações",
+            )
+        except ValueError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
+        active = payload.get("ativa", item.active)
+        if not isinstance(active, bool):
+            return (
+                jsonify(
+                    error="validation_error",
+                    message="ativa deve ser booleano.",
+                ),
+                422,
+            )
+        before = {"ativa": item.active, "possuiObservacoes": bool(item.notes)}
+        item.notes = notes
+        item.active = active
+        if not active:
+            item.deactivation_reason = "DESATIVACAO_MANUAL"
+        add_audit(
+            tenant_id,
+            user_id,
+            "rag_evaluation.question_updated",
+            "rag_evaluation_question",
+            item.id,
+            before=before,
+            after={"ativa": item.active, "possuiObservacoes": bool(item.notes)},
+        )
+        db.session.commit()
+        return jsonify(evaluation_question_data(item))
     merged = {
         "pergunta": payload.get("pergunta", item.question),
         "documentosEsperados": payload.get(
@@ -623,6 +695,8 @@ def update_evaluation_question(question_id: uuid.UUID):
 def execute_evaluation():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
+    if reconcile_curated_questions(tenant_id, user_id):
+        db.session.commit()
     try:
         run = execute_tenant_evaluation(
             tenant_id,
@@ -647,6 +721,9 @@ def execute_evaluation():
             "precisaoCitacoes": run.citation_precision,
             "taxaFontesDesconexas": run.disconnected_source_rate,
             "acuraciaRecusa": run.refusal_accuracy,
+            "acuraciaRoteamento": run.routing_accuracy,
+            "acuraciaFiltros": run.filter_accuracy,
+            "taxaHardNegatives": run.hard_negative_rate,
         },
     )
     db.session.commit()
@@ -674,49 +751,189 @@ def list_evaluation_runs():
 @jwt_required()
 def review_assistant_query(query_id: uuid.UUID):
     tenant_id, user_id = _context()
-    item = _assistant_query(tenant_id, query_id)
-    if item is None:
-        return jsonify(error="resource_not_found", message="Consulta RAG não encontrada."), 404
     payload = request.get_json(silent=True) or {}
     try:
-        rating = RagQueryFeedbackRating(str(payload.get("avaliacao", "")).upper())
-        comment = _optional_text(payload.get("comentario"), 2000, "Comentário")
-        corrected_response = _optional_text(
-            payload.get("respostaCorrigida"), 10000, "Resposta corrigida"
+        result = create_feedback_revision(
+            tenant_id,
+            user_id,
+            query_id,
+            payload,
+            role=str(get_jwt().get("role", "")),
+            strict=False,
         )
-    except ValueError as error:
+    except FeedbackNotFoundError as error:
+        db.session.rollback()
+        return jsonify(error="resource_not_found", message=str(error)), 404
+    except FeedbackConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except FeedbackValidationError as error:
+        db.session.rollback()
         return jsonify(error="validation_error", message=str(error)), 422
-    if rating == RagQueryFeedbackRating.CORRIGIDA and not corrected_response:
-        return jsonify(
-            error="validation_error",
-            message="Informe a resposta corrigida para uma avaliação corrigida.",
-        ), 422
-    before = {
-        "avaliacao": item.feedback_rating.value if item.feedback_rating else None,
-        "comentario": item.feedback_comment,
-        "possuiCorrecao": bool(item.corrected_response),
-    }
-    item.feedback_rating = rating
-    item.feedback_comment = comment
-    item.corrected_response = corrected_response
-    item.reviewed_by_id = user_id
-    item.reviewed_at = utc_now()
-    after = {
-        "avaliacao": item.feedback_rating.value,
-        "comentario": item.feedback_comment,
-        "possuiCorrecao": bool(item.corrected_response),
-    }
+    item = _assistant_query(tenant_id, query_id)
     add_audit(
         tenant_id,
         user_id,
         "rag_assistant.feedback_recorded",
         "rag_assistant_query",
         item.id,
-        before=before,
-        after=after,
+        after={
+            "feedbackId": str(result.feedback.id),
+            "revisao": result.feedback.revision,
+            "avaliacao": result.feedback.rating.value,
+            "estado": result.feedback.status.value,
+        },
     )
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return (
+            jsonify(
+                error="conflict",
+                message="Outra revisão de feedback foi registrada simultaneamente.",
+            ),
+            409,
+        )
     return jsonify(assistant_query_data(item))
+
+
+@rag_bp.post("/assistente/consultas/<uuid:query_id>/feedback")
+@jwt_required()
+def create_assistant_feedback(query_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    try:
+        result = create_feedback_revision(
+            tenant_id,
+            user_id,
+            query_id,
+            request.get_json(silent=True) or {},
+            role=str(get_jwt().get("role", "")),
+        )
+        db.session.commit()
+    except FeedbackNotFoundError as error:
+        db.session.rollback()
+        return jsonify(error="resource_not_found", message=str(error)), 404
+    except FeedbackConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except FeedbackValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    except IntegrityError:
+        db.session.rollback()
+        return (
+            jsonify(
+                error="conflict",
+                message="Outra revisão de feedback foi registrada simultaneamente.",
+            ),
+            409,
+        )
+    return jsonify(feedback_data(result.feedback)), 201 if result.created else 200
+
+
+@rag_bp.get("/assistente/consultas/<uuid:query_id>/feedback")
+@jwt_required()
+def list_assistant_query_feedback(query_id: uuid.UUID):
+    tenant_id, _ = _context()
+    if _assistant_query(tenant_id, query_id) is None:
+        return jsonify(error="resource_not_found", message="Consulta RAG não encontrada."), 404
+    items = db.session.scalars(
+        select(RagQueryFeedback)
+        .where(
+            RagQueryFeedback.tenant_id == tenant_id,
+            RagQueryFeedback.query_id == query_id,
+        )
+        .order_by(RagQueryFeedback.revision.desc())
+    )
+    return jsonify(content=[feedback_data(item) for item in items])
+
+
+@rag_bp.get("/assistente/feedback")
+@roles_required("admin", "manager")
+def list_assistant_feedback():
+    tenant_id, _ = _context()
+    statement = select(RagQueryFeedback).where(
+        RagQueryFeedback.tenant_id == tenant_id
+    )
+    status_value = str(request.args.get("estado", "")).strip().upper()
+    if status_value:
+        try:
+            status = RagFeedbackStatus(status_value)
+        except ValueError:
+            return (
+                jsonify(error="validation_error", message="Estado de feedback inválido."),
+                422,
+            )
+        statement = statement.where(RagQueryFeedback.status == status)
+    items = db.session.scalars(
+        statement.order_by(RagQueryFeedback.created_at.desc()).limit(300)
+    )
+    return jsonify(content=[feedback_data(item) for item in items])
+
+
+@rag_bp.patch("/assistente/feedback/<uuid:feedback_id>/moderacao")
+@roles_required("admin", "manager")
+def moderate_assistant_feedback(feedback_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _feedback(tenant_id, feedback_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Feedback não encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        moderate_feedback(
+            item,
+            user_id,
+            str(payload.get("decisao", "")),
+            payload.get("justificativa"),
+        )
+        db.session.commit()
+    except FeedbackConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except FeedbackValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(feedback_data(item))
+
+
+@rag_bp.post("/assistente/feedback/<uuid:feedback_id>/promover-avaliacao")
+@roles_required("admin", "manager")
+def promote_assistant_feedback(feedback_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return (
+            jsonify(error="validation_error", message="O corpo deve ser um objeto."),
+            422,
+        )
+    try:
+        item, created = promote_feedback_to_evaluation(
+            tenant_id,
+            user_id,
+            feedback_id,
+            notes=payload.get("observacoes"),
+        )
+        db.session.commit()
+    except CurationNotFoundError as error:
+        db.session.rollback()
+        return jsonify(error="resource_not_found", message=str(error)), 404
+    except CurationConflictError as error:
+        db.session.rollback()
+        return jsonify(error="conflict", message=str(error)), 409
+    except CurationValidationError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    except IntegrityError:
+        db.session.rollback()
+        return (
+            jsonify(
+                error="conflict",
+                message="O feedback já foi promovido simultaneamente.",
+            ),
+            409,
+        )
+    return jsonify(evaluation_question_data(item)), 201 if created else 200
 
 
 @rag_bp.get("/rag/catalogo-global")
@@ -1053,6 +1270,18 @@ def _assistant_query(tenant_id: uuid.UUID, query_id: uuid.UUID) -> RagAssistantQ
         select(RagAssistantQuery).where(
             RagAssistantQuery.id == query_id,
             RagAssistantQuery.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _feedback(
+    tenant_id: uuid.UUID,
+    feedback_id: uuid.UUID,
+) -> RagQueryFeedback | None:
+    return db.session.execute(
+        select(RagQueryFeedback).where(
+            RagQueryFeedback.id == feedback_id,
+            RagQueryFeedback.tenant_id == tenant_id,
         )
     ).scalar_one_or_none()
 

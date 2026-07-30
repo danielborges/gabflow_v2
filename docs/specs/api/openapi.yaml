@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GabFlow API
-  version: 0.4.0
+  version: 0.6.0
   description: API principal para gestão de gabinetes municipais.
 servers:
   - url: https://api.gabflow.example/api/v1
@@ -67,12 +67,27 @@ paths:
       x-status: current
       summary: Lista perguntas reais do dataset de avaliação do tenant
       responses:
-        "200": { description: Perguntas e expectativas tenant-scoped }
+        "200":
+          description: Perguntas e expectativas tenant-scoped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagEvaluationQuestion"
     post:
       x-status: current
       summary: Cadastra pergunta com documentos esperados ou expectativa de recusa
       responses:
-        "201": { description: Pergunta de avaliação criada }
+        "201":
+          description: Pergunta de avaliação criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
         "422": { $ref: "#/components/responses/ValidationError" }
   /assistente/avaliacoes/perguntas/{id}:
     patch:
@@ -81,7 +96,12 @@ paths:
       parameters:
         - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
       responses:
-        "200": { description: Pergunta atualizada }
+        "200":
+          description: Pergunta atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
         "404": { $ref: "#/components/responses/NotFound" }
   /assistente/avaliacoes/executar:
     post:
@@ -89,7 +109,11 @@ paths:
       summary: Executa avaliação de retrieval por tenant
       responses:
         "201":
-          description: precision@k, recall@k, groundedness, citações, desconexão e recusa
+          description: Métricas documentais, recusa, rota, filtros e hard negatives
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationRun"
         "422": { $ref: "#/components/responses/ValidationError" }
   /assistente/avaliacoes/execucoes:
     get:
@@ -1309,7 +1333,9 @@ paths:
                 $ref: "#/components/schemas/RagAnswer"
   /assistente/consultas/{consultaId}/avaliacao:
     patch:
+      x-status: current
       summary: Registra avaliação ou correção humana de uma resposta RAG
+      description: Fachada compatível; na Release 4.7 deverá criar uma revisão imutável de feedback.
       parameters:
         - in: path
           name: consultaId
@@ -1334,6 +1360,192 @@ paths:
           description: Consulta não encontrada
         "422":
           description: Avaliação inválida
+  /assistente/consultas/{consultaId}/feedback:
+    post:
+      x-status: current
+      summary: Cria uma revisão imutável de feedback da consulta
+      parameters:
+        - in: path
+          name: consultaId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagFeedbackCreateRequest"
+      responses:
+        "201":
+          description: Feedback capturado para validação ou moderação
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagFeedback"
+        "200":
+          description: Repetição idempotente; retorna a revisão já criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagFeedback"
+        "404": { description: Consulta ou fonte não encontrada no tenant }
+        "409": { description: Revisão concorrente ou idempotency key já usada com outro conteúdo }
+        "422": { description: Feedback inválido }
+    get:
+      x-status: current
+      summary: Lista o histórico imutável de feedback da consulta
+      parameters:
+        - in: path
+          name: consultaId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Revisões visíveis ao tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content]
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagFeedback"
+  /assistente/feedback:
+    get:
+      x-status: current
+      summary: Lista feedback tenant-scoped para curadoria
+      parameters:
+        - in: query
+          name: estado
+          schema:
+            $ref: "#/components/schemas/RagFeedbackStatus"
+      responses:
+        "200": { description: Fila de feedback do tenant }
+  /assistente/feedback/{feedbackId}/moderacao:
+    patch:
+      x-status: current
+      summary: Aprova, rejeita, revoga ou coloca feedback em quarentena
+      parameters:
+        - in: path
+          name: feedbackId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagFeedbackModerationRequest"
+      responses:
+        "200":
+          description: Estado de moderação atualizado com auditoria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagFeedback"
+        "404": { description: Feedback não encontrado no tenant }
+        "409": { description: Transição de estado inválida }
+        "422": { description: Decisão inválida }
+  /assistente/feedback/{feedbackId}/promover-avaliacao:
+    post:
+      x-status: current
+      summary: Promove feedback aprovado para um caso de avaliação tenant-scoped
+      parameters:
+        - in: path
+          name: feedbackId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                observacoes: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Caso curado criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "200":
+          description: Repetição idempotente; retorna o caso já promovido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "404": { description: Feedback não encontrado no tenant }
+        "409": { description: Feedback não está aprovado ou foi superado }
+        "422": { description: Feedback não possui diagnóstico promovível }
+  /assistente/aprendizado/execucoes:
+    post:
+      x-status: planned
+      summary: Compila sinais aprovados em artefatos candidatos do tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagLearningRunRequest"
+      responses:
+        "202":
+          description: Compilação agendada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningRun"
+        "409": { description: Execução idêntica já existe }
+        "422": { description: Janela ou configuração inválida }
+    get:
+      x-status: planned
+      summary: Lista execuções de aprendizado do tenant
+      responses:
+        "200": { description: Histórico de compilações }
+  /assistente/aprendizado/artefatos:
+    get:
+      x-status: planned
+      summary: Lista artefatos candidatos e ativos do tenant
+      responses:
+        "200": { description: Artefatos e métricas antes/depois }
+  /assistente/aprendizado/artefatos/{artefatoId}/ativacao:
+    post:
+      x-status: planned
+      summary: Avalia e ativa um artefato candidato
+      parameters:
+        - in: path
+          name: artefatoId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Artefato ativado atomicamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "409": { description: Gates de qualidade não atendidos }
+  /assistente/aprendizado/artefatos/{artefatoId}/rollback:
+    post:
+      x-status: planned
+      summary: Reverte o artefato ativo para a versão anterior
+      parameters:
+        - in: path
+          name: artefatoId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Versão anterior restaurada atomicamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "409": { description: Não existe versão anterior elegível }
   /insights:
     get:
       summary: Lista insights disponíveis
@@ -2361,6 +2573,227 @@ components:
         respostaCorrigida:
           type: string
           maxLength: 10000
+    RagFeedbackStatus:
+      type: string
+      enum: [PENDENTE_REVISAO, APROVADO, QUARENTENA, REJEITADO, REVOGADO, SUPERADO]
+    RagFeedbackReason:
+      type: string
+      enum:
+        - FONTES_IRRELEVANTES
+        - FONTE_AUSENTE
+        - RESPOSTA_INCORRETA
+        - CITACAO_INCORRETA
+        - FONTE_DESATUALIZADA
+        - JURISDICAO_INCORRETA
+        - ROTEAMENTO_INCORRETO
+        - FILTROS_INCORRETOS
+        - RECUSA_INDEVIDA
+        - DEVERIA_RECUSAR
+        - PROBLEMA_DE_ESTILO
+    RagFeedbackSourceJudgment:
+      type: object
+      additionalProperties: false
+      required: [documentoId, versaoId, julgamento, motivo]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        documentoId: { type: string, format: uuid }
+        versaoId: { type: string, format: uuid }
+        chunkId: { type: string, format: uuid }
+        escopo: { type: string, enum: [GLOBAL, PRIVADO] }
+        julgamento: { type: string, enum: [RELEVANTE, IRRELEVANTE, AUSENTE] }
+        motivo:
+          $ref: "#/components/schemas/RagFeedbackReason"
+        posicaoOriginal: { type: [integer, "null"], readOnly: true }
+    RagFeedbackCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [avaliacao]
+      properties:
+        idempotencyKey: { type: string, minLength: 8, maxLength: 120 }
+        avaliacao: { type: string, enum: [POSITIVA, NEGATIVA, CORRIGIDA] }
+        motivos:
+          type: array
+          uniqueItems: true
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/RagFeedbackReason"
+        comentario: { type: string, maxLength: 2000 }
+        respostaCorrigida: { type: string, maxLength: 10000 }
+        metodoEsperado: { type: string, enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO] }
+        filtrosEsperados:
+          type: object
+          additionalProperties: false
+          properties:
+            dataset: { type: string }
+            inicio: { type: string, format: date }
+            fim: { type: string, format: date }
+            status: { type: string }
+            tema: { type: string }
+            territorioId: { type: string, format: uuid }
+            orgaoId: { type: string, format: uuid }
+        julgamentosFontes:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/RagFeedbackSourceJudgment"
+    RagFeedbackModerationRequest:
+      type: object
+      additionalProperties: false
+      required: [decisao]
+      properties:
+        decisao:
+          type: string
+          enum: [APROVAR, REJEITAR, QUARENTENAR, REVOGAR]
+        justificativa: { type: string, minLength: 3, maxLength: 2000 }
+    RagFeedback:
+      type: object
+      required: [id, tenantId, consultaId, revisao, avaliacao, estado, hashConteudo, criadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        consultaId: { type: string, format: uuid }
+        revisao: { type: integer, minimum: 1 }
+        revisaoAnteriorId: { type: [string, "null"], format: uuid }
+        avaliacao: { type: string, enum: [POSITIVA, NEGATIVA, CORRIGIDA] }
+        motivos:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagFeedbackReason"
+        comentario: { type: [string, "null"] }
+        respostaCorrigida: { type: [string, "null"] }
+        conteudoRetido:
+          type: boolean
+          description: Indica redação do texto livre em razão de quarentena.
+        metodoEsperado:
+          type: [string, "null"]
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO, null]
+        filtrosEsperados: { type: [object, "null"] }
+        julgamentosFontes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagFeedbackSourceJudgment"
+        estado:
+          $ref: "#/components/schemas/RagFeedbackStatus"
+        hashConteudo: { type: string, pattern: "^[a-f0-9]{64}$" }
+        criadoPorId: { type: string, format: uuid }
+        modoModeracao:
+          type: [string, "null"]
+          enum: [AUTOMATICA, HUMANA, null]
+        regraModeracao: { type: [string, "null"] }
+        moderadoPorId: { type: [string, "null"], format: uuid }
+        criadoEm: { type: string, format: date-time }
+        moderadoEm: { type: [string, "null"], format: date-time }
+        justificativaModeracao: { type: [string, "null"] }
+    RagEvaluationSourceReference:
+      type: object
+      additionalProperties: false
+      required: [documentoId, versaoId, escopo, julgamento, motivo]
+      properties:
+        documentoId: { type: string, format: uuid }
+        versaoId: { type: string, format: uuid }
+        chunkId: { type: [string, "null"], format: uuid }
+        escopo: { type: string, enum: [GLOBAL, PRIVADO] }
+        julgamento: { type: string, enum: [RELEVANTE, IRRELEVANTE, AUSENTE] }
+        motivo:
+          $ref: "#/components/schemas/RagFeedbackReason"
+    RagEvaluationQuestion:
+      type: object
+      required:
+        [id, pergunta, documentosEsperados, fontesEsperadas, hardNegatives,
+         esperaRecusa, filtrosEsperados, ativa, origem, criadaEm, atualizadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        pergunta: { type: string }
+        documentosEsperados:
+          type: array
+          items: { type: string, format: uuid }
+        fontesEsperadas:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagEvaluationSourceReference"
+        hardNegatives:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagEvaluationSourceReference"
+        esperaRecusa: { type: boolean }
+        metodoEsperado:
+          type: [string, "null"]
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO, null]
+        filtrosEsperados: { type: object, additionalProperties: true }
+        observacoes: { type: [string, "null"] }
+        ativa: { type: boolean }
+        origem: { type: string, enum: [MANUAL, FEEDBACK] }
+        feedbackOrigemId: { type: [string, "null"], format: uuid }
+        curadaPorId: { type: [string, "null"], format: uuid }
+        curadaEm: { type: [string, "null"], format: date-time }
+        motivoDesativacao: { type: [string, "null"] }
+        criadaEm: { type: string, format: date-time }
+        atualizadaEm: { type: string, format: date-time }
+    RagEvaluationRun:
+      type: object
+      required:
+        [id, k, perguntas, precisionAtK, recallAtK, groundedness,
+         precisaoCitacoes, taxaFontesDesconexas, acuraciaRecusa,
+         acuraciaRoteamento, acuraciaFiltros, taxaHardNegatives, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        k: { type: integer, minimum: 1, maximum: 10 }
+        perguntas: { type: integer, minimum: 1 }
+        precisionAtK: { type: number, minimum: 0, maximum: 1 }
+        recallAtK: { type: number, minimum: 0, maximum: 1 }
+        groundedness: { type: number, minimum: 0, maximum: 1 }
+        precisaoCitacoes: { type: number, minimum: 0, maximum: 1 }
+        taxaFontesDesconexas: { type: number, minimum: 0, maximum: 1 }
+        acuraciaRecusa: { type: number, minimum: 0, maximum: 1 }
+        acuraciaRoteamento: { type: number, minimum: 0, maximum: 1 }
+        acuraciaFiltros: { type: number, minimum: 0, maximum: 1 }
+        taxaHardNegatives: { type: number, minimum: 0, maximum: 1 }
+        resultados:
+          type: array
+          items: { type: object, additionalProperties: true }
+        criadaEm: { type: string, format: date-time }
+    RagLearningRunRequest:
+      type: object
+      additionalProperties: false
+      required: [inicio, fim]
+      properties:
+        inicio: { type: string, format: date-time }
+        fim: { type: string, format: date-time }
+        tiposArtefato:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+    RagLearningRun:
+      type: object
+      required: [id, estado, inicio, fim, configuracaoHash, criadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        estado: { type: string, enum: [PENDENTE, PROCESSANDO, CONCLUIDA, ERRO] }
+        inicio: { type: string, format: date-time }
+        fim: { type: string, format: date-time }
+        configuracaoHash: { type: string }
+        metricas: { type: object, additionalProperties: true }
+        criadoEm: { type: string, format: date-time }
+    RagLearningArtifact:
+      type: object
+      required: [id, tipo, versao, estado, payloadHash, criadoEm]
+      properties:
+        id: { type: string, format: uuid }
+        tipo:
+          type: string
+          enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+        versao: { type: integer, minimum: 1 }
+        estado:
+          type: string
+          enum: [CANDIDATO, EM_AVALIACAO, REJEITADO, APROVADO, ATIVO, SUBSTITUIDO, REVOGADO]
+        payloadHash: { type: string }
+        baseline: { type: object, additionalProperties: true }
+        metricasAntes: { type: object, additionalProperties: true }
+        metricasDepois: { type: object, additionalProperties: true }
+        criadoEm: { type: string, format: date-time }
+        ativadoEm: { type: [string, "null"], format: date-time }
     RagAnswer:
       type: object
       required: [id, consulta, resposta, fontes, fundamentada, recusaConclusiva]
@@ -2430,6 +2863,13 @@ components:
         respostaCorrigida:
           type: string
           nullable: true
+        aprendizado:
+          type: object
+          additionalProperties: false
+          description: Versões tenant-scoped que influenciaram esta consulta.
+          properties:
+            rerankProfileVersion: { type: [integer, "null"] }
+            routingExamplesVersion: { type: [integer, "null"] }
         seguranca:
           type: object
           required: [promptInjectionDetectado, fontesComRisco, politica]
@@ -2457,6 +2897,10 @@ components:
               versaoId:
                 type: string
                 format: uuid
+              chunkId:
+                type: string
+                format: uuid
+                description: Fragmento exato que originou a citação e pode ser julgado no feedback.
               titulo:
                 type: string
               tipo:

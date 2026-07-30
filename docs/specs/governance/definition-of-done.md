@@ -24,5 +24,13 @@
   derivadas e objeto privado, preservando auditoria sem conteúdo;
 - para retrieval: dataset por tenant com `precision@k`, `recall@k`, groundedness,
   citações desconexas, recusa e ausência de diversidade forçada abaixo do limiar;
+- para feedback: revisões imutáveis, taxonomia, julgamento de fontes, quarentena,
+  substituição e revogação tenant-scoped testados;
+- para curadoria: promoção idempotente, FK tenant-scoped, expected sources, hard
+  negatives, rota/filtros/recusa e desativação por inelegibilidade testados;
+- para aprendizado: artefato reproduzível, candidato contra baseline, limites de
+  influência, ativação atômica, canário e rollback validados;
+- para segurança do aprendizado: comentário malicioso não alcança prompt, índice,
+  logs, eventos ou artefato e nenhum sinal cruza tenant;
 - para conectores: allowlist, SSRF, cofre de segredos, limites, quarentena e snapshot versionado testados;
 - credenciais de runtime confirmadas como `NOSUPERUSER` e `NOBYPASSRLS`.

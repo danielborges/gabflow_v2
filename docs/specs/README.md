@@ -29,6 +29,8 @@ Este repositório contém a documentação de especificação utilizada para evo
 10. Toda citação RAG deve informar escopo, versão e proveniência.
 11. Dados dos módulos entram no RAG somente por projeções governadas; fatos
     quantitativos permanecem em consultas estruturadas tenant-scoped.
+12. Feedback humano é dado não confiável até validação e somente influencia o
+    próprio tenant por artefatos versionados, avaliados e reversíveis.
 
 ## Estrutura do repositório
 
@@ -71,7 +73,8 @@ gabflow-spec-driven/
 │   ├── ADR-005-multi-tenant.md
 │   ├── ADR-006-geospatial-analytics.md
 │   ├── ADR-007-hierarchical-rag.md
-│   └── ADR-008-operational-knowledge-projections.md
+│   ├── ADR-008-operational-knowledge-projections.md
+│   └── ADR-009-controlled-feedback-learning.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md

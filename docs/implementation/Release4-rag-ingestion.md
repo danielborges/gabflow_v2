@@ -56,7 +56,8 @@ hierárquica completa.
 - A resposta atual resume a evidência principal; geração substantiva, reranking e
   verificação de citações permanecem evoluções.
 - O feedback é persistido e auditado, mas ainda não participa do ranking, dataset de
-  avaliação ou pipeline de melhoria.
+  avaliação ou pipeline de melhoria. O alvo controlado está especificado na
+  Release 4.7 e no ADR-009.
 - A proteção contra prompt injection é inicial e baseada em padrões; quarentena,
   classificador dedicado e red team ampliado permanecem pendentes.
 

@@ -29,3 +29,13 @@
 - **Tombstone:** registro mínimo que despublica uma fonte e representa sua exclusão até a conclusão do purge.
 - **Purge:** eliminação dos chunks, embeddings, textos, versões e objetos derivados, preservando somente auditoria sem conteúdo.
 - **Quarentena:** estado que impede indexação ou publicação de conteúdo suspeito até revisão.
+- **Feedback RAG:** revisão humana tenant-scoped sobre uma consulta, suas fontes,
+  rota ou resposta; não constitui conhecimento nem treinamento por si só.
+- **Artefato de aprendizado:** configuração derivada de feedback aprovado,
+  versionada e reversível, que pode orientar ranking, roteamento ou avaliação.
+- **Baseline:** versão ativa e conjunto de métricas usados como referência para
+  decidir se um artefato candidato pode ser promovido.
+- **Hard negative:** fonte julgada semanticamente próxima, porém irrelevante para a
+  pergunta, usada para avaliar ou melhorar o ranking.
+- **Canário:** ativação limitada de uma nova versão para observar qualidade antes
+  da adoção integral.

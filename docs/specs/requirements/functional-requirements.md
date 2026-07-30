@@ -102,3 +102,12 @@
 - **RF-105** Consultar contagens, estados, prazos, agrupamentos e indicadores por read models estruturados, com filtros reproduzíveis. **Implementado para solicitações, encaminhamentos, tramitações, agenda e fiscalizações, com método, dataset, métrica, agrupamento, filtros e período no retorno.**
 - **RF-106** Gerar memórias temáticas agregadas e anonimizadas por tema, território, período e resultado, respeitando agregação mínima. **Implementado com reconstrução determinística e limiar mínimo configurável por ambiente.**
 - **RF-107** Cadastrar perguntas reais e documentos esperados ou expectativa de recusa por tenant, executar avaliação por `k` e preservar o histórico de métricas. **Implementado.**
+- **RF-108** Registrar revisões imutáveis de feedback, motivos normalizados, método/filtros esperados e julgamentos por fonte, preservando compatibilidade com a avaliação atual. **Implementado na Release 4.7.**
+- **RF-109** Listar e moderar feedback do próprio tenant nos estados pendente, aprovado, quarentena, rejeitado, revogado e superado. **Implementado na Release 4.7.**
+- **RF-110** Executar compilação idempotente de sinais aprovados e consultar histórico, métricas, erros e proveniência da execução. **Especificado; implementação planejada.**
+- **RF-111** Gerenciar artefatos de aprendizado candidatos, aprovados, ativos, substituídos e revogados por tenant e tipo. **Especificado; implementação planejada.**
+- **RF-112** Ativar, aplicar em canário e reverter artefatos de aprendizado com auditoria e apenas uma versão ativa por tenant e tipo. **Especificado; implementação planejada.**
+- **RF-113** Exibir na consulta as versões de perfil de ranking, exemplos de roteamento ou outros artefatos que influenciaram a resposta. **Especificado; implementação planejada.**
+- **RF-114** Promover feedback aprovado de forma explícita e idempotente para o dataset tenant-scoped, preservando proveniência e diagnóstico. **Implementado na Release 4.7.**
+- **RF-115** Avaliar documentos esperados, hard negatives, rota, filtros e recusa nos casos curados, sem alterar o comportamento dos casos manuais existentes. **Implementado na Release 4.7.**
+- **RF-116** Desativar automaticamente casos curados cujo feedback ou fonte deixe de ser elegível. **Implementado na Release 4.7.**

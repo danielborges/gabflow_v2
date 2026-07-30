@@ -38,3 +38,12 @@
 - **RN-036** Eventos de memória operacional não podem transportar conteúdo sensível; o worker deve reler o estado canônico dentro do contexto do tenant.
 - **RN-037** Contagens, agrupamentos, estados e indicadores devem ser obtidos de consultas estruturadas tenant-scoped, nunca inferidos exclusivamente por similaridade vetorial.
 - **RN-038** Uma fonte não pode ser incluída apenas para assegurar diversidade entre escopos; todo resultado deve satisfazer autorização e limiar mínimo de evidência.
+- **RN-039** Feedback bruto não constitui conhecimento, evidência ou instrução e não pode ser indexado no RAG.
+- **RN-040** Uma resposta corrigida somente pode virar exemplar após validação de segurança, aprovação e conferência das fontes; mesmo aprovada, não substitui a citação documental.
+- **RN-041** Feedback positivo avalia a resposta como um todo e não torna automaticamente relevantes todas as fontes recuperadas.
+- **RN-042** Feedback negativo não despublica fontes nem altera o ranking imediatamente; sua influência depende de motivo, julgamento por fonte, validação e artefato aprovado.
+- **RN-043** Ajustes derivados de feedback são aplicados somente a candidatos previamente autorizados e acima do limiar de evidência.
+- **RN-044** Um artefato de aprendizado não pode usar sinal revogado, superado, em quarentena ou ligado a conteúdo eliminado.
+- **RN-045** Somente uma versão de artefato por tenant e tipo pode estar ativa, com troca atômica e rollback auditável.
+- **RN-046** Feedback sem motivo ou julgamento suficiente pode compor métricas de satisfação, mas não pode gerar ajuste comportamental.
+- **RN-047** Somente sinal estruturado de baixo risco pode ser aprovado automaticamente; texto livre, correção, fonte ausente e mudança de alto impacto exigem moderação humana.

@@ -71,6 +71,12 @@
   `recall@k`, groundedness, precisão de citações, fontes desconexas e recusa.
 - **Entregue:** roteamento automático entre o fluxo documental, estruturado e
   híbrido, com decisão e filtros auditáveis.
+- **Entregue:** feedback imutável, taxonomia de falhas, julgamentos por fonte,
+  validação, minimização, quarentena e moderação tenant-scoped.
+- **Entregue:** curadoria explícita para o dataset, expected sources versionadas,
+  hard negatives, expectativas de rota/filtros/recusa e invalidação automática.
+- **Próximo incremento:** compilação de artefatos de aprendizado versionados,
+  avaliação contra baseline, ativação tenant-scoped e rollback.
 
 ## Release 5 — Inteligência territorial
 

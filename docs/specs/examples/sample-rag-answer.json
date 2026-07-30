@@ -20,6 +20,10 @@
       "nomic-embed-text"
     ]
   },
+  "aprendizado": {
+    "rerankProfileVersion": null,
+    "routingExamplesVersion": null
+  },
   "fontes": [
     {
       "escopo": "GLOBAL",
@@ -29,6 +33,7 @@
       "colecaoId": "4cf1bf7e-a6de-4ad5-9cf7-c8b3f57591ca",
       "documentoId": "3de19e0c-5643-4a69-bcbf-62d9b542be90",
       "versaoId": "cf4a838e-5788-4a3b-9644-1685a0fefae7",
+      "chunkId": "5793d0ef-4a30-410a-8a16-f68302608a59",
       "titulo": "Norma Geral Aplicável",
       "jurisdicao": "BR",
       "pagina": 12,
@@ -53,6 +58,7 @@
       "colecaoId": null,
       "documentoId": "c208257a-b61a-44d6-9e05-462f6ef6cf79",
       "versaoId": "f97191a5-118e-480a-9834-2846d3228857",
+      "chunkId": "6b673cdb-2a5c-4957-9b42-0888dd21f48e",
       "fonteModulo": "LEGISLATIVO",
       "entidadeOrigemTipo": "LEGISLATIVE_DRAFT",
       "entidadeOrigemId": "aa807982-41df-49fd-b4e7-264b422d67e2",

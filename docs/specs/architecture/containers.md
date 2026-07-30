@@ -28,6 +28,7 @@ Responsável por:
 - indexação;
 - projeção governada das entidades dos módulos;
 - reconciliação, expiração e purge do conhecimento operacional;
+- validação, compilação e reavaliação dos sinais de feedback;
 - geração de relatórios.
 
 ## Serviço de IA
@@ -55,7 +56,7 @@ Responsável por:
 - normalização e reranking;
 - citações;
 - controle de acesso;
-- avaliação e melhoria tenant-scoped.
+- avaliação e melhoria tenant-scoped por artefatos versionados e reversíveis.
 
 ## Banco Transacional
 

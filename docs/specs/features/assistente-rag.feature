@@ -254,9 +254,112 @@ Funcionalidade: Assistente RAG hierárquico
   Cenário: Avaliar e corrigir resposta do assistente
     Dado que o assistente registrou uma consulta RAG
     Quando o usuário avaliar a resposta como positiva, negativa ou corrigida
-    Então o sistema deve preservar avaliação, comentário e resposta corrigida
+    Então o sistema deve criar uma revisão imutável de avaliação, comentário e resposta corrigida
     E deve registrar quem revisou e quando a revisão ocorreu
     E o feedback deve permanecer restrito ao tenant
+
+  Cenário: Substituir avaliação sem apagar o histórico
+    Dado que uma consulta possui uma avaliação anterior
+    Quando o usuário enviar uma nova avaliação
+    Então uma nova revisão deve referenciar a revisão anterior
+    E a revisão anterior deve permanecer auditável no estado SUPERADO
+
+  Cenário: Classificar uma resposta negativa
+    Dado que o usuário recebeu fontes desconexas e uma rota inadequada
+    Quando avaliar negativamente a resposta
+    Então deve poder informar FONTES_IRRELEVANTES e ROTEAMENTO_INCORRETO
+    E deve poder julgar cada fonte como RELEVANTE ou IRRELEVANTE
+    E deve poder indicar o método e os filtros esperados
+
+  Cenário: Validar julgamento de fonte
+    Dado que uma consulta do tenant A possui fontes versionadas registradas
+    Quando o usuário tentar julgar uma versão não presente ou não acessível
+    Então o feedback deve ser rejeitado
+    E nenhuma referência de outro tenant deve ser persistida
+
+  Cenário: Colocar feedback malicioso em quarentena
+    Dado que o comentário ou a correção tenta instruir o modelo ou exfiltrar dados
+    Quando o feedback passar pela validação de segurança
+    Então seu estado deve ser QUARENTENA
+    E o texto não deve compor prompt, embedding, evento, log ou artefato
+
+  Cenário: Compilar somente sinais aprovados
+    Dado que existem feedbacks aprovados, rejeitados, revogados e em quarentena
+    Quando o worker executar a compilação do tenant
+    Então somente feedbacks aprovados e não superados devem participar
+    E o artefato candidato deve registrar configuração, checksum e proveniência
+    E a execução deve ser idempotente para a mesma janela e configuração
+
+  Cenário: Não aprender com clique sem diagnóstico
+    Dado que um usuário avaliou negativamente sem informar motivo ou fonte
+    Quando o pipeline selecionar sinais para compilação
+    Então a avaliação deve compor somente a métrica de satisfação
+    E não deve produzir boost, penalidade, rota ou exemplar
+
+  Cenário: Exigir revisão humana de texto livre
+    Dado que um feedback contém comentário, resposta corrigida ou fonte ausente
+    Quando passar pelas validações automáticas
+    Então deve permanecer PENDENTE_REVISAO até decisão de um gestor
+    E a futura ativação não deve depender somente do autor do feedback
+
+  Cenário: Promover feedback aprovado para o dataset
+    Dado que um feedback aprovado possui fonte relevante, fonte irrelevante, rota e filtros esperados
+    Quando o gestor promover o feedback para avaliação
+    Então deve ser criado um único caso tenant-scoped ligado à revisão do feedback
+    E a fonte relevante deve integrar as fontes esperadas
+    E a fonte irrelevante deve integrar os hard negatives
+    E rota, filtros, curador e proveniência devem ser preservados
+
+  Cenário: Não promover feedback sem diagnóstico
+    Dado que um feedback positivo não possui motivo, julgamento, rota, filtro ou expectativa de recusa
+    Quando o gestor tentar promovê-lo para avaliação
+    Então a promoção deve ser recusada
+    E o clique deve permanecer disponível somente para métricas de satisfação
+
+  Cenário: Desativar caso curado inelegível
+    Dado que um feedback aprovado originou um caso ativo no dataset
+    Quando o feedback for superado ou revogado ou uma fonte referenciada for eliminada
+    Então o caso deve ser desativado antes da próxima execução
+    E o motivo deve ser preservado sem apagar o histórico
+
+  Cenário: Avaliar rota, filtros e hard negatives
+    Dado que o dataset possui um caso curado com rota, filtros e hard negatives
+    Quando o gestor executar a avaliação
+    Então devem ser medidas acurácia de roteamento e de filtros
+    E deve ser medida a taxa de recuperação dos hard negatives
+    E casos manuais sem esses sinais devem manter a avaliação documental anterior
+
+  Cenário: Não promover correção humana a evidência
+    Dado que um usuário escreveu uma resposta corrigida
+    Quando a correção for aprovada como exemplar
+    Então ela pode orientar avaliação e estrutura da resposta
+    Mas não deve ser indexada como fonte nem apresentada como citação
+
+  Cenário: Impedir boost abaixo do limiar
+    Dado que um perfil de reranking ativo favorece determinada fonte
+    E a fonte está abaixo do limiar mínimo de evidência
+    Quando o assistente ordenar os candidatos
+    Então a fonte não deve compor o contexto
+    E o perfil não deve ultrapassar tenant, ACL, vigência, jurisdição ou estado
+
+  Cenário: Avaliar candidato antes da ativação
+    Dado que uma compilação produziu um artefato candidato
+    Quando o gestor solicitar sua ativação
+    Então candidato e baseline devem ser executados no mesmo dataset do tenant
+    E regressões acima das tolerâncias devem impedir a ativação
+    E métricas, decisão e aprovador devem ser auditados
+
+  Cenário: Reverter artefato de aprendizado
+    Dado que um artefato novo está ativo e existe uma versão anterior
+    Quando ocorrer regressão ou o gestor solicitar rollback
+    Então a versão anterior deve ser restaurada atomicamente
+    E consultas posteriores devem registrar a versão restaurada
+
+  Cenário: Revogar feedback já compilado
+    Dado que um feedback aprovado originou um artefato ativo
+    Quando o feedback for revogado ou sua fonte for eliminada
+    Então o artefato dependente deve ser invalidado
+    E uma recompilação tenant-scoped deve ser agendada
 
   Cenário: Impedir contaminação de aprendizado entre tenants
     Dado que o tenant A corrigiu uma resposta

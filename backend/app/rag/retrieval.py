@@ -355,6 +355,7 @@ def _private_source_data(item: RankedChunk) -> dict:
             else None
         ),
         "versaoId": str(version.id),
+        "chunkId": str(item.chunk.id),
         "versao": version.version_label,
         "estado": version.lifecycle_status.value,
         "vigenteDesde": version.valid_from.isoformat() if version.valid_from else None,
@@ -400,6 +401,7 @@ def _global_source_data(item: RankedChunk) -> dict:
         "jurisdicao": document.jurisdiction or collection.jurisdiction,
         "proveniencia": document.provenance,
         "versaoId": str(version.id),
+        "chunkId": str(item.chunk.id),
         "versao": version.version_label,
         "estado": version.publication_status.value,
         "vigenteDesde": version.valid_from.isoformat() if version.valid_from else None,

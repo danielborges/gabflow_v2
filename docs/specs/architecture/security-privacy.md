@@ -86,3 +86,24 @@
 - Reconciliação periódica detecta fontes órfãs, expiradas ou divergentes.
 - Consultas estruturadas usam os mesmos filtros de tenant e autorização do domínio
   transacional; o modelo não recebe acesso SQL irrestrito.
+
+## Feedback e aprendizado
+
+- Comentário e resposta corrigida são entradas não confiáveis, sujeitas a limite de
+  tamanho, normalização, minimização de PII e detecção de prompt injection.
+- Feedback suspeito fica em `QUARENTENA`; texto bruto não entra em prompt, embedding,
+  log, métrica, payload de evento ou artefato de aprendizado.
+- Todo julgamento de fonte é validado contra as fontes/versões da consulta e contra
+  a autorização atual do tenant.
+- Compiladores e caches usam `tenant_id` na chave, contexto RLS transacional e
+  credenciais `NOBYPASSRLS`.
+- Limites por usuário e período, quantidade mínima de sinais e detecção de anomalias
+  reduzem envenenamento coordenado ou acidental.
+- Artefatos possuem schema fechado, checksum, proveniência, aprovação e rollback.
+- Correções não são promovidas ao catálogo global ou a datasets compartilhados sem
+  processo separado de autorização, anonimização e revisão.
+- A promoção ao dataset privado copia somente pergunta, IDs/versionamentos,
+  julgamentos e expectativas estruturadas; comentário e resposta corrigida não
+  integram o caso de avaliação.
+- Casos curados usam FK composta com feedback e tenant, e são reconciliados antes
+  de listagem ou execução para impedir uso de sinal revogado ou fonte inacessível.

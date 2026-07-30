@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.extensions import db
@@ -11,12 +11,16 @@ from app.models import (
     GlobalKnowledgeCollection,
     GlobalKnowledgeEntitlement,
     GlobalUpdateMode,
+    RagAssistantQuery,
     RagChunk,
     RagDocument,
     RagDocumentAccess,
     RagDocumentVersion,
+    RagFeedbackStatus,
     RagKnowledgeSource,
     RagKnowledgeSourceStatus,
+    RagQueryFeedback,
+    RagQueryFeedbackRating,
     Role,
     Tenant,
     User,
@@ -135,6 +139,67 @@ def test_operational_knowledge_sources_are_tenant_isolated(postgres_app):
         transaction.rollback()
 
 
+def test_feedback_revisions_are_tenant_isolated(postgres_app):
+    tenant_a, tenant_b, _chunk_a, _version_b = _seed_rag_tenants(postgres_app)
+    _ensure_runtime_role(postgres_app)
+    with postgres_app.app_context():
+        for tenant_id in (tenant_a, tenant_b):
+            with tenant_context(tenant_id):
+                user = db.session.scalar(select(User).where(User.tenant_id == tenant_id))
+                query = RagAssistantQuery(
+                    tenant_id=tenant_id,
+                    user_id=user.id,
+                    query_text="Consulta RLS",
+                    query_hash=uuid.uuid4().hex.ljust(64, "0"),
+                    response="Resposta RLS",
+                    sources=[],
+                    safety_flags={},
+                    grounded=False,
+                    refused=True,
+                    evidence_threshold=0.5,
+                    embedding_model="test",
+                )
+                db.session.add(query)
+                db.session.flush()
+                db.session.add(
+                    RagQueryFeedback(
+                        tenant_id=tenant_id,
+                        query_id=query.id,
+                        revision=1,
+                        rating=RagQueryFeedbackRating.POSITIVA,
+                        reasons=[],
+                        expected_filters={},
+                        status=RagFeedbackStatus.APROVADO,
+                        content_hash=uuid.uuid4().hex.ljust(64, "0"),
+                        created_by_id=user.id,
+                    )
+                )
+                db.session.commit()
+
+    with postgres_app.app_context(), db.engine.connect() as connection:
+        transaction = connection.begin()
+        connection.execute(text(f"SET LOCAL ROLE {RUNTIME_ROLE}"))
+        assert connection.execute(
+            text("SELECT count(*) FROM rag_query_feedback")
+        ).scalar_one() == 0
+        connection.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_a)},
+        )
+        assert connection.execute(
+            text("SELECT tenant_id FROM rag_query_feedback")
+        ).scalar_one() == tenant_a
+        hidden = connection.execute(
+            text(
+                "UPDATE rag_query_feedback SET moderation_rule = 'INVASAO' "
+                "WHERE tenant_id = :tenant_id"
+            ),
+            {"tenant_id": str(tenant_b)},
+        )
+        assert hidden.rowcount == 0
+        transaction.rollback()
+
+
 def test_transaction_local_tenant_context_does_not_leak(postgres_app):
     tenant_a, tenant_b, _chunk_a, _version_b = _seed_rag_tenants(postgres_app)
     _ensure_runtime_role(postgres_app)
@@ -208,8 +273,13 @@ def test_runtime_role_cannot_bypass_rls(postgres_app):
                         "rag_chunks",
                         "rag_document_versions",
                         "rag_documents",
+                        "rag_evaluation_questions",
+                        "rag_evaluation_runs",
+                        "rag_feedback_source_judgments",
                         "rag_global_entitlements",
                         "rag_knowledge_sources",
+                        "rag_query_feedback",
+                        "rag_thematic_memories",
                     ]
                 },
             )
@@ -223,8 +293,13 @@ def test_runtime_role_cannot_bypass_rls(postgres_app):
         "rag_chunks",
         "rag_document_versions",
         "rag_documents",
+        "rag_evaluation_questions",
+        "rag_evaluation_runs",
+        "rag_feedback_source_judgments",
         "rag_global_entitlements",
         "rag_knowledge_sources",
+        "rag_query_feedback",
+        "rag_thematic_memories",
     ]
     assert forced == policies
 
@@ -361,7 +436,9 @@ def _ensure_runtime_role(postgres_app):
                     GRANT SELECT, INSERT, UPDATE, DELETE
                         ON rag_documents, rag_document_versions, rag_chunks,
                            rag_assistant_queries, rag_global_entitlements,
-                           rag_knowledge_sources
+                           rag_knowledge_sources, rag_evaluation_questions,
+                           rag_evaluation_runs, rag_thematic_memories,
+                           rag_query_feedback, rag_feedback_source_judgments
                         TO gabflow_rls_test;
                     """
                 )

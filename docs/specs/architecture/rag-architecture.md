@@ -118,6 +118,48 @@ ou expectativa de recusa e execuções históricas por `k`. Os resultados inclue
 `precision@k`, `recall@k`, groundedness, precisão das citações, taxa de fontes
 desconexas e acurácia de recusa.
 
+## Feedback e reaprendizado controlado
+
+O feedback é separado do conhecimento recuperável. Avaliação, comentário e
+correção são capturados como revisões imutáveis e tratados como entrada não
+confiável. Nenhum texto de feedback é concatenado ao prompt, convertido em chunk
+ou usado como citação.
+
+O pipeline possui três planos:
+
+```text
+captura imutável
+  -> validação de tenant, fonte, ACL, PII e prompt injection
+  -> moderação e classificação do tipo de falha
+  -> compilação assíncrona de sinais aprovados
+  -> artefato candidato versionado
+  -> avaliação contra a baseline do tenant
+  -> ativação atômica, canário e rollback
+```
+
+Julgamentos de fonte alimentam casos relevantes e hard negatives; correções de
+rota alimentam exemplos determinísticos; perguntas corrigidas podem ampliar o
+dataset de avaliação. Uma resposta corrigida pode orientar estrutura e avaliação,
+mas não substitui evidência nem torna suas afirmações fatos.
+
+A promoção para o dataset é explícita e limitada a feedback `APROVADO`. Cada
+feedback origina no máximo um caso: fontes `RELEVANTE` ou `AUSENTE` tornam-se
+expectativas versionadas, fontes `IRRELEVANTE` tornam-se hard negatives e método,
+filtros ou recusa esperados permanecem reproduzíveis. Antes de listar ou executar
+o dataset, a reconciliação desativa casos cujo feedback deixou de ser aprovado ou
+cuja fonte foi eliminada/inacessível. Casos manuais existentes não dependem desse
+vínculo e preservam o comportamento anterior.
+
+Perfis de reranking operam somente sobre candidatos que já passaram por tenant,
+ACL, finalidade, jurisdição, vigência, estado e limiar individual. O ajuste é
+limitado, exige quantidade mínima de sinais ou aprovação explícita e possui janela
+temporal e decaimento. Feedback negativo isolado não despublica fonte.
+
+Cada artefato registra versão, checksum, configuração, baseline, dataset, sinais de
+origem, métricas e aprovação. Apenas uma versão por tipo fica ativa em cada tenant;
+a versão anterior é preservada para rollback. Revogar feedback ou eliminar uma
+fonte invalida os artefatos dependentes e agenda recompilação.
+
 O evento operacional V2 transporta somente versão do schema, módulo, tipo e ID da
 entidade, ação e revisão de ordenação. A revisão processada é persistida na fonte;
 eventos repetidos ou anteriores são descartados antes de reler ou reprojetar o
@@ -153,6 +195,9 @@ rag_private
   knowledge_sources
   assistant_queries
   feedback
+  feedback_source_judgments
+  learning_runs
+  learning_artifacts
   global_entitlements
 ```
 
