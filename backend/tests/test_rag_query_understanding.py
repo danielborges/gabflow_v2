@@ -14,6 +14,7 @@ from app.models import (
     Tenant,
     User,
 )
+from app.rag.content_security import ContentSecurityAction, ContentSecurityStatus
 from app.rag.query_understanding import understand_documentary_query
 from app.rag.service import LocalHashEmbeddingProvider
 
@@ -53,6 +54,9 @@ def _source(tenant, user, title, document_type, content):
         version_label="1",
         lifecycle_status=RagDocumentLifecycle.VIGENTE,
         ingestion_status=RagIngestionStatus.INDEXADO,
+        malware_scan_status="CLEAN",
+        security_status=ContentSecurityStatus.CLEAN,
+        security_action=ContentSecurityAction.ALLOW,
         storage_key=f"tenants/{tenant.id}/rag/{document_id}/{version_id}/fonte.txt",
         original_name="fonte.txt",
         mime_type="text/plain",
@@ -82,8 +86,7 @@ def _source(tenant, user, title, document_type, content):
 def test_understanding_extracts_normative_reference_theme_period_and_expansions(app):
     with app.app_context():
         plan = understand_documentary_query(
-            "Quais regras de transporte constam no Decreto nº 9.117/2007 "
-            "entre 2020 e 2024?"
+            "Quais regras de transporte constam no Decreto nº 9.117/2007 entre 2020 e 2024?"
         )
 
         assert plan.intent == "ATO_NORMATIVO_ESPECIFICO"
@@ -119,9 +122,7 @@ def test_understanding_uses_word_boundaries_and_validates_explicit_filters(app):
             "jurisdicao": "Campinas",
         }
         assert plan.expansions == ()
-        normative = understand_documentary_query(
-            "O que consta no Decreto 9.117 de 2007?"
-        )
+        normative = understand_documentary_query("O que consta no Decreto 9.117 de 2007?")
         assert normative.references == ("DECRETO 9.117/2007",)
 
 
@@ -169,9 +170,7 @@ def test_documentary_filters_and_expansion_are_applied_before_reranking(
     )
 
     assert response.status_code == 200
-    assert [source["documentoId"] for source in response.json["fontes"]] == [
-        relevant_id
-    ]
+    assert [source["documentoId"] for source in response.json["fontes"]] == [relevant_id]
     assert response.json["filtrosAplicados"] == {
         "tema": "MOBILIDADE_URBANA",
         "tipoDocumento": "DECRETO",

@@ -7,6 +7,12 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
+from app.security.encryption import write_encrypted
+from app.security.malware import (
+    MalwareScanError,
+    require_clean_upload,
+)
+
 ALLOWED_MIME_TYPES = {
     "application/pdf",
     "image/jpeg",
@@ -20,7 +26,6 @@ ALLOWED_MIME_TYPES = {
     "audio/x-wav",
     "video/mp4",
 }
-EICAR_SIGNATURE = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR"
 
 
 class AttachmentError(ValueError):
@@ -42,8 +47,10 @@ def store_attachment(
         raise AttachmentError("O arquivo excede o limite permitido.")
     if not content:
         raise AttachmentError("O arquivo está vazio.")
-    if EICAR_SIGNATURE in content:
-        raise AttachmentError("O arquivo foi bloqueado pela verificação de segurança.")
+    try:
+        scan = require_clean_upload(content, mime_type)
+    except MalwareScanError as error:
+        raise AttachmentError(str(error)) from error
 
     relative_key = Path(str(tenant_id)) / f"{attachment_id}-{original_name}"
     storage_root = Path(current_app.config["ATTACHMENT_STORAGE_PATH"]).resolve()
@@ -51,7 +58,7 @@ def store_attachment(
     if storage_root not in target.parents:
         raise AttachmentError("Destino de armazenamento inválido.")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(content)
+    encryption = write_encrypted(target, content, f"tenant:{tenant_id}")
 
     return {
         "storage_key": relative_key.as_posix(),
@@ -59,6 +66,13 @@ def store_attachment(
         "mime_type": mime_type,
         "size_bytes": len(content),
         "sha256": hashlib.sha256(content).hexdigest(),
+        "scan_provider": scan.provider,
+        "scan_engine_version": scan.engine_version,
+        "scan_signature_version": scan.signature_version,
+        "scan_threat": scan.threat,
+        "scan_error_code": scan.error_code,
+        "scanned_at": scan.scanned_at,
+        **encryption,
     }
 
 

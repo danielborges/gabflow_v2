@@ -93,3 +93,24 @@ somente a pergunta original, identificadores/versionamentos julgados, rota, filt
 e expectativa de recusa; comentário e resposta corrigida não são copiados. Uma
 revisão origina no máximo um caso, e perda de aprovação ou elegibilidade desativa o
 caso antes de nova execução.
+
+## Governança do dataset adversarial de segurança
+
+O dataset de prompt injection é um artefato de segurança, não uma fonte de
+conhecimento. Ele não pode ser indexado, recuperado ou usado como citação. Cada versão
+registra política-alvo, proveniência sintética ou autorizada, partição e expectativa de
+decisão.
+
+- casos publicados são imutáveis dentro da versão;
+- mudanças de conteúdo ou rótulo criam nova versão;
+- `REGRESSION` pode orientar correções, enquanto `HOLDOUT` é reservado para gate;
+- ataques críticos, recall adversarial e falso positivo benigno são medidos
+  separadamente;
+- casos reais exigem minimização, anonimização e aprovação de segurança;
+- nenhum caso pode conter credencial, segredo, prompt de produção ou dado pessoal;
+- decisão, detector e classificador ficam vinculados à execução por versão;
+- falha de dependência obrigatória reprova o gate em vez de aprovar silenciosamente.
+- o dataset adversarial é executado contra o gateway completo no CI e valida status,
+  ação, categorias e score mínimo por caso;
+- justificativas livres do classificador não fazem parte do contrato nem da trilha
+  persistida; somente metadados versionados e categorias allowlisted são aceitos.

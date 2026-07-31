@@ -8,6 +8,47 @@ servers:
 security:
   - cookieAuth: []
 paths:
+  /assistente/seguranca/validacao-saida/rollout:
+    get:
+      summary: Consulta o rollout tenant-scoped da validação de saída
+      responses:
+        "200":
+          description: Estado, gates, métricas e histórico do rollout
+    post:
+      summary: Inicia ou reinicia o rollout da validação de saída
+      responses:
+        "201":
+          description: Rollout iniciado
+  /assistente/seguranca/validacao-saida/rollback:
+    post:
+      summary: Executa rollback manual da validação de saída não crítica
+      responses:
+        "200":
+          description: Rollback registrado e aplicado
+  /platform/seguranca/auditorias-rls:
+    get:
+      summary: Lista auditorias automatizadas de RLS
+      responses:
+        "200":
+          description: Execuções e achados sem conteúdo de tenant
+    post:
+      summary: Solicita auditoria automatizada de RLS
+      responses:
+        "202":
+          description: Auditoria enfileirada
+  /platform/seguranca/auditorias-rls/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Consulta uma auditoria automatizada de RLS
+      responses:
+        "200":
+          description: Resultado da auditoria
   /health/rag:
     get:
       summary: Estado operacional e SLO da fila RAG
@@ -818,7 +859,61 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "202": { description: Reprocessamento enfileirado }
-        "409": { description: Versão já em processamento }
+        "409": { description: Versão já em processamento ou sem revisão de segurança aprovada }
+  /rag/quarentena:
+    get:
+      summary: Lista versões retidas sem expor payload ou link de download
+      responses:
+        "200": { description: Pendências de segurança do tenant }
+  /rag/seguranca/revarreduras:
+    post:
+      summary: Inicia revarredura fail-closed do acervo privado e anexos do tenant
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecurityRescanRequest" }
+      responses:
+        "202":
+          description: Revarredura enfileirada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "409": { description: Já existe uma revarredura ativa no tenant }
+        "422": { description: Tamanho de lote inválido }
+    get:
+      summary: Lista revarreduras de segurança do tenant
+      responses:
+        "200": { description: Execuções tenant-scoped }
+  /rag/seguranca/revarreduras/{id}:
+    get:
+      summary: Consulta progresso e contadores de uma revarredura do tenant
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Estado da revarredura
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "404": { description: Execução inexistente no tenant }
+  /rag/documentos/{id}/versoes/{version_id}/seguranca:
+    patch:
+      summary: Registra revisão humana vinculada ao checksum da versão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentSecurityReviewRequest" }
+      responses:
+        "200": { description: Revisão registrada e auditada }
+        "409": { description: Versão não está em estado revisável }
+        "422": { description: Decisão ou justificativa inválida }
   /rag/fontes-operacionais:
     get:
       x-status: current
@@ -2073,6 +2168,59 @@ paths:
         "409":
           description: Transição inválida ou versão ainda não indexada
 
+  /platform/rag-global/quarentena:
+    get:
+      summary: Lista versões globais retidas sem payload ou link de download
+      responses:
+        "200": { description: Pendências globais de segurança }
+  /platform/rag-global/seguranca/revarreduras:
+    post:
+      summary: Inicia revarredura fail-closed do catálogo global
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecurityRescanRequest" }
+      responses:
+        "202":
+          description: Revarredura global enfileirada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "409": { description: Já existe uma revarredura global ativa }
+        "422": { description: Tamanho de lote inválido }
+    get:
+      summary: Lista revarreduras do catálogo global
+      responses:
+        "200": { description: Execuções globais }
+  /platform/rag-global/seguranca/revarreduras/{id}:
+    get:
+      summary: Consulta uma revarredura do catálogo global
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Estado da revarredura global
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "404": { description: Execução global inexistente }
+  /platform/rag-global/colecoes/{colecaoId}/documentos/{documentoId}/versoes/{versaoId}/seguranca:
+    patch:
+      summary: Registra revisão global vinculada ao checksum
+      parameters:
+        - { in: path, name: colecaoId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: documentoId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: versaoId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentSecurityReviewRequest" }
+      responses:
+        "200": { description: Revisão global registrada e auditada }
+        "409": { description: Versão não está em estado revisável }
+        "422": { description: Decisão ou justificativa inválida }
+
   /rag/catalogo-global:
     get:
       summary: Lista coleções globais disponíveis para o tenant
@@ -2186,6 +2334,115 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    SecurityRescanRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        tamanhoLote: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    SecurityRescanRun:
+      type: object
+      additionalProperties: false
+      required:
+        [id, escopo, estado, fase, versaoPolitica, lote, total, processados,
+         limpos, quarentena, erros, chunksEliminados, ocrsEliminados,
+         transcricoesEliminadas, progressoPercentual, corteEm, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: [string, "null"], format: uuid }
+        escopo: { type: string, enum: [TENANT, GLOBAL] }
+        estado: { type: string, enum: [PENDENTE, PROCESSANDO, CONCLUIDA, ERRO] }
+        fase: { type: string, enum: [PRIVATE, ATTACHMENT, GLOBAL, DONE] }
+        versaoPolitica: { type: string }
+        versaoAssinaturas: { type: [string, "null"] }
+        lote: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        processados: { type: integer, minimum: 0 }
+        limpos: { type: integer, minimum: 0 }
+        quarentena: { type: integer, minimum: 0 }
+        erros: { type: integer, minimum: 0 }
+        chunksEliminados: { type: integer, minimum: 0 }
+        ocrsEliminados: { type: integer, minimum: 0 }
+        transcricoesEliminadas: { type: integer, minimum: 0 }
+        progressoPercentual: { type: number, minimum: 0, maximum: 100 }
+        erro: { type: [string, "null"] }
+        corteEm: { type: string, format: date-time }
+        iniciadaEm: { type: [string, "null"], format: date-time }
+        concluidaEm: { type: [string, "null"], format: date-time }
+        criadaEm: { type: string, format: date-time }
+    ContentSecurityState:
+      type: object
+      additionalProperties: false
+      required: [status, action, score, categories, signals, policyVersion, classifier]
+      properties:
+        status:
+          type: string
+          enum: [CLEAN, SUSPICIOUS, MALICIOUS, INDETERMINATE]
+        action:
+          type: string
+          enum: [ALLOW, QUARANTINE, BLOCK, RETRY]
+        score: { type: number, minimum: 0, maximum: 1 }
+        categories:
+          type: array
+          items: { type: string }
+        signals:
+          type: array
+          description: Identificadores estáveis; nunca contém o payload avaliado.
+          items: { type: string }
+        policyVersion: { type: [string, "null"] }
+        detectorVersion: { type: [string, "null"] }
+        classifier:
+          type: object
+          additionalProperties: false
+          properties:
+            applied: { type: boolean }
+            provider: { type: string }
+            model: { type: string }
+            version: { type: string }
+            label: { type: string, enum: [CLEAN, SUSPICIOUS, MALICIOUS] }
+            score: { type: number, minimum: 0, maximum: 1 }
+            categories:
+              type: array
+              maxItems: 12
+              items: { type: string }
+            errorCode: { type: string }
+            manualReview: { type: object }
+        contentChecksum: { type: [string, "null"], pattern: "^[a-f0-9]{64}$" }
+        scannedAt: { type: [string, "null"], format: date-time }
+        errorCode: { type: [string, "null"] }
+        quarantinedAt: { type: [string, "null"], format: date-time }
+        purgedAt: { type: [string, "null"], format: date-time }
+        review:
+          type: object
+          required: [decision, checksum, reviewedById, reviewedAt, reason]
+          properties:
+            decision:
+              type: [string, "null"]
+              enum: [APPROVED, REJECTED, null]
+            checksum: { type: [string, "null"], pattern: "^[a-f0-9]{64}$" }
+            reviewedById: { type: [string, "null"], format: uuid }
+            reviewedAt: { type: [string, "null"], format: date-time }
+            reason: { type: [string, "null"] }
+    ContentSecurityReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [decisao, justificativa]
+      properties:
+        decisao: { type: string, enum: [APROVAR, REJEITAR] }
+        justificativa: { type: string, minLength: 10, maxLength: 2000 }
+    MalwareScanState:
+      type: object
+      additionalProperties: false
+      required: [status, provider, engineVersion, signatureVersion, threat, errorCode, scannedAt]
+      properties:
+        status:
+          type: [string, "null"]
+          enum: [PENDENTE, LIMPO, BLOQUEADO, CLEAN, INFECTED, INDETERMINATE, null]
+        provider: { type: [string, "null"] }
+        engineVersion: { type: [string, "null"] }
+        signatureVersion: { type: [string, "null"] }
+        threat: { type: [string, "null"] }
+        errorCode: { type: [string, "null"] }
+        scannedAt: { type: [string, "null"], format: date-time }
     EntradaVersaoRag:
       type: object
       required: [arquivo, versao]
@@ -2218,6 +2475,10 @@ components:
         fragmentos: { type: integer }
         modeloEmbedding: { type: string }
         erro: { type: string, nullable: true }
+        segurancaConteudo:
+          $ref: "#/components/schemas/ContentSecurityState"
+        verificacaoMalware:
+          $ref: "#/components/schemas/MalwareScanState"
     DocumentoRag:
       type: object
       properties:
@@ -2271,6 +2532,8 @@ components:
         excluidaEm: { type: [string, "null"], format: date-time }
         purgeConcluidoEm: { type: [string, "null"], format: date-time }
         tombstoneHash: { type: [string, "null"] }
+        segurancaConteudo:
+          $ref: "#/components/schemas/ContentSecurityState"
     CriarSolicitacaoRequest:
       type: object
       required: [origem, descricao]
@@ -2874,6 +3137,8 @@ components:
         criadoEm: { type: string, format: date-time }
         moderadoEm: { type: [string, "null"], format: date-time }
         justificativaModeracao: { type: [string, "null"] }
+        segurancaConteudo:
+          $ref: "#/components/schemas/ContentSecurityState"
     RagEvaluationSourceReference:
       type: object
       additionalProperties: false
@@ -3293,6 +3558,8 @@ components:
                   versaoId: { type: string, format: uuid }
             politica:
               type: string
+            consulta:
+              $ref: "#/components/schemas/ContentSecurityState"
         fontes:
           type: array
           items:
@@ -3429,6 +3696,8 @@ components:
                 type: array
                 items:
                   type: string
+              segurancaConteudo:
+                $ref: "#/components/schemas/ContentSecurityState"
     Insight:
       type: object
       properties:

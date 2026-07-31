@@ -131,3 +131,7 @@
 - **RF-134** Pular o reranker neural quando o ranking híbrido já possuir liderança inequívoca, registrando score, margem e motivo. **Implementado no incremento 4.9.3.**
 - **RF-135** Expor tempos de recuperação, geração, validação, NLI e total, juntamente com orçamento e indicador de estouro. **Implementado no incremento 4.9.3.**
 - **RF-136** Considerar a taxa de estouro do orçamento de latência nos gates do rollout progressivo. **Implementado no incremento 4.9.3.**
+- **RF-137** Validar e executar versões imutáveis do dataset adversarial de prompt injection, separando regressão, holdout, ataques e controles benignos. **Especificado no incremento 5.1.**
+- **RF-138** Registrar para cada avaliação de conteúdo a decisão, ação, score, categorias, sinais e versões da política, detector e classificador. **Implementado no incremento 5.2 para versões privadas e globais, fontes operacionais e feedback.**
+- **RF-139** Listar conteúdo em quarentena sem expor o payload malicioso, permitir revisão autorizada e reprocessar somente após decisão auditável. **Implementado no incremento 5.3 para bases privadas e catálogo global.**
+- **RF-140** Revarrer o acervo por versão da política, despublicar imediatamente conteúdo reclassificado e purgar chunks, embeddings e outros derivados. **Implementado no incremento 5.6 para acervo privado, global e anexos, com progresso consultável e execução retomável.**

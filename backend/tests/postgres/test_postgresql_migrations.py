@@ -21,9 +21,7 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         current_heads = set(MigrationContext.configure(connection).get_current_heads())
         expected_heads = set(migrations.get_heads())
         table_names = set(inspect(connection).get_table_names())
-        global_table_names = set(
-            inspect(connection).get_table_names(schema="rag_global")
-        )
+        global_table_names = set(inspect(connection).get_table_names(schema="rag_global"))
 
     assert current_heads == expected_heads
     assert {
@@ -51,6 +49,9 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "rag_learning_artifacts",
         "rag_learning_runs",
         "rag_query_feedback",
+        "rag_security_rescan_runs",
+        "rag_output_validation_profiles",
+        "rls_audit_runs",
         "rag_thematic_memories",
         "scheduled_returns",
         "service_requests",
@@ -67,33 +68,39 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
     with postgres_app.app_context(), db.engine.connect() as connection:
         inspector = inspect(connection)
         query_columns = {
-            column["name"]
-            for column in inspector.get_columns("rag_assistant_queries")
+            column["name"] for column in inspector.get_columns("rag_assistant_queries")
         }
-        outbox_columns = {
-            column["name"] for column in inspector.get_columns("outbox_events")
-        }
-        outbox_indexes = {
-            index["name"] for index in inspector.get_indexes("outbox_events")
-        }
+        outbox_columns = {column["name"] for column in inspector.get_columns("outbox_events")}
+        outbox_indexes = {index["name"] for index in inspector.get_indexes("outbox_events")}
         evaluation_question_columns = {
-            column["name"]
-            for column in inspector.get_columns("rag_evaluation_questions")
+            column["name"] for column in inspector.get_columns("rag_evaluation_questions")
         }
         evaluation_run_columns = {
-            column["name"]
-            for column in inspector.get_columns("rag_evaluation_runs")
+            column["name"] for column in inspector.get_columns("rag_evaluation_runs")
         }
         learning_artifact_columns = {
-            column["name"]
-            for column in inspector.get_columns("rag_learning_artifacts")
+            column["name"] for column in inspector.get_columns("rag_learning_artifacts")
         }
-        rag_chunk_columns = {
-            column["name"] for column in inspector.get_columns("rag_chunks")
-        }
+        rag_chunk_columns = {column["name"] for column in inspector.get_columns("rag_chunks")}
         global_chunk_columns = {
+            column["name"] for column in inspector.get_columns("chunks", schema="rag_global")
+        }
+        private_version_columns = {
+            column["name"] for column in inspector.get_columns("rag_document_versions")
+        }
+        operational_source_columns = {
+            column["name"] for column in inspector.get_columns("rag_knowledge_sources")
+        }
+        feedback_columns = {
+            column["name"] for column in inspector.get_columns("rag_query_feedback")
+        }
+        global_version_columns = {
             column["name"]
-            for column in inspector.get_columns("chunks", schema="rag_global")
+            for column in inspector.get_columns("document_versions", schema="rag_global")
+        }
+        attachment_columns = {column["name"] for column in inspector.get_columns("attachments")}
+        rescan_columns = {
+            column["name"] for column in inspector.get_columns("rag_security_rescan_runs")
         }
         vector_extension = connection.execute(
             text(
@@ -163,6 +170,77 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "hard_negative_rate",
     }.issubset(evaluation_run_columns)
     assert "learning_artifacts" in query_columns
+    assert {"output_validation", "output_validation_enforced"}.issubset(query_columns)
+    security_columns = {
+        "security_status",
+        "security_action",
+        "security_score",
+        "security_categories",
+        "security_signals",
+        "security_policy_version",
+        "security_detector_version",
+        "security_classifier",
+        "security_content_checksum",
+        "security_scanned_at",
+        "security_error_code",
+    }
+    assert security_columns.issubset(private_version_columns)
+    assert security_columns.issubset(operational_source_columns)
+    assert security_columns.issubset(feedback_columns)
+    assert security_columns.issubset(global_version_columns)
+    quarantine_columns = {
+        "security_quarantined_at",
+        "security_purged_at",
+        "security_review_decision",
+        "security_review_checksum",
+        "security_reviewed_by_id",
+        "security_reviewed_at",
+        "security_review_reason",
+    }
+    assert quarantine_columns.issubset(private_version_columns)
+    assert quarantine_columns.issubset(global_version_columns)
+    malware_columns = {
+        "malware_scan_status",
+        "malware_scan_provider",
+        "malware_engine_version",
+        "malware_signature_version",
+        "malware_threat",
+        "malware_scan_error_code",
+        "malware_scanned_at",
+    }
+    assert malware_columns.issubset(private_version_columns)
+    assert malware_columns.issubset(global_version_columns)
+    encryption_columns = {
+        "encryption_key_version",
+        "encryption_algorithm",
+        "encrypted_at",
+    }
+    assert encryption_columns.issubset(private_version_columns)
+    assert encryption_columns.issubset(global_version_columns)
+    assert encryption_columns.issubset(attachment_columns)
+    assert {
+        "scan_provider",
+        "scan_engine_version",
+        "scan_signature_version",
+        "scan_threat",
+        "scan_error_code",
+        "scanned_at",
+    }.issubset(attachment_columns)
+    assert {
+        "tenant_id",
+        "scope",
+        "status",
+        "phase",
+        "cursor_id",
+        "cutoff_at",
+        "policy_version",
+        "signature_version",
+        "total_targets",
+        "processed_targets",
+        "purged_chunks",
+        "purged_ocr",
+        "purged_transcriptions",
+    }.issubset(rescan_columns)
     assert {
         "evaluation_details",
         "activated_by_id",
@@ -295,27 +373,35 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
     )
 
     with postgres_app.app_context(), db.engine.connect() as connection:
-        request_statuses = connection.execute(
-            enum_query, {"enum_name": "request_status"}
-        ).scalars().all()
-        notification_types = connection.execute(
-            enum_query, {"enum_name": "notification_type"}
-        ).scalars().all()
-        tramitation_statuses = connection.execute(
-            enum_query, {"enum_name": "legislative_tramitation_status"}
-        ).scalars().all()
-        operational_source_statuses = connection.execute(
-            enum_query, {"enum_name": "rag_knowledge_source_status"}
-        ).scalars().all()
-        feedback_statuses = connection.execute(
-            enum_query, {"enum_name": "rag_feedback_status"}
-        ).scalars().all()
-        feedback_judgments = connection.execute(
-            enum_query, {"enum_name": "rag_feedback_source_judgment"}
-        ).scalars().all()
-        learning_artifact_types = connection.execute(
-            enum_query, {"enum_name": "rag_learning_artifact_type"}
-        ).scalars().all()
+        request_statuses = (
+            connection.execute(enum_query, {"enum_name": "request_status"}).scalars().all()
+        )
+        notification_types = (
+            connection.execute(enum_query, {"enum_name": "notification_type"}).scalars().all()
+        )
+        tramitation_statuses = (
+            connection.execute(enum_query, {"enum_name": "legislative_tramitation_status"})
+            .scalars()
+            .all()
+        )
+        operational_source_statuses = (
+            connection.execute(enum_query, {"enum_name": "rag_knowledge_source_status"})
+            .scalars()
+            .all()
+        )
+        feedback_statuses = (
+            connection.execute(enum_query, {"enum_name": "rag_feedback_status"}).scalars().all()
+        )
+        feedback_judgments = (
+            connection.execute(enum_query, {"enum_name": "rag_feedback_source_judgment"})
+            .scalars()
+            .all()
+        )
+        learning_artifact_types = (
+            connection.execute(enum_query, {"enum_name": "rag_learning_artifact_type"})
+            .scalars()
+            .all()
+        )
 
     assert request_statuses == [
         "NOVA",
@@ -420,9 +506,10 @@ def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
         db.session.add(request)
         db.session.commit()
 
-        location = db.session.execute(
-            text(
-                """
+        location = (
+            db.session.execute(
+                text(
+                    """
                 SELECT
                     ST_AsText(location_geography::geometry) AS point,
                     ST_DWithin(
@@ -433,9 +520,12 @@ def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
                 FROM service_requests
                 WHERE id = CAST(:request_id AS uuid)
                 """
-            ),
-            {"request_id": str(request.id)},
-        ).mappings().one()
+                ),
+                {"request_id": str(request.id)},
+            )
+            .mappings()
+            .one()
+        )
 
     assert extension_enabled is True
     assert columns["location_geography"] == "geography"
@@ -453,9 +543,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         downgrade(revision="-1", directory="migrations")
 
         with db.engine.connect() as connection:
-            rolled_back_heads = set(
-                MigrationContext.configure(connection).get_current_heads()
-            )
+            rolled_back_heads = set(MigrationContext.configure(connection).get_current_heads())
             inspector = inspect(connection)
             rolled_back_tables = set(inspector.get_table_names())
             rolled_back_service_columns = {
@@ -468,27 +556,35 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
                 column["name"] for column in inspector.get_columns("external_agencies")
             }
             rolled_back_query_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_assistant_queries")
+                column["name"] for column in inspector.get_columns("rag_assistant_queries")
             }
             rolled_back_outbox_columns = {
                 column["name"] for column in inspector.get_columns("outbox_events")
             }
             rolled_back_source_columns = {
+                column["name"] for column in inspector.get_columns("rag_knowledge_sources")
+            }
+            rolled_back_private_version_columns = {
+                column["name"] for column in inspector.get_columns("rag_document_versions")
+            }
+            rolled_back_attachment_columns = {
+                column["name"] for column in inspector.get_columns("attachments")
+            }
+            rolled_back_feedback_columns = {
+                column["name"] for column in inspector.get_columns("rag_query_feedback")
+            }
+            rolled_back_global_version_columns = {
                 column["name"]
-                for column in inspector.get_columns("rag_knowledge_sources")
+                for column in inspector.get_columns("document_versions", schema="rag_global")
             }
             rolled_back_evaluation_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_evaluation_questions")
+                column["name"] for column in inspector.get_columns("rag_evaluation_questions")
             }
             rolled_back_evaluation_run_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_evaluation_runs")
+                column["name"] for column in inspector.get_columns("rag_evaluation_runs")
             }
             rolled_back_learning_artifact_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_learning_artifacts")
+                column["name"] for column in inspector.get_columns("rag_learning_artifacts")
             }
             rolled_back_chunk_columns = {
                 column["name"] for column in inspector.get_columns("rag_chunks")
@@ -522,10 +618,23 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "source_feedback_id" in rolled_back_evaluation_columns
         assert "case_origin" in rolled_back_evaluation_columns
         assert "source_query_id" in rolled_back_evaluation_columns
-        assert "rollout_state" not in rolled_back_learning_artifact_columns
-        assert "rollout_history" not in rolled_back_learning_artifact_columns
-        # O downgrade do rollout preserva o QUALITY_PROFILE entregue no
-        # incremento imediatamente anterior.
+        assert "rollout_state" in rolled_back_learning_artifact_columns
+        assert "rollout_history" in rolled_back_learning_artifact_columns
+        assert "security_status" in rolled_back_private_version_columns
+        assert "security_status" in rolled_back_source_columns
+        assert "security_status" in rolled_back_feedback_columns
+        assert "security_status" in rolled_back_global_version_columns
+        assert "security_quarantined_at" in rolled_back_private_version_columns
+        assert "security_quarantined_at" in rolled_back_global_version_columns
+        assert "malware_scan_status" in rolled_back_private_version_columns
+        assert "malware_scan_status" in rolled_back_global_version_columns
+        assert "scan_provider" in rolled_back_attachment_columns
+        assert "rag_security_rescan_runs" in rolled_back_tables
+        assert "rag_output_validation_profiles" in rolled_back_tables
+        assert "rls_audit_runs" not in rolled_back_tables
+        assert "encryption_key_version" not in rolled_back_private_version_columns
+        assert "encryption_key_version" not in rolled_back_global_version_columns
+        assert "encryption_key_version" not in rolled_back_attachment_columns
         assert "embedding_vector" in rolled_back_chunk_columns
         assert "search_vector" in rolled_back_chunk_columns
         assert "routing_accuracy" in rolled_back_evaluation_run_columns
@@ -539,7 +648,7 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "processing_duration_ms" in rolled_back_outbox_columns
         assert "tombstone_hash" in rolled_back_source_columns
         assert "purge_completed_at" in rolled_back_source_columns
-        assert rls_policies == 14
+        assert rls_policies == 16
 
         upgrade(directory="migrations")
 
@@ -557,27 +666,35 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
                 column["name"] for column in inspector.get_columns("external_agencies")
             }
             reapplied_query_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_assistant_queries")
+                column["name"] for column in inspector.get_columns("rag_assistant_queries")
             }
             reapplied_outbox_columns = {
                 column["name"] for column in inspector.get_columns("outbox_events")
             }
             reapplied_source_columns = {
+                column["name"] for column in inspector.get_columns("rag_knowledge_sources")
+            }
+            reapplied_private_version_columns = {
+                column["name"] for column in inspector.get_columns("rag_document_versions")
+            }
+            reapplied_attachment_columns = {
+                column["name"] for column in inspector.get_columns("attachments")
+            }
+            reapplied_feedback_columns = {
+                column["name"] for column in inspector.get_columns("rag_query_feedback")
+            }
+            reapplied_global_version_columns = {
                 column["name"]
-                for column in inspector.get_columns("rag_knowledge_sources")
+                for column in inspector.get_columns("document_versions", schema="rag_global")
             }
             reapplied_evaluation_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_evaluation_questions")
+                column["name"] for column in inspector.get_columns("rag_evaluation_questions")
             }
             reapplied_evaluation_run_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_evaluation_runs")
+                column["name"] for column in inspector.get_columns("rag_evaluation_runs")
             }
             reapplied_learning_artifact_columns = {
-                column["name"]
-                for column in inspector.get_columns("rag_learning_artifacts")
+                column["name"] for column in inspector.get_columns("rag_learning_artifacts")
             }
             reapplied_chunk_columns = {
                 column["name"] for column in inspector.get_columns("rag_chunks")
@@ -604,8 +721,25 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_learning_runs" in reapplied_tables
         assert "rag_learning_artifacts" in reapplied_tables
         assert "rag_learning_artifact_feedback" in reapplied_tables
+        assert "rag_security_rescan_runs" in reapplied_tables
+        assert "rag_output_validation_profiles" in reapplied_tables
+        assert "rls_audit_runs" in reapplied_tables
         assert "learning_artifacts" in reapplied_query_columns
         assert "activation_mode" in reapplied_learning_artifact_columns
+        assert "security_status" in reapplied_private_version_columns
+        assert "security_status" in reapplied_source_columns
+        assert "security_status" in reapplied_feedback_columns
+        assert "security_status" in reapplied_global_version_columns
+        assert "security_quarantined_at" in reapplied_private_version_columns
+        assert "security_review_decision" in reapplied_private_version_columns
+        assert "security_quarantined_at" in reapplied_global_version_columns
+        assert "security_review_decision" in reapplied_global_version_columns
+        assert "malware_scan_status" in reapplied_private_version_columns
+        assert "malware_scan_status" in reapplied_global_version_columns
+        assert "scan_provider" in reapplied_attachment_columns
+        assert "encryption_key_version" in reapplied_private_version_columns
+        assert "encryption_key_version" in reapplied_global_version_columns
+        assert "encryption_key_version" in reapplied_attachment_columns
         assert "source_feedback_id" in reapplied_evaluation_columns
         assert "hard_negative_source_refs" in reapplied_evaluation_columns
         assert "case_origin" in reapplied_evaluation_columns

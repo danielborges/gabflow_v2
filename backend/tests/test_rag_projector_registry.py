@@ -31,9 +31,7 @@ class FakeProjector:
         entity_type="FAKE_ENTITY",
         version="1.2.0",
         owner="Testes automatizados",
-        supported_actions=frozenset(
-            {ProjectorAction.CREATE, ProjectorAction.UPDATE}
-        ),
+        supported_actions=frozenset({ProjectorAction.CREATE, ProjectorAction.UPDATE}),
         field_allowlist=frozenset({"title", "content"}),
         purpose="TESTE_CONTROLADO",
         default_legal_basis="TESTE_AUTOMATIZADO",
@@ -99,9 +97,7 @@ def test_builtin_projectors_expose_versioned_governance_contract():
     assert draft.definition.version == "1.0.0"
     assert "content" in draft.definition.field_allowlist
     assert projector_registry.for_module("LEGISLATIVO") == (draft, tramitation)
-    assert agenda.definition.field_allowlist.isdisjoint(
-        {"participants", "photos", "citizen"}
-    )
+    assert agenda.definition.field_allowlist.isdisjoint({"participants", "photos", "citizen"})
     assert oversight.definition.field_allowlist.isdisjoint(
         {"responsible_parties", "photos", "location"}
     )
@@ -152,6 +148,4 @@ def test_projector_definition_requires_allowlist_and_semantic_version():
 def test_unregistered_entity_cannot_enter_operational_memory(app):
     with app.app_context():
         with pytest.raises(ValueError, match="sem projetor registrado"):
-            enqueue_operational_memory(
-                uuid.uuid4(), "UNREGISTERED_ENTITY", uuid.uuid4()
-            )
+            enqueue_operational_memory(uuid.uuid4(), "UNREGISTERED_ENTITY", uuid.uuid4())

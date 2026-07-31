@@ -17,6 +17,7 @@ from app.models import (
     Tenant,
     User,
 )
+from app.rag.content_security import ContentSecurityAction, ContentSecurityStatus
 from app.rag.hybrid_search import postgres_hybrid_candidates
 from app.tenant_context import tenant_context
 
@@ -63,9 +64,10 @@ def test_postgres_hybrid_search_fuses_fts_and_pgvector_without_crossing_tenants(
         )
         db.session.commit()
 
-        stored = db.session.execute(
-            text(
-                """
+        stored = (
+            db.session.execute(
+                text(
+                    """
                 SELECT
                     vector_dims(embedding_vector) AS dimensions,
                     search_vector @@
@@ -73,12 +75,15 @@ def test_postgres_hybrid_search_fuses_fts_and_pgvector_without_crossing_tenants(
                 FROM rag_chunks
                 WHERE id = CAST(:chunk_id AS uuid)
                 """
-            ),
-            {
-                "chunk_id": str(old_relevant.id),
-                "query": "manutenção preventiva iluminação pública",
-            },
-        ).mappings().one()
+                ),
+                {
+                    "chunk_id": str(old_relevant.id),
+                    "query": "manutenção preventiva iluminação pública",
+                },
+            )
+            .mappings()
+            .one()
+        )
         assert stored == {"dimensions": 128, "lexical_match": True}
 
         with tenant_context(tenant_a.id):
@@ -193,9 +198,10 @@ def _chunk(
         version_label="1",
         lifecycle_status=RagDocumentLifecycle.VIGENTE,
         ingestion_status=RagIngestionStatus.INDEXADO,
-        storage_key=(
-            f"tenants/{tenant.id}/rag/{document.id}/{version_id}/documento.txt"
-        ),
+        malware_scan_status="CLEAN",
+        security_status=ContentSecurityStatus.CLEAN,
+        security_action=ContentSecurityAction.ALLOW,
+        storage_key=(f"tenants/{tenant.id}/rag/{document.id}/{version_id}/documento.txt"),
         original_name="documento.txt",
         mime_type="text/plain",
         size_bytes=len(content.encode()),

@@ -40,8 +40,8 @@
 - **RIA-044** Diferenciar conteúdo vigente, revogado, histórico e rascunho. **Implementado na Release 4.**
 - **RIA-045** Recusar resposta conclusiva quando a recuperação for insuficiente. **Implementado com limiar mínimo de evidência.**
 - **RIA-046** Registrar consulta, documentos recuperados e resposta. **Implementado com registro persistente e auditoria por hash.**
-- **RIA-047** Avaliar risco de prompt injection nos documentos. **Implementado com sinalização por fonte recuperada.**
-- **RIA-048** Não executar instruções encontradas dentro das fontes. **Implementado com política explícita e sanitização de trechos suspeitos.**
+- **RIA-047** Avaliar risco de prompt injection nos documentos antes da indexação e novamente antes da composição do contexto. **Implementado: gateway pré-indexação, quarentena/purge em todas as fontes RAG e nova avaliação no retrieval.**
+- **RIA-048** Não executar instruções encontradas dentro das fontes. **Implementado parcialmente com política explícita, contexto restrito e sanitização; os controles independentes de entrada e saída permanecem planejados nos incrementos 5.2 a 5.7.**
 - **RIA-049** Permitir avaliação positiva, negativa e correção pelo usuário. **Implementado no endpoint de avaliação de consultas RAG.**
 
 ## RAG hierárquico e aprendizado controlado
@@ -81,7 +81,7 @@ considerados completos no alvo hierárquico:
 - **RIA-066** Processar entidades internas somente por projetores registrados, determinísticos e versionados, com campos permitidos por allowlist. **Implementado para solicitações, encaminhamentos/respostas oficiais, minutas, tramitações, OCR/transcrições revisados, atas concluídas, fiscalizações concluídas e memórias temáticas por contrato e registry central.**
 - **RIA-067** Emitir evento tenant-scoped sem conteúdo sensível e reler a entidade canônica dentro do contexto do tenant antes de projetá-la. **Implementado pelo contrato V2 do outbox, com módulo, entidade, ação e revisão; o worker continua relendo o aggregate pelo registry.**
 - **RIA-068** Tratar criação, atualização, cancelamento, exclusão, anonimização e expiração, mantendo uma única versão vigente e purgando conteúdo derivado quando aplicável. **Implementado com versão anterior preservada durante atualização/falha e purge físico nas ações destrutivas.**
-- **RIA-069** Aplicar minimização de PII, ACL, finalidade, base legal, retenção e detecção de prompt injection antes de gerar embeddings. **Implementado nas fontes atuais, incluindo quarentena antes de arquivo, chunks e embeddings.**
+- **RIA-069** Aplicar minimização de PII, ACL, finalidade, base legal, retenção e detecção de prompt injection antes de gerar embeddings. **Implementado para projeções operacionais, uploads privados/globais, OCR/transcrição revisados e conectores registrados.**
 - **RIA-070** Marcar sincronizações esgotadas como erro, permitir reprocessamento e reconciliar periodicamente o RAG com o estado canônico. **Implementado com estado `ERRO`, dados de tentativa, endpoint de reprocessamento e scheduler de retenção.**
 - **RIA-071** Rotear perguntas quantitativas ou transacionais para consultas estruturadas tenant-scoped e perguntas semânticas para recuperação documental. **Implementado com classificação determinística, composição híbrida e persistência do método, motivos, filtros e resultado estruturado.**
 - **RIA-072** Aplicar filtros de tenant, ACL, módulo, entidade, tema, território, período, vigência e estado antes do ranking. **Implementado parcialmente para tenant, nível de acesso, vigência, estado operacional e retenção; os filtros explícitos de intenção permanecem planejados.**
@@ -120,6 +120,19 @@ considerados completos no alvo hierárquico:
 - **RIA-102** Suportar classificador NLI dedicado por contrato fechado de premissa, hipótese, rótulo e confiança. **Implementado no incremento 4.9.3.**
 - **RIA-103** Reduzir o caminho crítico por reranking adaptativo e limites de fontes, contexto, afirmações e tokens, preservando os gates existentes. **Implementado no incremento 4.9.3.**
 - **RIA-104** Medir latência por etapa e bloquear rollout cuja taxa de estouro do orçamento exceda o limite tenant-scoped. **Implementado no incremento 4.9.3.**
+
+## Segurança de conteúdo e prompt injection
+
+- **RIA-105** Manter threat model versionado com ativos, atores, fronteiras de confiança, vetores diretos, indiretos, ofuscados, multimodais e persistentes, além de invariantes de falha fechada. **Especificado no incremento 5.1.**
+- **RIA-106** Manter dataset adversarial versionado, separado do RAG factual, com ataques multilíngues, codificados, distribuídos entre chunks e controles benignos para medir falsos positivos. **Especificado e populado inicialmente no incremento 5.1.**
+- **RIA-107** Submeter upload, catálogo global, projeção operacional, OCR, transcrição, feedback e conteúdo de conector a um gateway unificado antes de chunks e embeddings. **Implementado nos incrementos 5.2 e 5.3.**
+- **RIA-108** Produzir decisão fechada `CLEAN`, `SUSPICIOUS`, `MALICIOUS` ou `INDETERMINATE`, com ação validada, score, categorias, sinais, política, detector e classificador versionados. **Implementado no incremento 5.2.**
+- **RIA-109** Impedir chunks, embeddings, publicação e recuperação para qualquer decisão diferente de `CLEAN`; indisponibilidade de controle obrigatório deve resultar em retry sem aprovação implícita. **Implementado no incremento 5.3 com purge imediato e filtros de defesa em profundidade.**
+- **RIA-110** Combinar canonicalização limitada, detector determinístico multilíngue e classificador dedicado independente do gerador, preservando revisão humana para conteúdo suspeito. **Implementado no incremento 5.4 com canonicalização defensiva limitada, contrato fechado de classificação, modelo independente, falha fechada e dataset adversarial executável.**
+- **RIA-111** Revalidar a saída do modelo contra prompt leakage, segredos, destinos externos, ações não autorizadas e contrato de citações antes de retorná-la ou encaminhá-la a outra capacidade. **Implementado no incremento 5.7 com decisão fechada, bloqueio crítico fail-closed, métricas e rollout tenant-scoped com promoção/rollback.**
+- **RIA-112** Verificar uploads com antimalware real antes do armazenamento e novamente antes do parsing, validar o MIME real e executar parsers de conteúdo não confiável sem rede, segredos, escrita ou capabilities. **Implementado no incremento 5.5 com ClamAV/INSTREAM, checksum, sidecar isolado e limites de CPU, memória, processos, arquivo, saída e timeout.**
+- **RIA-113** Revarrer versões privadas, catálogo global e anexos após mudança de política ou assinaturas, invalidando preventivamente o retrieval e purgando chunks, embeddings, OCR, transcrições e memórias operacionais derivados de conteúdo reclassificado. **Implementado no incremento 5.6 com execução assíncrona, corte estável, lotes retomáveis, cursor, RLS, auditoria e contadores de purge.**
+- **RIA-114** Cifrar documentos privados e anexos em repouso com chave autenticada derivada por tenant e versionada; auditar automaticamente RLS forçado, políticas de tenant e roles de runtime sem bypass. **Implementado no incremento 5.8 com AES-256-GCM, rotação pela revarredura e auditoria assíncrona via outbox.**
 
 ## Avaliação
 

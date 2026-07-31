@@ -141,34 +141,24 @@ def test_compilation_is_idempotent_and_creates_candidate_artifacts(app, client):
 
     by_type = {item["tipo"]: item for item in artifacts.json["content"]}
     detail = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/"
-        f"{by_type['RERANK_PROFILE']['id']}"
+        f"/api/v1/assistente/aprendizado/artefatos/{by_type['RERANK_PROFILE']['id']}"
     )
     assert detail.status_code == 200
     assert detail.json["proveniencia"][0]["feedbackId"] == feedback_id
-    adjustments = [
-        item["ajuste"] for item in detail.json["payload"]["entradas"]
-    ]
+    adjustments = [item["ajuste"] for item in detail.json["payload"]["entradas"]]
     assert adjustments
     assert all(abs(value) <= 0.12 for value in adjustments)
     assert "comentario" not in str(detail.json).lower()
 
     answer = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/"
-        f"{by_type['ANSWER_EXEMPLARS']['id']}"
+        f"/api/v1/assistente/aprendizado/artefatos/{by_type['ANSWER_EXEMPLARS']['id']}"
     )
     assert answer.json["payload"]["exemplares"][0]["evidenciaFactual"] is False
-    assert answer.json["payload"]["exemplares"][0]["usoPermitido"] == (
-        "AVALIACAO_E_FORMA"
-    )
+    assert answer.json["payload"]["exemplares"][0]["usoPermitido"] == ("AVALIACAO_E_FORMA")
 
     with app.app_context():
-        assert db.session.scalar(
-            select(db.func.count(RagLearningArtifact.id))
-        ) == 4
-        assert db.session.scalar(
-            select(db.func.count(RagLearningArtifactFeedback.id))
-        ) == 4
+        assert db.session.scalar(select(db.func.count(RagLearningArtifact.id))) == 4
+        assert db.session.scalar(select(db.func.count(RagLearningArtifactFeedback.id))) == 4
 
 
 def test_compilation_requires_minimum_or_explicit_small_sample_approval(app, client):
@@ -214,20 +204,13 @@ def test_learning_artifacts_are_tenant_isolated(app, client):
     assert response.status_code == 202
     with app.app_context():
         _process_learning_event("rag-learning-isolation-worker")
-    artifact_id = client.get(
-        "/api/v1/assistente/aprendizado/artefatos"
-    ).json["content"][0]["id"]
+    artifact_id = client.get("/api/v1/assistente/aprendizado/artefatos").json["content"][0]["id"]
 
     client.post("/api/v1/auth/logout", headers={"X-CSRF-TOKEN": csrf})
     _login(client, "gabinete-b")
     assert client.get("/api/v1/assistente/aprendizado/execucoes").json["content"] == []
     assert client.get("/api/v1/assistente/aprendizado/artefatos").json["content"] == []
-    assert (
-        client.get(
-            f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}"
-        ).status_code
-        == 404
-    )
+    assert client.get(f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}").status_code == 404
 
 
 def test_candidate_evaluation_activation_influence_and_rollback(
@@ -287,9 +270,9 @@ def test_candidate_evaluation_activation_influence_and_rollback(
         "app.rag.evaluation.evaluate_tenant_dataset",
         fake_evaluation,
     )
-    artifacts = client.get(
-        "/api/v1/assistente/aprendizado/artefatos?tipo=ROUTING_EXAMPLES"
-    ).json["content"]
+    artifacts = client.get("/api/v1/assistente/aprendizado/artefatos?tipo=ROUTING_EXAMPLES").json[
+        "content"
+    ]
     first_id = artifacts[0]["id"]
     evaluated = client.post(
         f"/api/v1/assistente/aprendizado/artefatos/{first_id}/avaliacao",
@@ -345,16 +328,22 @@ def test_candidate_evaluation_activation_influence_and_rollback(
     second_id = client.get(
         "/api/v1/assistente/aprendizado/artefatos?tipo=ROUTING_EXAMPLES&estado=CANDIDATO"
     ).json["content"][0]["id"]
-    assert client.post(
-        f"/api/v1/assistente/aprendizado/artefatos/{second_id}/avaliacao",
-        json={},
-        headers={"X-CSRF-TOKEN": csrf},
-    ).status_code == 200
-    assert client.post(
-        f"/api/v1/assistente/aprendizado/artefatos/{second_id}/ativacao",
-        json={"percentualCanario": 25},
-        headers={"X-CSRF-TOKEN": csrf},
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/v1/assistente/aprendizado/artefatos/{second_id}/avaliacao",
+            json={},
+            headers={"X-CSRF-TOKEN": csrf},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/v1/assistente/aprendizado/artefatos/{second_id}/ativacao",
+            json={"percentualCanario": 25},
+            headers={"X-CSRF-TOKEN": csrf},
+        ).status_code
+        == 200
+    )
 
     rolled_back = client.post(
         f"/api/v1/assistente/aprendizado/artefatos/{second_id}/rollback",
@@ -381,8 +370,7 @@ def test_quality_regression_rejects_candidate(app, client, monkeypatch):
         _process_learning_event("rag-learning-rejection")
         artifact = db.session.scalar(
             select(RagLearningArtifact).where(
-                RagLearningArtifact.artifact_type
-                == RagLearningArtifactType.ROUTING_EXAMPLES
+                RagLearningArtifact.artifact_type == RagLearningArtifactType.ROUTING_EXAMPLES
             )
         )
         artifact_id = str(artifact.id)
@@ -421,10 +409,7 @@ def test_quality_regression_rejects_candidate(app, client, monkeypatch):
     )
     assert rejected.status_code == 409
     assert rejected.json["estado"] == "REJEITADO"
-    assert any(
-        reason.startswith("REGRESSAO_")
-        for reason in rejected.json["motivosRejeicao"]
-    )
+    assert any(reason.startswith("REGRESSAO_") for reason in rejected.json["motivosRejeicao"])
     with app.app_context():
         assert (
             db.session.get(RagLearningArtifact, uuid.UUID(artifact_id)).status
@@ -488,9 +473,7 @@ def test_online_negative_feedback_triggers_automatic_rollback(app, client):
     )
     assert feedback.status_code == 201
     assert feedback.json["estado"] == "APROVADO"
-    detail = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}"
-    )
+    detail = client.get(f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}")
     assert detail.json["estado"] == "REVOGADO"
     assert detail.json["metricasOnline"]["negativeRate"] == 1.0
 
@@ -524,9 +507,7 @@ def test_revoked_source_feedback_invalidates_artifact_and_recompiles(app, client
     )
     assert revoked.status_code == 200
     assert revoked.json["estado"] == "REVOGADO"
-    detail = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}"
-    )
+    detail = client.get(f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}")
     assert detail.json["estado"] == "REVOGADO"
     with app.app_context():
         assert db.session.scalar(select(db.func.count(RagLearningRun.id))) == 2

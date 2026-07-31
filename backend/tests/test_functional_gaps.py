@@ -516,9 +516,11 @@ def test_meta_social_webhook_receives_facebook_and_instagram_events(app, client)
     assert bad_signature.status_code == 400
 
     with app.app_context():
-        messages = db.session.execute(
-            select(ChannelMessage).order_by(ChannelMessage.subject)
-        ).scalars().all()
+        messages = (
+            db.session.execute(select(ChannelMessage).order_by(ChannelMessage.subject))
+            .scalars()
+            .all()
+        )
         assert len(messages) == 2
         assert {item.channel.value for item in messages} == {"REDE_SOCIAL"}
         assert {item.metadata_data["platform"] for item in messages} == {
@@ -560,12 +562,10 @@ def _svix_headers(secret: str, payload: dict):
     timestamp = str(int(time.time()))
     secret_value = secret.removeprefix("whsec_")
     key = base64.b64decode(secret_value + "=" * (-len(secret_value) % 4))
-    signed_content = b".".join(
-        [message_id.encode("utf-8"), timestamp.encode("utf-8"), raw_body]
+    signed_content = b".".join([message_id.encode("utf-8"), timestamp.encode("utf-8"), raw_body])
+    signature = base64.b64encode(hmac.new(key, signed_content, hashlib.sha256).digest()).decode(
+        "utf-8"
     )
-    signature = base64.b64encode(
-        hmac.new(key, signed_content, hashlib.sha256).digest()
-    ).decode("utf-8")
     return raw_body, {
         "svix-id": message_id,
         "svix-timestamp": timestamp,

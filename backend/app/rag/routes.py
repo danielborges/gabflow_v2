@@ -1,4 +1,5 @@
 import hashlib
+import io
 import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -36,13 +37,23 @@ from app.models import (
     RagLearningArtifactType,
     RagLearningRun,
     RagLearningRunStatus,
+    RagOutputValidationProfile,
     RagQueryFeedback,
     RagQueryFeedbackRating,
+    RagSecurityRescanRun,
+    RagSecurityRescanScope,
     RagThematicMemory,
 )
 from app.observability import percentile
 from app.rag.analytics import rebuild_thematic_memories, structured_query
 from app.rag.calibration import create_quality_calibration
+from app.rag.content_security import (
+    ContentSecurityAction,
+    ContentSecurityReviewDecision,
+    ContentSecurityStatus,
+    content_security_state,
+    record_content_security_review,
+)
 from app.rag.curation import (
     CurationConflictError,
     CurationNotFoundError,
@@ -76,6 +87,12 @@ from app.rag.learning import (
     rollback_learning_artifact,
 )
 from app.rag.operational_memory import reprocess_operational_memory
+from app.rag.output_validation import (
+    output_validation_profile_data,
+    rollback_output_validation,
+    start_output_validation_rollout,
+    validate_and_apply_output,
+)
 from app.rag.regression import (
     RegressionNotFoundError,
     RegressionValidationError,
@@ -83,6 +100,11 @@ from app.rag.regression import (
 )
 from app.rag.retrieval import query_audit_payload
 from app.rag.router import route_query
+from app.rag.security_rescan import (
+    SecurityRescanConflictError,
+    create_security_rescan,
+    security_rescan_data,
+)
 from app.rag.service import enqueue_ingestion, requeue_ingestion
 from app.rag.storage import (
     RagStorageError,
@@ -91,6 +113,8 @@ from app.rag.storage import (
     store_rag_document,
     verify_rag_download_token,
 )
+from app.security.encryption import read_plaintext
+from app.security.malware import malware_scan_state
 
 rag_bp = Blueprint("rag", __name__)
 DOCUMENT_TYPES = {
@@ -109,9 +133,7 @@ DOCUMENT_TYPES = {
 @roles_required("admin", "manager")
 def list_operational_sources():
     tenant_id, _ = _context()
-    statement = select(RagKnowledgeSource).where(
-        RagKnowledgeSource.tenant_id == tenant_id
-    )
+    statement = select(RagKnowledgeSource).where(RagKnowledgeSource.tenant_id == tenant_id)
     status_value = str(request.args.get("estado", "")).strip().upper()
     if status_value:
         try:
@@ -127,14 +149,10 @@ def list_operational_sources():
         statement = statement.where(RagKnowledgeSource.status == status)
     source_module = str(request.args.get("modulo", "")).strip().upper()
     if source_module:
-        statement = statement.where(
-            RagKnowledgeSource.source_module == source_module[:60]
-        )
+        statement = statement.where(RagKnowledgeSource.source_module == source_module[:60])
     entity_type = str(request.args.get("entidadeTipo", "")).strip().upper()
     if entity_type:
-        statement = statement.where(
-            RagKnowledgeSource.entity_type == entity_type[:80]
-        )
+        statement = statement.where(RagKnowledgeSource.entity_type == entity_type[:80])
     sources = db.session.scalars(
         statement.order_by(RagKnowledgeSource.updated_at.desc()).limit(300)
     )
@@ -268,6 +286,84 @@ def list_documents():
     return jsonify(content=[document_data(item, include_versions=False) for item in items])
 
 
+@rag_bp.get("/rag/quarentena")
+@roles_required("admin", "manager")
+def list_security_quarantine():
+    tenant_id, _ = _context()
+    items = db.session.scalars(
+        select(RagDocumentVersion)
+        .where(
+            RagDocumentVersion.tenant_id == tenant_id,
+            RagDocumentVersion.security_status != ContentSecurityStatus.CLEAN,
+        )
+        .order_by(RagDocumentVersion.security_quarantined_at.desc(), RagDocumentVersion.created_at)
+        .limit(300)
+    )
+    return jsonify(
+        content=[
+            {
+                **version_data(item, include_download=False),
+                "documentoId": str(item.document_id),
+                "titulo": item.document.title,
+            }
+            for item in items
+        ]
+    )
+
+
+@rag_bp.post("/rag/seguranca/revarreduras")
+@roles_required("admin")
+def create_tenant_security_rescan():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        batch_size = int(payload.get("tamanhoLote", 20))
+        run = create_security_rescan(
+            tenant_id=tenant_id,
+            actor_id=user_id,
+            scope=RagSecurityRescanScope.TENANT,
+            batch_size=batch_size,
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    except SecurityRescanConflictError as error:
+        return jsonify(error="conflict", message=str(error)), 409
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="conflict", message="Já existe uma revarredura ativa."), 409
+    return jsonify(security_rescan_data(run)), 202
+
+
+@rag_bp.get("/rag/seguranca/revarreduras")
+@roles_required("admin", "manager")
+def list_tenant_security_rescans():
+    tenant_id, _ = _context()
+    runs = db.session.scalars(
+        select(RagSecurityRescanRun)
+        .where(RagSecurityRescanRun.tenant_id == tenant_id)
+        .order_by(RagSecurityRescanRun.created_at.desc())
+        .limit(100)
+    )
+    return jsonify(content=[security_rescan_data(run) for run in runs])
+
+
+@rag_bp.get("/rag/seguranca/revarreduras/<uuid:run_id>")
+@roles_required("admin", "manager")
+def get_tenant_security_rescan(run_id: uuid.UUID):
+    tenant_id, _ = _context()
+    run = db.session.scalar(
+        select(RagSecurityRescanRun).where(
+            RagSecurityRescanRun.id == run_id,
+            RagSecurityRescanRun.tenant_id == tenant_id,
+        )
+    )
+    if run is None:
+        return jsonify(error="resource_not_found", message="Revarredura não encontrada."), 404
+    return jsonify(security_rescan_data(run))
+
+
 @rag_bp.get("/rag/documentos/<uuid:document_id>")
 @jwt_required()
 def get_document(document_id: uuid.UUID):
@@ -399,6 +495,14 @@ def change_lifecycle(document_id: uuid.UUID, version_id: uuid.UUID):
         return jsonify(
             error="conflict", message="Somente versões indexadas podem ser publicadas."
         ), 409
+    if lifecycle == RagDocumentLifecycle.VIGENTE and (
+        item.security_status != ContentSecurityStatus.CLEAN
+        or item.security_action != ContentSecurityAction.ALLOW
+    ):
+        return jsonify(
+            error="content_security_blocked",
+            message="Somente versões CLEAN/ALLOW podem ser publicadas.",
+        ), 409
     before = item.lifecycle_status.value
     if lifecycle == RagDocumentLifecycle.VIGENTE:
         current = db.session.execute(
@@ -433,10 +537,75 @@ def reprocess_version(document_id: uuid.UUID, version_id: uuid.UUID):
         return jsonify(error="resource_not_found", message="Versão não encontrada."), 404
     if item.ingestion_status not in {RagIngestionStatus.FALHOU, RagIngestionStatus.INDEXADO}:
         return jsonify(error="conflict", message="A versão já está na fila de processamento."), 409
+    if item.security_status in {
+        ContentSecurityStatus.SUSPICIOUS,
+        ContentSecurityStatus.MALICIOUS,
+    } and (
+        item.security_review_decision != ContentSecurityReviewDecision.APPROVED
+        or item.security_review_checksum != item.security_content_checksum
+    ):
+        return jsonify(
+            error="content_security_review_required",
+            message="A versão em quarentena precisa de aprovação vinculada ao checksum.",
+        ), 409
     requeue_ingestion(item)
     add_audit(tenant_id, user_id, "rag_document.reprocessed", "rag_document_version", item.id)
     db.session.commit()
     return jsonify(version_data(item)), 202
+
+
+@rag_bp.patch("/rag/documentos/<uuid:document_id>/versoes/<uuid:version_id>/seguranca")
+@roles_required("admin", "manager")
+def review_version_security(document_id: uuid.UUID, version_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = _version(tenant_id, document_id, version_id)
+    if item is None:
+        return jsonify(error="resource_not_found", message="Versão não encontrada."), 404
+    if item.security_status not in {
+        ContentSecurityStatus.SUSPICIOUS,
+        ContentSecurityStatus.MALICIOUS,
+    }:
+        return jsonify(
+            error="conflict",
+            message="Somente conteúdo suspeito ou malicioso pode ser revisado.",
+        ), 409
+    payload = request.get_json(silent=True) or {}
+    decisions = {
+        "APROVAR": ContentSecurityReviewDecision.APPROVED,
+        "REJEITAR": ContentSecurityReviewDecision.REJECTED,
+    }
+    decision = decisions.get(str(payload.get("decisao", "")).upper())
+    reason = str(payload.get("justificativa", "")).strip()
+    if decision is None or len(reason) < 10 or len(reason) > 2000:
+        return jsonify(
+            error="validation_error",
+            message="Informe APROVAR ou REJEITAR e justificativa entre 10 e 2000 caracteres.",
+        ), 422
+    before = content_security_state(item)
+    record_content_security_review(
+        item,
+        decision,
+        reviewer_id=user_id,
+        reason=reason,
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "rag_document.security_reviewed",
+        "rag_document_version",
+        item.id,
+        before={
+            "status": before["status"],
+            "reviewDecision": before["review"]["decision"],
+        },
+        after={
+            "status": item.security_status.value,
+            "reviewDecision": decision.value,
+            "contentChecksum": item.security_review_checksum,
+        },
+    )
+    db.session.commit()
+    return jsonify(version_data(item))
 
 
 @rag_bp.get("/rag/documentos/<uuid:document_id>/versoes/<uuid:version_id>/download")
@@ -446,6 +615,14 @@ def download_version(document_id: uuid.UUID, version_id: uuid.UUID):
     item = _version(tenant_id, document_id, version_id)
     if item is None or not _can_access(item.document):
         return jsonify(error="resource_not_found", message="Versão não encontrada."), 404
+    if item.security_status != ContentSecurityStatus.CLEAN and get_jwt().get("role") not in {
+        "admin",
+        "manager",
+    }:
+        return jsonify(
+            error="content_security_restricted",
+            message="Conteúdo em quarentena requer perfil autorizado.",
+        ), 403
     if not verify_rag_download_token(
         str(request.args.get("token", "")),
         tenant_id,
@@ -453,13 +630,14 @@ def download_version(document_id: uuid.UUID, version_id: uuid.UUID):
         version_id,
     ):
         return jsonify(error="invalid_download_token", message="Link inválido ou expirado."), 403
-    return send_file(
-        rag_document_path(
+    path = rag_document_path(
             item.storage_key,
             tenant_id=tenant_id,
             document_id=document_id,
             version_id=version_id,
-        ),
+        )
+    return send_file(
+        io.BytesIO(read_plaintext(path, f"tenant:{tenant_id}")),
         mimetype=item.mime_type,
         download_name=item.original_name,
         as_attachment=True,
@@ -483,6 +661,11 @@ def create_assistant_query():
         )
     except (TypeError, ValueError) as error:
         return jsonify(error="validation_error", message=str(error)), 422
+    output_validation = validate_and_apply_output(
+        tenant_id,
+        answer["consulta"],
+        answer,
+    )
     query = RagAssistantQuery(
         tenant_id=tenant_id,
         user_id=user_id,
@@ -506,6 +689,8 @@ def create_assistant_query():
         applied_filters=answer["filtrosAplicados"],
         structured_result=answer["resultadoEstruturado"],
         learning_artifacts=answer.get("artefatosAprendizado", []),
+        output_validation=output_validation,
+        output_validation_enforced=bool(output_validation["enforced"]),
     )
     db.session.add(query)
     db.session.flush()
@@ -540,9 +725,7 @@ def create_assistant_query():
 @roles_required("admin", "manager")
 def assistant_metrics():
     tenant_id, _ = _context()
-    since = datetime.now(UTC) - timedelta(
-        hours=current_app.config["RAG_METRICS_WINDOW_HOURS"]
-    )
+    since = datetime.now(UTC) - timedelta(hours=current_app.config["RAG_METRICS_WINDOW_HOURS"])
     items = list(
         db.session.scalars(
             select(RagAssistantQuery).where(
@@ -574,33 +757,22 @@ def assistant_metrics():
         for item in items
     )
     expanded_queries = sum(
-        bool(
-            (item.safety_flags or {})
-            .get("recuperacao", {})
-            .get("expansaoConsultaAplicada")
-        )
+        bool((item.safety_flags or {}).get("recuperacao", {}).get("expansaoConsultaAplicada"))
         for item in items
     )
     documentary_filters = sum(
         bool(
             (
-                (item.safety_flags or {})
-                .get("recuperacao", {})
-                .get("entendimentoConsulta")
-                or {}
+                (item.safety_flags or {}).get("recuperacao", {}).get("entendimentoConsulta") or {}
             ).get("filtrosDocumentais")
         )
         for item in items
     )
     generated_answers = sum(
-        bool(((item.safety_flags or {}).get("geracao") or {}).get("aplicada"))
-        for item in items
+        bool(((item.safety_flags or {}).get("geracao") or {}).get("aplicada")) for item in items
     )
     generation_fallbacks = sum(
-        bool(
-            ((item.safety_flags or {}).get("geracao") or {})
-            .get("fallbackUtilizado")
-        )
+        bool(((item.safety_flags or {}).get("geracao") or {}).get("fallbackUtilizado"))
         for item in items
     )
     citation_validation_rejections = sum(
@@ -611,8 +783,7 @@ def assistant_metrics():
                 .get("validacaoCruzada", {})
                 .get("valida")
             )
-            and ((item.safety_flags or {}).get("geracao") or {})
-            .get("fallbackUtilizado")
+            and ((item.safety_flags or {}).get("geracao") or {}).get("fallbackUtilizado")
         )
         for item in items
     )
@@ -651,6 +822,15 @@ def assistant_metrics():
         )
         for item in items
     )
+    output_validated = sum(bool(item.output_validation) for item in items)
+    output_blocked = sum(
+        (item.output_validation or {}).get("status") == "BLOCKED" for item in items
+    )
+    output_enforced = sum(item.output_validation_enforced for item in items)
+    output_signals: dict[str, int] = {}
+    for item in items:
+        for signal in (item.output_validation or {}).get("signals", []):
+            output_signals[signal] = output_signals.get(signal, 0) + 1
     return jsonify(
         janelaHoras=current_app.config["RAG_METRICS_WINDOW_HOURS"],
         consultas=total,
@@ -667,6 +847,16 @@ def assistant_metrics():
         entailmentAplicado=entailment_applied,
         fallbackEntailment=entailment_fallbacks,
         rejeicoesEntailment=entailment_rejections,
+        validacaoSaida={
+            "validadas": output_validated,
+            "bloqueadas": output_blocked,
+            "bloqueiosAplicados": output_enforced,
+            "somenteMonitoradas": max(0, output_blocked - output_enforced),
+            "taxaBloqueio": round(output_blocked / output_validated, 6)
+            if output_validated
+            else 0.0,
+            "sinais": output_signals,
+        },
         feedbackPositivo=sum(
             item.feedback_rating == RagQueryFeedbackRating.POSITIVA for item in items
         ),
@@ -679,15 +869,61 @@ def assistant_metrics():
     )
 
 
+@rag_bp.get("/assistente/seguranca/validacao-saida/rollout")
+@roles_required("admin", "manager")
+def get_output_validation_rollout():
+    tenant_id, _ = _context()
+    profile = db.session.get(RagOutputValidationProfile, tenant_id)
+    return jsonify(output_validation_profile_data(profile))
+
+
+@rag_bp.post("/assistente/seguranca/validacao-saida/rollout")
+@roles_required("admin")
+def create_output_validation_rollout():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        profile = start_output_validation_rollout(
+            tenant_id,
+            user_id,
+            stages=payload.get("etapas"),
+            minimum_samples=payload.get("amostraMinima"),
+            maximum_block_rate=payload.get("taxaBloqueioMaxima"),
+        )
+        db.session.commit()
+    except (TypeError, ValueError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(output_validation_profile_data(profile)), 201
+
+
+@rag_bp.post("/assistente/seguranca/validacao-saida/rollback")
+@roles_required("admin")
+def rollback_output_validation_rollout():
+    tenant_id, user_id = _context()
+    profile = db.session.get(RagOutputValidationProfile, tenant_id)
+    if profile is None:
+        return jsonify(error="resource_not_found", message="Rollout nao iniciado."), 404
+    try:
+        rollback_output_validation(
+            profile,
+            user_id,
+            reason=str((request.get_json(silent=True) or {}).get("motivo", "")),
+        )
+        db.session.commit()
+    except ValueError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(output_validation_profile_data(profile))
+
+
 @rag_bp.get("/assistente/avaliacoes/perguntas")
 @roles_required("admin", "manager")
 def list_evaluation_questions():
     tenant_id, user_id = _context()
     if reconcile_curated_questions(tenant_id, user_id):
         db.session.commit()
-    statement = select(RagEvaluationQuestion).where(
-        RagEvaluationQuestion.tenant_id == tenant_id
-    )
+    statement = select(RagEvaluationQuestion).where(RagEvaluationQuestion.tenant_id == tenant_id)
     origin = request.args.get("origem")
     if origin:
         origin = origin.strip().upper()
@@ -705,12 +941,8 @@ def list_evaluation_questions():
         normalized_active = active.strip().lower()
         if normalized_active not in {"true", "false"}:
             return jsonify(error="validation_error", message="ativa inválida."), 422
-        statement = statement.where(
-            RagEvaluationQuestion.active.is_(normalized_active == "true")
-        )
-    items = db.session.scalars(
-        statement.order_by(RagEvaluationQuestion.created_at.desc())
-    )
+        statement = statement.where(RagEvaluationQuestion.active.is_(normalized_active == "true"))
+    items = db.session.scalars(statement.order_by(RagEvaluationQuestion.created_at.desc()))
     return jsonify(content=[evaluation_question_data(item) for item in items])
 
 
@@ -844,9 +1076,7 @@ def update_evaluation_question(question_id: uuid.UUID):
         return jsonify(evaluation_question_data(item))
     merged = {
         "pergunta": payload.get("pergunta", item.question),
-        "documentosEsperados": payload.get(
-            "documentosEsperados", item.expected_document_ids
-        ),
+        "documentosEsperados": payload.get("documentosEsperados", item.expected_document_ids),
         "esperaRecusa": payload.get("esperaRecusa", item.expected_refusal),
         "observacoes": payload.get("observacoes", item.notes),
         "ativa": payload.get("ativa", item.active),
@@ -929,11 +1159,7 @@ def list_evaluation_runs():
         .order_by(RagEvaluationRun.created_at.desc())
         .limit(100)
     )
-    return jsonify(
-        content=[
-            evaluation_run_data(item, include_results=False) for item in items
-        ]
-    )
+    return jsonify(content=[evaluation_run_data(item, include_results=False) for item in items])
 
 
 @rag_bp.patch("/assistente/consultas/<uuid:query_id>/avaliacao")
@@ -1042,9 +1268,7 @@ def list_assistant_query_feedback(query_id: uuid.UUID):
 @roles_required("admin", "manager")
 def list_assistant_feedback():
     tenant_id, _ = _context()
-    statement = select(RagQueryFeedback).where(
-        RagQueryFeedback.tenant_id == tenant_id
-    )
+    statement = select(RagQueryFeedback).where(RagQueryFeedback.tenant_id == tenant_id)
     status_value = str(request.args.get("estado", "")).strip().upper()
     if status_value:
         try:
@@ -1055,9 +1279,7 @@ def list_assistant_feedback():
                 422,
             )
         statement = statement.where(RagQueryFeedback.status == status)
-    items = db.session.scalars(
-        statement.order_by(RagQueryFeedback.created_at.desc()).limit(300)
-    )
+    items = db.session.scalars(statement.order_by(RagQueryFeedback.created_at.desc()).limit(300))
     return jsonify(content=[feedback_data(item) for item in items])
 
 
@@ -1189,8 +1411,7 @@ def list_assistant_quality_calibrations():
         select(RagLearningArtifact)
         .where(
             RagLearningArtifact.tenant_id == tenant_id,
-            RagLearningArtifact.artifact_type
-            == RagLearningArtifactType.QUALITY_PROFILE,
+            RagLearningArtifact.artifact_type == RagLearningArtifactType.QUALITY_PROFILE,
         )
         .order_by(RagLearningArtifact.created_at.desc())
         .limit(100)
@@ -1209,9 +1430,7 @@ def list_assistant_quality_calibrations():
 @roles_required("admin", "manager")
 def list_assistant_learning_runs():
     tenant_id, _ = _context()
-    statement = select(RagLearningRun).where(
-        RagLearningRun.tenant_id == tenant_id
-    )
+    statement = select(RagLearningRun).where(RagLearningRun.tenant_id == tenant_id)
     status_value = str(request.args.get("estado", "")).strip().upper()
     if status_value:
         try:
@@ -1225,9 +1444,7 @@ def list_assistant_learning_runs():
                 422,
             )
         statement = statement.where(RagLearningRun.status == status)
-    items = db.session.scalars(
-        statement.order_by(RagLearningRun.created_at.desc()).limit(300)
-    )
+    items = db.session.scalars(statement.order_by(RagLearningRun.created_at.desc()).limit(300))
     return jsonify(content=[learning_run_data(item) for item in items])
 
 
@@ -1235,9 +1452,7 @@ def list_assistant_learning_runs():
 @roles_required("admin", "manager")
 def list_assistant_learning_artifacts():
     tenant_id, _ = _context()
-    statement = select(RagLearningArtifact).where(
-        RagLearningArtifact.tenant_id == tenant_id
-    )
+    statement = select(RagLearningArtifact).where(RagLearningArtifact.tenant_id == tenant_id)
     type_value = str(request.args.get("tipo", "")).strip().upper()
     if type_value:
         try:
@@ -1247,9 +1462,7 @@ def list_assistant_learning_artifacts():
                 jsonify(error="validation_error", message="Tipo de artefato inválido."),
                 422,
             )
-        statement = statement.where(
-            RagLearningArtifact.artifact_type == artifact_type
-        )
+        statement = statement.where(RagLearningArtifact.artifact_type == artifact_type)
     status_value = str(request.args.get("estado", "")).strip().upper()
     if status_value:
         try:
@@ -1263,12 +1476,8 @@ def list_assistant_learning_artifacts():
                 422,
             )
         statement = statement.where(RagLearningArtifact.status == status)
-    items = db.session.scalars(
-        statement.order_by(RagLearningArtifact.created_at.desc()).limit(500)
-    )
-    return jsonify(
-        content=[learning_artifact_data(item) for item in items]
-    )
+    items = db.session.scalars(statement.order_by(RagLearningArtifact.created_at.desc()).limit(500))
+    return jsonify(content=[learning_artifact_data(item) for item in items])
 
 
 @rag_bp.get("/assistente/aprendizado/artefatos/<uuid:artifact_id>")
@@ -1528,39 +1737,24 @@ def operational_source_data(source: RagKnowledgeSource) -> dict:
         "finalidade": source.purpose,
         "baseLegal": source.legal_basis,
         "nivelAcesso": source.access_level.value,
-        "retencaoAte": (
-            source.retention_until.isoformat()
-            if source.retention_until
-            else None
-        ),
+        "retencaoAte": (source.retention_until.isoformat() if source.retention_until else None),
         "hashConteudo": source.content_hash,
         "versaoLogica": source.source_version,
         "documentoId": str(source.document_id) if source.document_id else None,
-        "versaoAtualId": (
-            str(source.latest_version_id) if source.latest_version_id else None
-        ),
+        "versaoAtualId": (str(source.latest_version_id) if source.latest_version_id else None),
         "codigoErro": source.error_code,
         "erro": source.error_message,
         "tentativas": source.sync_attempts,
         "ultimaProjecaoEm": (
-            source.last_projected_at.isoformat()
-            if source.last_projected_at
-            else None
+            source.last_projected_at.isoformat() if source.last_projected_at else None
         ),
-        "quarentenaEm": (
-            source.quarantined_at.isoformat()
-            if source.quarantined_at
-            else None
-        ),
-        "excluidaEm": (
-            source.deleted_at.isoformat() if source.deleted_at else None
-        ),
+        "quarentenaEm": (source.quarantined_at.isoformat() if source.quarantined_at else None),
+        "excluidaEm": (source.deleted_at.isoformat() if source.deleted_at else None),
         "purgeConcluidoEm": (
-            source.purge_completed_at.isoformat()
-            if source.purge_completed_at
-            else None
+            source.purge_completed_at.isoformat() if source.purge_completed_at else None
         ),
         "tombstoneHash": source.tombstone_hash,
+        "segurancaConteudo": content_security_state(source),
         "criadaEm": source.created_at.isoformat(),
         "atualizadaEm": source.updated_at.isoformat(),
     }
@@ -1602,8 +1796,8 @@ def document_data(item: RagDocument, include_versions: bool) -> dict:
     return data
 
 
-def version_data(item: RagDocumentVersion) -> dict:
-    return {
+def version_data(item: RagDocumentVersion, *, include_download: bool = True) -> dict:
+    data = {
         "id": str(item.id),
         "numero": item.version_number,
         "versao": item.version_label,
@@ -1621,13 +1815,17 @@ def version_data(item: RagDocumentVersion) -> dict:
         "paginas": item.page_count,
         "fragmentos": item.chunk_count,
         "erro": item.error,
+        "segurancaConteudo": content_security_state(item),
+        "verificacaoMalware": malware_scan_state(item),
         "criadaEm": item.created_at.isoformat(),
         "indexadaEm": item.indexed_at.isoformat() if item.indexed_at else None,
-        "downloadUrl": (
+    }
+    if include_download:
+        data["downloadUrl"] = (
             f"/api/v1/rag/documentos/{item.document_id}/versoes/{item.id}/download"
             f"?token={signed_rag_download_token(item.tenant_id, item.document_id, item.id)}"
-        ),
-    }
+        )
+    return data
 
 
 def _document_values(form) -> dict:
@@ -1761,9 +1959,7 @@ def _evaluation_question_values(payload: dict, tenant_id: uuid.UUID) -> dict:
     if not isinstance(expected_values, list) or len(expected_values) > 20:
         raise ValueError("Documentos esperados deve ser uma lista com até 20 itens.")
     try:
-        expected_ids = list(
-            dict.fromkeys(str(uuid.UUID(str(value))) for value in expected_values)
-        )
+        expected_ids = list(dict.fromkeys(str(uuid.UUID(str(value))) for value in expected_values))
     except (TypeError, ValueError) as error:
         raise ValueError("Documento esperado inválido.") from error
     if expected_ids:
@@ -1785,9 +1981,7 @@ def _evaluation_question_values(payload: dict, tenant_id: uuid.UUID) -> dict:
     if expected_refusal and expected_ids:
         raise ValueError("Uma pergunta de recusa não deve declarar documentos esperados.")
     if not expected_refusal and not expected_ids:
-        raise ValueError(
-            "Informe documentos esperados ou marque a pergunta como recusa."
-        )
+        raise ValueError("Informe documentos esperados ou marque a pergunta como recusa.")
     return {
         "question": question,
         "expected_document_ids": expected_ids,
@@ -1815,6 +2009,8 @@ def assistant_query_data(item: RagAssistantQuery) -> dict:
         "filtrosAplicados": item.applied_filters,
         "resultadoEstruturado": item.structured_result,
         "artefatosAprendizado": item.learning_artifacts,
+        "validacaoSaida": item.output_validation,
+        "bloqueioValidacaoSaida": item.output_validation_enforced,
         "avaliacao": item.feedback_rating.value if item.feedback_rating else None,
         "comentario": item.feedback_comment,
         "respostaCorrigida": item.corrected_response,

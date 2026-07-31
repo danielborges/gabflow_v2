@@ -23,6 +23,8 @@
 - **RNF-021 Defesa em profundidade:** dados privados RAG devem ser protegidos por filtros de aplicação, RLS forçado, constraints compostas e namespace de objetos.
 - **RNF-022 Negação por padrão:** ausência de contexto transacional de tenant não pode retornar nem permitir gravação de dados privados.
 - **RNF-023 Segregação de credenciais:** API e worker não podem usar superusuário, proprietário das tabelas ou role com `BYPASSRLS`.
+- **RNF-024 Criptografia tenant-scoped:** objetos privados devem usar cifra autenticada e chave derivada por tenant, com versionamento, rotação e falha de autenticação ao trocar o escopo.
+- **RNF-025 Auditoria contínua de isolamento:** RLS habilitado/forçado, políticas tenant-scoped e atributos das roles de runtime devem ser verificáveis por execução automatizada e auditável.
 - **RNF-024 Não interferência:** conteúdo e feedback de um tenant não podem alterar recuperação, resposta ou aprendizado de outro tenant.
 - **RNF-025 Proveniência:** toda fonte global ou privada deve possuir versão, checksum, escopo e origem reproduzíveis.
 - **RNF-026 Segurança de conectores:** fontes externas devem usar allowlist, proteção SSRF, cofre de segredos, limites de consumo e snapshots versionados.
@@ -39,3 +41,8 @@
 - **RNF-037 Reversibilidade do aprendizado:** ativação deve ser atômica por tenant e tipo, manter a versão anterior e permitir rollback sem reprocessar documentos.
 - **RNF-038 Limites de influência:** ajustes de ranking não podem fazer fonte não autorizada, inelegível ou abaixo do limiar participar da resposta.
 - **RNF-039 Resistência a abuso:** compilação deve aplicar mínimo de sinais, limites por usuário/período, detecção de anomalias e revisão para alterações de alto impacto.
+- **RNF-040 Falha fechada de conteúdo:** indisponibilidade, timeout ou contrato inválido de scanner ou classificador obrigatório não pode aprovar, indexar ou publicar conteúdo.
+- **RNF-041 Quarentena antes de derivados:** conteúdo suspeito, malicioso ou indeterminado não pode gerar chunks, embeddings, memórias ou artefatos de aprendizado e deve ser despublicado imediatamente quando reclassificado.
+- **RNF-042 Reprodutibilidade de segurança:** toda decisão de conteúdo deve registrar checksum, política, detector, classificador, sinais e timestamp suficientes para revalidação, sem replicar o payload malicioso em logs ou eventos.
+- **RNF-043 Avaliação adversarial:** releases que alterem ingestão, retrieval, prompts, modelos ou ferramentas devem executar o dataset adversarial e respeitar gates de ataques críticos, recall e falsos positivos definidos no threat model.
+- **RNF-044 Isolamento do executor:** o componente que lê conteúdo não confiável não pode receber segredos, rede ou permissão de escrita; ações futuras exigem policy engine determinístico e confirmação humana conforme o risco.

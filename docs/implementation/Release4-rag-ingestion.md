@@ -12,10 +12,11 @@
 ## Pipeline
 
 1. O gestor envia PDF, DOCX, TXT, PNG ou JPEG com metadados.
-2. A API valida tipo, tamanho, malware conhecido, URL, vigência e unicidade.
+2. A API valida tipo, MIME real, tamanho, ClamAV, URL, vigência e unicidade.
 3. Arquivo e checksum são preservados em volume separado por tenant.
 4. O outbox agenda `IngestaoDocumentoRag` com retentativas.
-5. TXT e DOCX usam extração nativa; PDF e imagem reutilizam o OCR local.
+5. TXT, DOCX, PDF e imagem são processados no sidecar isolado; PDF usa texto nativo
+   primeiro e OCR seletivo como fallback.
 6. O texto é dividido por página com tamanho e sobreposição configuráveis.
 7. O Ollama gera embeddings em lote com `nomic-embed-text`.
 8. Chunks, páginas, checksums, vetores e modelo são persistidos.
@@ -60,7 +61,9 @@ hierárquica completa.
   avaliação ou pipeline de melhoria. O alvo controlado está especificado na
   Release 4.7 e no ADR-009.
 - A proteção contra prompt injection é inicial e baseada em padrões; quarentena,
-  classificador dedicado e red team ampliado permanecem pendentes.
+  classificador dedicado e red team ampliado permanecem pendentes. O threat model,
+  o contrato do dataset e a primeira massa adversarial foram especificados no
+  incremento 5.1; o enforcement de runtime será entregue nos incrementos 5.2 a 5.8.
 
 O alvo aprovado está descrito em `docs/specs/architecture/rag-architecture.md` e no
 ADR-007.

@@ -21,6 +21,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.extensions import db
+from app.rag.content_security import (
+    ContentSecurityAction,
+    ContentSecurityReviewDecision,
+    ContentSecurityStatus,
+)
 
 
 def utc_now() -> datetime:
@@ -213,6 +218,18 @@ class RagFeedbackModerationMode(str, enum.Enum):
 
 
 class RagLearningRunStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    PROCESSANDO = "PROCESSANDO"
+    CONCLUIDA = "CONCLUIDA"
+    ERRO = "ERRO"
+
+
+class RagSecurityRescanScope(str, enum.Enum):
+    TENANT = "TENANT"
+    GLOBAL = "GLOBAL"
+
+
+class RagSecurityRescanStatus(str, enum.Enum):
     PENDENTE = "PENDENTE"
     PROCESSANDO = "PROCESSANDO"
     CONCLUIDA = "CONCLUIDA"
@@ -1204,6 +1221,15 @@ class Attachment(db.Model):
         Enum(AttachmentScanStatus, name="attachment_scan_status"),
         nullable=False,
     )
+    scan_provider: Mapped[str | None] = mapped_column(String(80))
+    scan_engine_version: Mapped[str | None] = mapped_column(String(80))
+    scan_signature_version: Mapped[str | None] = mapped_column(String(80))
+    scan_threat: Mapped[str | None] = mapped_column(String(160))
+    scan_error_code: Mapped[str | None] = mapped_column(String(80))
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    encryption_key_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    encryption_algorithm: Mapped[str | None] = mapped_column(String(40))
+    encrypted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     uploaded_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1472,12 +1498,57 @@ class RagDocumentVersion(db.Model):
     mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    malware_scan_status: Mapped[str] = mapped_column(
+        String(20), default="INDETERMINATE", nullable=False, index=True
+    )
+    malware_scan_provider: Mapped[str | None] = mapped_column(String(80))
+    malware_engine_version: Mapped[str | None] = mapped_column(String(80))
+    malware_signature_version: Mapped[str | None] = mapped_column(String(80))
+    malware_threat: Mapped[str | None] = mapped_column(String(160))
+    malware_scan_error_code: Mapped[str | None] = mapped_column(String(80))
+    malware_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    encryption_key_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    encryption_algorithm: Mapped[str | None] = mapped_column(String(40))
+    encrypted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     extracted_text: Mapped[str | None] = mapped_column(Text)
     page_count: Mapped[int | None] = mapped_column(Integer)
     language: Mapped[str] = mapped_column(String(20), default="pt", nullable=False)
     embedding_model: Mapped[str | None] = mapped_column(String(120))
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
+    security_status: Mapped[ContentSecurityStatus] = mapped_column(
+        Enum(ContentSecurityStatus, native_enum=False, length=20),
+        default=ContentSecurityStatus.INDETERMINATE,
+        nullable=False,
+        index=True,
+    )
+    security_action: Mapped[ContentSecurityAction] = mapped_column(
+        Enum(ContentSecurityAction, native_enum=False, length=20),
+        default=ContentSecurityAction.RETRY,
+        nullable=False,
+    )
+    security_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    security_categories: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_signals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_policy_version: Mapped[str] = mapped_column(
+        String(80), default="legacy-unassessed", nullable=False
+    )
+    security_detector_version: Mapped[str | None] = mapped_column(String(80))
+    security_classifier: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    security_content_checksum: Mapped[str | None] = mapped_column(String(64), index=True)
+    security_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_error_code: Mapped[str | None] = mapped_column(String(80))
+    security_quarantined_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    security_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_review_decision: Mapped[ContentSecurityReviewDecision | None] = mapped_column(
+        Enum(ContentSecurityReviewDecision, native_enum=False, length=20)
+    )
+    security_review_checksum: Mapped[str | None] = mapped_column(String(64))
+    security_reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    security_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_review_reason: Mapped[str | None] = mapped_column(Text)
     created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1554,12 +1625,8 @@ class RagKnowledgeSource(db.Model):
     source_module: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     entity_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     entity_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
-    projector_version: Mapped[str] = mapped_column(
-        String(32), default="1.0.0", nullable=False
-    )
-    source_revision: Mapped[int] = mapped_column(
-        BigInteger, default=0, nullable=False
-    )
+    projector_version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
+    source_revision: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     purpose: Mapped[str] = mapped_column(String(120), nullable=False)
     legal_basis: Mapped[str] = mapped_column(String(160), nullable=False)
     access_level: Mapped[RagDocumentAccess] = mapped_column(
@@ -1576,6 +1643,28 @@ class RagKnowledgeSource(db.Model):
     eligibility_reason: Mapped[str | None] = mapped_column(String(120))
     error_code: Mapped[str | None] = mapped_column(String(80))
     error_message: Mapped[str | None] = mapped_column(Text)
+    security_status: Mapped[ContentSecurityStatus] = mapped_column(
+        Enum(ContentSecurityStatus, native_enum=False, length=20),
+        default=ContentSecurityStatus.INDETERMINATE,
+        nullable=False,
+        index=True,
+    )
+    security_action: Mapped[ContentSecurityAction] = mapped_column(
+        Enum(ContentSecurityAction, native_enum=False, length=20),
+        default=ContentSecurityAction.RETRY,
+        nullable=False,
+    )
+    security_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    security_categories: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_signals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_policy_version: Mapped[str] = mapped_column(
+        String(80), default="legacy-unassessed", nullable=False
+    )
+    security_detector_version: Mapped[str | None] = mapped_column(String(80))
+    security_classifier: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    security_content_checksum: Mapped[str | None] = mapped_column(String(64), index=True)
+    security_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_error_code: Mapped[str | None] = mapped_column(String(80))
     sync_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     source_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -1584,9 +1673,7 @@ class RagKnowledgeSource(db.Model):
     last_projected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     quarantined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    purge_completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    purge_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     tombstone_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -1641,6 +1728,10 @@ class RagAssistantQuery(db.Model):
     applied_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     structured_result: Mapped[dict | None] = mapped_column(JSON)
     learning_artifacts: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    output_validation: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    output_validation_enforced: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, index=True
+    )
     feedback_rating: Mapped[RagQueryFeedbackRating | None] = mapped_column(
         Enum(RagQueryFeedbackRating, name="rag_query_feedback_rating"), index=True
     )
@@ -1651,6 +1742,65 @@ class RagAssistantQuery(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
+
+
+class RagOutputValidationProfile(db.Model):
+    __tablename__ = "rag_output_validation_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "rollout_percentage >= 0 AND rollout_percentage <= 100",
+            name="ck_rag_output_validation_rollout_percentage",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "initiated_by_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_rag_output_validation_profile_initiator",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    policy_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    validator_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    rollout_state: Mapped[str] = mapped_column(
+        String(24), default="MONITORANDO", nullable=False, index=True
+    )
+    rollout_percentage: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    rollout_stage_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rollout_stages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    minimum_stage_samples: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    maximum_block_rate: Mapped[float] = mapped_column(Float, default=0.10, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    rollout_history: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    initiated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class RlsAuditRun(db.Model):
+    __tablename__ = "rls_audit_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    status: Mapped[str] = mapped_column(String(24), default="PENDENTE", nullable=False, index=True)
+    initiated_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    expected_tables: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    compliant_tables: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    findings: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    role_checks: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RagQueryFeedback(db.Model):
@@ -1732,6 +1882,28 @@ class RagQueryFeedback(db.Model):
         index=True,
     )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    security_status: Mapped[ContentSecurityStatus] = mapped_column(
+        Enum(ContentSecurityStatus, native_enum=False, length=20),
+        default=ContentSecurityStatus.INDETERMINATE,
+        nullable=False,
+        index=True,
+    )
+    security_action: Mapped[ContentSecurityAction] = mapped_column(
+        Enum(ContentSecurityAction, native_enum=False, length=20),
+        default=ContentSecurityAction.RETRY,
+        nullable=False,
+    )
+    security_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    security_categories: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_signals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_policy_version: Mapped[str] = mapped_column(
+        String(80), default="legacy-unassessed", nullable=False
+    )
+    security_detector_version: Mapped[str | None] = mapped_column(String(80))
+    security_classifier: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    security_content_checksum: Mapped[str | None] = mapped_column(String(64), index=True)
+    security_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_error_code: Mapped[str | None] = mapped_column(String(80))
     created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     moderation_mode: Mapped[RagFeedbackModerationMode | None] = mapped_column(
         Enum(RagFeedbackModerationMode, name="rag_feedback_moderation_mode")
@@ -1799,6 +1971,59 @@ class RagFeedbackSourceJudgment(db.Model):
     )
 
 
+class RagSecurityRescanRun(db.Model):
+    __tablename__ = "rag_security_rescan_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "batch_size > 0 AND batch_size <= 100", name="ck_rag_security_rescan_batch"
+        ),
+        CheckConstraint(
+            "(scope = 'TENANT' AND tenant_id IS NOT NULL) OR "
+            "(scope = 'GLOBAL' AND tenant_id IS NULL)",
+            name="ck_rag_security_rescan_scope_tenant",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), index=True
+    )
+    scope: Mapped[RagSecurityRescanScope] = mapped_column(
+        Enum(RagSecurityRescanScope, native_enum=False, length=20),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[RagSecurityRescanStatus] = mapped_column(
+        Enum(RagSecurityRescanStatus, native_enum=False, length=20),
+        default=RagSecurityRescanStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    phase: Mapped[str] = mapped_column(String(20), nullable=False)
+    cursor_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    signature_version: Mapped[str | None] = mapped_column(String(80))
+    batch_size: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    total_targets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    processed_targets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    clean_targets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    quarantined_targets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_targets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    purged_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    purged_ocr: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    purged_transcriptions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    initiated_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class RagLearningRun(db.Model):
     __tablename__ = "rag_learning_runs"
     __table_args__ = (
@@ -1837,9 +2062,7 @@ class RagLearningRun(db.Model):
         DateTime(timezone=True), nullable=False, index=True
     )
     configuration: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    configuration_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False, index=True
-    )
+    configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     baseline: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     total_feedbacks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_approved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -1938,15 +2161,9 @@ class RagLearningArtifact(db.Model):
     activation_mode: Mapped[str | None] = mapped_column(String(20))
     rollout_percentage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     rollout_state: Mapped[str | None] = mapped_column(String(24), index=True)
-    rollout_stage_index: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
-    rollout_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    rollout_stage_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    rollout_stage_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rollout_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rollout_stage_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rollout_next_check_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True
     )
@@ -2097,9 +2314,7 @@ class RagEvaluationQuestion(db.Model):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     expected_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     expected_source_refs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
-    hard_negative_source_refs: Mapped[list] = mapped_column(
-        JSON, default=list, nullable=False
-    )
+    hard_negative_source_refs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     expected_refusal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     expected_method: Mapped[str | None] = mapped_column(String(20), index=True)
     expected_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
@@ -2108,14 +2323,10 @@ class RagEvaluationQuestion(db.Model):
         String(20), default="MANUAL", nullable=False, index=True
     )
     failure_reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
-    severity: Mapped[str] = mapped_column(
-        String(10), default="MEDIA", nullable=False, index=True
-    )
+    severity: Mapped[str] = mapped_column(String(10), default="MEDIA", nullable=False, index=True)
     tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     baseline_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    baseline_captured_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    baseline_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source_query_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     source_feedback_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
@@ -2274,6 +2485,18 @@ class GlobalKnowledgeDocumentVersion(db.Model):
     mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    malware_scan_status: Mapped[str] = mapped_column(
+        String(20), default="INDETERMINATE", nullable=False, index=True
+    )
+    malware_scan_provider: Mapped[str | None] = mapped_column(String(80))
+    malware_engine_version: Mapped[str | None] = mapped_column(String(80))
+    malware_signature_version: Mapped[str | None] = mapped_column(String(80))
+    malware_threat: Mapped[str | None] = mapped_column(String(160))
+    malware_scan_error_code: Mapped[str | None] = mapped_column(String(80))
+    malware_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    encryption_key_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    encryption_algorithm: Mapped[str | None] = mapped_column(String(40))
+    encrypted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     extracted_text: Mapped[str | None] = mapped_column(Text)
     page_count: Mapped[int | None] = mapped_column(Integer)
     language: Mapped[str] = mapped_column(String(20), default="pt", nullable=False)
@@ -2292,6 +2515,39 @@ class GlobalKnowledgeDocumentVersion(db.Model):
         index=True,
     )
     error: Mapped[str | None] = mapped_column(Text)
+    security_status: Mapped[ContentSecurityStatus] = mapped_column(
+        Enum(ContentSecurityStatus, native_enum=False, length=20),
+        default=ContentSecurityStatus.INDETERMINATE,
+        nullable=False,
+        index=True,
+    )
+    security_action: Mapped[ContentSecurityAction] = mapped_column(
+        Enum(ContentSecurityAction, native_enum=False, length=20),
+        default=ContentSecurityAction.RETRY,
+        nullable=False,
+    )
+    security_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    security_categories: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_signals: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    security_policy_version: Mapped[str] = mapped_column(
+        String(80), default="legacy-unassessed", nullable=False
+    )
+    security_detector_version: Mapped[str | None] = mapped_column(String(80))
+    security_classifier: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    security_content_checksum: Mapped[str | None] = mapped_column(String(64), index=True)
+    security_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_error_code: Mapped[str | None] = mapped_column(String(80))
+    security_quarantined_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    security_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_review_decision: Mapped[ContentSecurityReviewDecision | None] = mapped_column(
+        Enum(ContentSecurityReviewDecision, native_enum=False, length=20)
+    )
+    security_review_checksum: Mapped[str | None] = mapped_column(String(64))
+    security_reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    security_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_review_reason: Mapped[str | None] = mapped_column(Text)
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
     )

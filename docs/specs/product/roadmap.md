@@ -98,6 +98,32 @@
 - **Entregue:** classificador NLI independente do gerador, provider HTTP
   dedicado, reranking adaptativo, contexto compacto, limites de tokens e
   telemetria/orçamento de latência por etapa.
+- **Entregue no incremento 5.1:** threat model de conteúdo não confiável, correção
+  do estado dos controles existentes, contrato JSON Schema e dataset adversarial v1
+  com ataques multilíngues/ofuscados e controles benignos.
+- **Entregue no incremento 5.2:** gateway único e fail-closed, contrato fechado de
+  decisão, estado persistente e exposição segura para versões privadas/globais,
+  fontes operacionais, feedback e consultas.
+- **Entregue no incremento 5.3:** enforcement `CLEAN/ALLOW` pré-derivação e
+  pré-publicação, quarentena privada/global, purge imediato, revisão humana
+  vinculada ao checksum e reprocessamento auditável.
+- **Entregue no incremento 5.4:** canonicalização limitada de Unicode, HTML,
+  URL encoding, Base64, hexadecimal, espaçamento e tipoglicemia; classificador dedicado
+  independente do gerador, contrato fechado, fail-closed e regressão adversarial executável.
+- **Entregue no incremento 5.5:** ClamAV com assinaturas atualizáveis, varredura
+  `INSTREAM` fail-closed, validação de MIME real, nova inspeção por checksum antes
+  do parsing e sidecar de parsing sem rede, segredos, escrita ou capabilities.
+- **Entregue no incremento 5.6:** revarredura assíncrona e retomável do acervo
+  privado, global e dos anexos; invalidação fail-closed, reclassificação pela
+  política vigente e purge de chunks, embeddings, OCR, transcrições e memórias
+  operacionais derivadas.
+- **Entregue no incremento 5.7:** validação independente da resposta final, bloqueio
+  fail-closed de vazamento de instruções, segredos e ações não executadas,
+  validação de citações/destinos, métricas tenant-scoped e rollout progressivo com
+  promoção e rollback automáticos.
+- **Entregue no incremento 5.8:** AES-256-GCM em repouso com chave derivada e AAD por
+  tenant, versionamento/rotação pela revarredura do acervo e auditoria assíncrona
+  das políticas RLS, `FORCE RLS` e roles de runtime `NOBYPASSRLS`.
 
 ## Release 5 — Inteligência territorial
 

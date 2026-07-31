@@ -15,6 +15,7 @@ from app.models import (
     Tenant,
     User,
 )
+from app.rag.content_security import ContentSecurityAction, ContentSecurityStatus
 from app.rag.neural_reranker import (
     NeuralCandidate,
     NeuralJudgment,
@@ -41,11 +42,9 @@ class _FakeReranker:
         return {
             candidate.id: NeuralJudgment(
                 score=(
-                    0.0
-                    if self.reject_all
-                    else (1.0 if position == len(candidates) - 1 else 0.4)
+                    0.0 if self.reject_all else (1.0 if position == len(candidates) - 1 else 0.4)
                 ),
-                reason="Correspondencia direta de teste."
+                reason="Correspondencia direta de teste.",
             )
             for position, candidate in enumerate(candidates)
         }
@@ -70,6 +69,9 @@ def _seed_source(tenant, user, title, content):
         version_label="1",
         lifecycle_status=RagDocumentLifecycle.VIGENTE,
         ingestion_status=RagIngestionStatus.INDEXADO,
+        malware_scan_status="CLEAN",
+        security_status=ContentSecurityStatus.CLEAN,
+        security_action=ContentSecurityAction.ALLOW,
         storage_key=f"tenants/{tenant.id}/rag/{document_id}/{version_id}/fonte.txt",
         original_name="fonte.txt",
         mime_type="text/plain",
@@ -388,6 +390,4 @@ def test_reranker_excerpt_prioritizes_sentences_related_to_query():
         80,
     )
 
-    assert excerpt.startswith(
-        "O plano disciplina mobilidade urbana e transporte coletivo."
-    )
+    assert excerpt.startswith("O plano disciplina mobilidade urbana e transporte coletivo.")

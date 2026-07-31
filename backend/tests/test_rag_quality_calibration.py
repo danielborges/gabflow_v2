@@ -51,9 +51,7 @@ def test_calibration_evaluates_candidate_and_activates_canary(
     def fake_evaluation(_tenant_id, _role, *, k, learning_artifacts):
         nonlocal calls
         calls += 1
-        candidate = (
-            RagLearningArtifactType.QUALITY_PROFILE in learning_artifacts
-        )
+        candidate = RagLearningArtifactType.QUALITY_PROFILE in learning_artifacts
         return {
             "k": k,
             "questionCount": 8,
@@ -84,9 +82,7 @@ def test_calibration_evaluates_candidate_and_activates_canary(
     assert calibrated.json["aprovada"] is None
     artifact_id = calibrated.json["id"]
     _process_calibration(app, "quality-calibration-approved")
-    detail = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}"
-    )
+    detail = client.get(f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}")
     assert detail.json["estado"] == "ATIVO"
     assert detail.json["percentualCanario"] == 5
     assert detail.json["rollout"]["estado"] == "MONITORANDO"
@@ -170,16 +166,11 @@ def test_quality_rollout_progresses_until_full_promotion(
             result = process_batch(f"quality-rollout-{expected_percentage}")
             event = db.session.scalar(
                 select(OutboxEvent)
-                .where(
-                    OutboxEvent.event_type
-                    == "AvaliacaoRolloutPerfilQualidadeRag"
-                )
+                .where(OutboxEvent.event_type == "AvaliacaoRolloutPerfilQualidadeRag")
                 .order_by(OutboxEvent.occurred_at.desc())
             )
             assert result.succeeded == 1, event.last_error
-        detail = client.get(
-            f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}"
-        )
+        detail = client.get(f"/api/v1/assistente/aprendizado/artefatos/{artifact_id}")
         assert detail.json["percentualCanario"] == expected_percentage
 
     assert detail.json["modoAtivacao"] == "TOTAL"
@@ -211,10 +202,7 @@ def test_quality_rollout_rolls_back_when_online_gate_fails(
             "k": k,
             "questionCount": 8,
             "metrics": _metrics(
-                0.9
-                if RagLearningArtifactType.QUALITY_PROFILE
-                in learning_artifacts
-                else 0.7
+                0.9 if RagLearningArtifactType.QUALITY_PROFILE in learning_artifacts else 0.7
             ),
             "results": [],
         },
@@ -253,20 +241,14 @@ def test_quality_rollout_rolls_back_when_online_gate_fails(
         result = process_batch("quality-rollout-rejection")
         event = db.session.scalar(
             select(OutboxEvent)
-            .where(
-                OutboxEvent.event_type
-                == "AvaliacaoRolloutPerfilQualidadeRag"
-            )
+            .where(OutboxEvent.event_type == "AvaliacaoRolloutPerfilQualidadeRag")
             .order_by(OutboxEvent.occurred_at.desc())
         )
         assert result.succeeded == 1, event.last_error
         db.session.refresh(artifact)
         assert artifact.status == RagLearningArtifactStatus.REVOGADO
         assert artifact.rollout_state == "ROLLBACK"
-        assert (
-            artifact.rollout_history[-1]["motivos"][0]
-            == "TAXA_RECUSA_ACIMA_DO_LIMITE"
-        )
+        assert artifact.rollout_history[-1]["motivos"][0] == "TAXA_RECUSA_ACIMA_DO_LIMITE"
 
 
 def test_calibration_rejects_regression(app, client, monkeypatch):
@@ -298,13 +280,10 @@ def test_calibration_rejects_regression(app, client, monkeypatch):
 
     assert response.status_code == 202
     _process_calibration(app, "quality-calibration-regression")
-    detail = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/{response.json['id']}"
-    )
+    detail = client.get(f"/api/v1/assistente/aprendizado/artefatos/{response.json['id']}")
     assert detail.json["estado"] == "REJEITADO"
     assert any(
-        reason.startswith("REGRESSAO_")
-        for reason in detail.json["detalhesAvaliacao"]["reasons"]
+        reason.startswith("REGRESSAO_") for reason in detail.json["detalhesAvaliacao"]["reasons"]
     )
 
 
@@ -340,9 +319,7 @@ def test_calibration_rejects_candidate_above_latency_slo(
 
     assert response.status_code == 202
     _process_calibration(app, "quality-calibration-latency")
-    detail = client.get(
-        f"/api/v1/assistente/aprendizado/artefatos/{response.json['id']}"
-    )
+    detail = client.get(f"/api/v1/assistente/aprendizado/artefatos/{response.json['id']}")
     assert "SLO_LATENCIA_EXCEDIDO" in detail.json["detalhesAvaliacao"]["reasons"]
 
 
@@ -355,12 +332,8 @@ def test_quality_profile_rolls_back_on_semantic_rejection_rate(app):
     with app.app_context():
         from app.models import Tenant, User
 
-        tenant = db.session.scalar(
-            select(Tenant).where(Tenant.slug == "gabinete-a")
-        )
-        user = db.session.scalar(
-            select(User).where(User.tenant_id == tenant.id)
-        )
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        user = db.session.scalar(select(User).where(User.tenant_id == tenant.id))
         now = user.created_at
         run = RagLearningRun(
             tenant_id=tenant.id,
@@ -400,7 +373,7 @@ def test_quality_profile_rolls_back_on_semantic_rejection_rate(app):
                                 "habilitado": True,
                                 "valida": False,
                             }
-                        }
+                        },
                     },
                 },
             )

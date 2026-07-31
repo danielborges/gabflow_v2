@@ -72,9 +72,7 @@ def test_nli_rejects_configuration_using_the_generator_model(app):
             RAG_NLI_REQUIRE_DISTINCT_MODEL=True,
         )
 
-        outcome = verify_entailment(
-            (EntailmentCase("1", "Afirmação.", "Evidência."),)
-        )
+        outcome = verify_entailment((EntailmentCase("1", "Afirmação.", "Evidência."),))
 
         assert outcome.applied is False
         assert outcome.fallback_used is True
@@ -102,9 +100,7 @@ def test_clear_hybrid_leader_skips_neural_reranker_and_reports_timings(
         )
         monkeypatch.setattr(
             "app.rag.neural_reranker.neural_reranker_provider",
-            lambda: (_ for _ in ()).throw(
-                AssertionError("O reranker não deveria ser chamado.")
-            ),
+            lambda: (_ for _ in ()).throw(AssertionError("O reranker não deveria ser chamado.")),
         )
 
         answer = answer_query(

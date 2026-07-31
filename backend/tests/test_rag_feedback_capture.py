@@ -52,8 +52,7 @@ def _seed_query(app, tenant_slug="gabinete-a"):
                 version_number=1,
                 version_label="1",
                 storage_key=(
-                    f"tenants/{tenant.id}/rag/{document.id}/"
-                    f"{uuid.uuid4()}/fonte-{index}.txt"
+                    f"tenants/{tenant.id}/rag/{document.id}/{uuid.uuid4()}/fonte-{index}.txt"
                 ),
                 original_name=f"fonte-{index}.txt",
                 mime_type="text/plain",
@@ -158,18 +157,14 @@ def test_feedback_capture_is_immutable_idempotent_and_source_aware(app, client):
     assert second.json["revisao"] == 2
     assert second.json["revisaoAnteriorId"] == created.json["id"]
 
-    history = client.get(
-        f"/api/v1/assistente/consultas/{seeded['query_id']}/feedback"
-    )
+    history = client.get(f"/api/v1/assistente/consultas/{seeded['query_id']}/feedback")
     assert history.status_code == 200
     assert [item["revisao"] for item in history.json["content"]] == [2, 1]
     assert history.json["content"][1]["estado"] == "SUPERADO"
 
     with app.app_context():
         assert db.session.scalar(select(db.func.count(RagQueryFeedback.id))) == 2
-        assert db.session.scalar(
-            select(db.func.count(RagFeedbackSourceJudgment.id))
-        ) == 1
+        assert db.session.scalar(select(db.func.count(RagFeedbackSourceJudgment.id))) == 1
         query = db.session.get(RagAssistantQuery, uuid.UUID(seeded["query_id"]))
         assert query.feedback_rating.value == "POSITIVA"
 
@@ -227,6 +222,8 @@ def test_feedback_prompt_injection_is_quarantined_and_redacted(app, client):
     assert created.json["comentario"] is None
     assert created.json["respostaCorrigida"] is None
     assert created.json["regraModeracao"] == "prompt-injection-v1"
+    assert created.json["segurancaConteudo"]["status"] == "SUSPICIOUS"
+    assert created.json["segurancaConteudo"]["action"] == "QUARANTINE"
 
     with app.app_context():
         feedback = db.session.get(RagQueryFeedback, uuid.UUID(created.json["id"]))
@@ -235,9 +232,7 @@ def test_feedback_prompt_injection_is_quarantined_and_redacted(app, client):
         assert query.feedback_comment is None
         assert query.corrected_response is None
         audit = db.session.scalar(
-            select(AuditLog).where(
-                AuditLog.action == "rag_assistant.feedback_revision_created"
-            )
+            select(AuditLog).where(AuditLog.action == "rag_assistant.feedback_revision_created")
         )
         assert "Ignore" not in str(audit.after)
         assert "system prompt" not in str(audit.after)
@@ -354,9 +349,7 @@ def test_approved_feedback_is_promoted_and_evaluated_with_curated_signals(
     assert promoted.json["origem"] == "FEEDBACK"
     assert promoted.json["feedbackOrigemId"] == feedback.json["id"]
     assert promoted.json["documentosEsperados"] == [seeded["document_id"]]
-    assert promoted.json["hardNegatives"][0]["documentoId"] == seeded[
-        "second_document_id"
-    ]
+    assert promoted.json["hardNegatives"][0]["documentoId"] == seeded["second_document_id"]
     assert promoted.json["metodoEsperado"] == "HIBRIDO"
     assert promoted.json["filtrosEsperados"] == {"tema": "iluminação"}
 

@@ -18,6 +18,7 @@ from app.models import (
     RagIngestionStatus,
     Tenant,
 )
+from app.rag.content_security import ContentSecurityAction, ContentSecurityStatus
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,9 @@ def global_versions_for_tenant(
         .join(GlobalKnowledgeDocumentVersion.document)
         .where(
             GlobalKnowledgeDocumentVersion.ingestion_status == RagIngestionStatus.INDEXADO,
+            GlobalKnowledgeDocumentVersion.security_status == ContentSecurityStatus.CLEAN,
+            GlobalKnowledgeDocumentVersion.security_action == ContentSecurityAction.ALLOW,
+            GlobalKnowledgeDocumentVersion.malware_scan_status == "CLEAN",
             GlobalKnowledgeDocumentVersion.publication_status.in_(
                 {
                     GlobalVersionStatus.PUBLICADA,

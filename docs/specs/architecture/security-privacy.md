@@ -71,6 +71,32 @@
 - Credenciais permanecem em cofre de segredos e nunca entram em chunks.
 - Conteúdo sincronizado passa por validação, quarentena e publicação versionada.
 - Prompt injection é avaliado na ingestão e na recuperação.
+- Antes da classificação, o conteúdo passa por canonicalização limitada; o
+  classificador usa contrato fechado e modelo independente do gerador de respostas.
+- Somente versão, provider, modelo, label, score e categorias são persistidos; texto
+  analisado e justificativa livre do classificador não entram no estado de segurança.
+- Uploads são enviados ao ClamAV por stream antes de serem gravados e têm seu MIME
+  real validado; timeout, limite excedido ou resposta inválida bloqueiam a operação.
+- Antes do parsing, checksum e antimalware são revalidados. O parser roda em sidecar
+  sem rede e segredos, com entradas read-only e contrato de resposta limitado.
+- A resposta final passa por validador independente antes de persistência e entrega;
+  vazamento de prompt/segredo e alegação de ação externa são sempre bloqueados.
+- Sinais adicionais de citação e destino externo entram por rollout tenant-scoped,
+  com amostra, taxa de bloqueio, promoção e rollback auditáveis.
+
+## Criptografia por tenant e auditoria RLS
+
+- Objetos privados e anexos são cifrados com AES-256-GCM antes da gravação.
+- A chave de dados é derivada da chave mestra, do identificador do tenant e da
+  versão; o mesmo ciphertext não autentica sob outro tenant.
+- O catálogo compartilhado usa escopo criptográfico global separado.
+- Checksum, antivírus e parsing operam sobre plaintext autenticado em arquivo
+  temporário efêmero, removido ao final da operação.
+- Rotação incrementa `STORAGE_ENCRYPTION_KEY_VERSION` e usa a revarredura para
+  recifrar objetos limpos; metadados registram algoritmo, versão e instante.
+- A auditoria RLS inspeciona toda tabela RAG tenant-scoped e anexos, exige RLS
+  habilitado e forçado, política por `app.tenant_id`, roles sem superuser/bypass e
+  executa prova de inexistência de linhas estrangeiras visíveis.
 
 ## Conhecimento operacional
 
@@ -84,6 +110,8 @@
 - Exclusão, anonimização e expiração despublicam imediatamente a fonte e propagam
   purge para todos os artefatos derivados.
 - Reconciliação periódica detecta fontes órfãs, expiradas ou divergentes.
+- Revarreduras por versão de política congelam um corte do acervo, invalidam alvos
+  pendentes e registram cursor, progresso, assinaturas e contadores de purge.
 - Consultas estruturadas usam os mesmos filtros de tenant e autorização do domínio
   transacional; o modelo não recebe acesso SQL irrestrito.
 
@@ -107,3 +135,17 @@
   integram o caso de avaliação.
 - Casos curados usam FK composta com feedback e tenant, e são reconciliados antes
   de listagem ou execução para impedir uso de sinal revogado ou fonte inacessível.
+
+## Threat model de conteúdo não confiável
+
+O threat model normativo está em
+`architecture/rag-content-security-threat-model.md`. Ele distingue o isolamento de
+tenant, já protegido por RLS e constraints, da resistência a prompt injection.
+Criptografia, RLS e antivírus são camadas complementares, mas não tornam conteúdo
+documental confiável como instrução.
+
+O incremento 5.1 estabelece que todo conteúdo originado de upload, catálogo global,
+projeção operacional, OCR, transcrição, feedback, consulta ou conector permanece não
+confiável. A aprovação para indexação autoriza uso como dado, nunca como comando. Os
+incrementos seguintes devem implementar um gateway uniforme antes de chunks e
+embeddings, segunda inspeção no retrieval e validação de saída.

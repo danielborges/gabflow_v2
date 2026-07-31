@@ -20,6 +20,8 @@ RAG_QUEUE_EVENT_TYPES = {
     "CompilacaoSinaisRag",
     "AvaliacaoPerfilQualidadeRag",
     "AvaliacaoRolloutPerfilQualidadeRag",
+    "RevarreduraSegurancaRag",
+    "AuditoriaAutomatizadaRls",
 }
 WORKER_QUEUES = {"all", "default", "rag"}
 
@@ -49,20 +51,15 @@ def process_batch(worker_id: str) -> ProcessingResult:
 
 def claim_events(worker_id: str) -> list[uuid.UUID]:
     now = datetime.now(UTC)
-    lock_expired_at = now - timedelta(
-        seconds=current_app.config["WORKER_LOCK_TIMEOUT_SECONDS"]
-    )
-    statement = (
-        select(OutboxEvent)
-        .where(
-            OutboxEvent.published_at.is_(None),
-            OutboxEvent.failed_at.is_(None),
-            OutboxEvent.available_at <= now,
-            or_(
-                OutboxEvent.locked_at.is_(None),
-                OutboxEvent.locked_at < lock_expired_at,
-            ),
-        )
+    lock_expired_at = now - timedelta(seconds=current_app.config["WORKER_LOCK_TIMEOUT_SECONDS"])
+    statement = select(OutboxEvent).where(
+        OutboxEvent.published_at.is_(None),
+        OutboxEvent.failed_at.is_(None),
+        OutboxEvent.available_at <= now,
+        or_(
+            OutboxEvent.locked_at.is_(None),
+            OutboxEvent.locked_at < lock_expired_at,
+        ),
     )
     queue = str(current_app.config.get("WORKER_QUEUE", "all")).lower()
     if queue not in WORKER_QUEUES:
@@ -142,9 +139,7 @@ def process_event(event_id: uuid.UUID, worker_id: str) -> str:
         return _record_failure(event_id, worker_id, error, started)
 
 
-def _record_failure(
-    event_id: uuid.UUID, worker_id: str, error: Exception, started: float
-) -> str:
+def _record_failure(event_id: uuid.UUID, worker_id: str, error: Exception, started: float) -> str:
     event = db.session.execute(
         select(OutboxEvent)
         .where(OutboxEvent.id == event_id, OutboxEvent.locked_by == worker_id)

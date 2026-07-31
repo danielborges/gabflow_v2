@@ -19,6 +19,7 @@ COPY . .
 RUN mkdir -p /app/data/attachments /app/data/rag /models/whisper \
     && chmod +x /app/docker-entrypoint.sh \
     && chmod +x /app/worker-entrypoint.sh \
+    && chmod +x /app/parser-entrypoint.sh \
     && chown -R gabflow:gabflow /app /models/whisper
 
 EXPOSE 5000

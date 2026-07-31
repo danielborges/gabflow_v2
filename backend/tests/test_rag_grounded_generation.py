@@ -15,6 +15,7 @@ from app.models import (
     Tenant,
     User,
 )
+from app.rag.content_security import ContentSecurityAction, ContentSecurityStatus
 from app.rag.grounded_generation import (
     GeneratedClaim,
     GroundedGenerationInvalidResponse,
@@ -64,6 +65,9 @@ def _seed_source(tenant, user, title, content):
         version_label="1",
         lifecycle_status=RagDocumentLifecycle.VIGENTE,
         ingestion_status=RagIngestionStatus.INDEXADO,
+        malware_scan_status="CLEAN",
+        security_status=ContentSecurityStatus.CLEAN,
+        security_action=ContentSecurityAction.ALLOW,
         storage_key=f"tenants/{tenant.id}/rag/{document_id}/{version_id}/fonte.txt",
         original_name="fonte.txt",
         mime_type="text/plain",
@@ -192,10 +196,7 @@ def test_unsupported_generated_claim_is_rejected_with_safe_refusal(
         assert answer["fallbackUtilizado"] is True
         assert answer["geracao"]["fallbackUtilizado"] is True
         assert answer["geracao"]["validacaoCruzada"]["valida"] is False
-        assert (
-            answer["geracao"]["validacaoCruzada"]["verificacoes"][0]["valida"]
-            is False
-        )
+        assert answer["geracao"]["validacaoCruzada"]["verificacoes"][0]["valida"] is False
 
 
 def test_generation_receives_only_sanitized_document_content(app, monkeypatch):
@@ -339,9 +340,7 @@ def test_semantic_entailment_rejects_lexically_similar_contradiction(
             RAG_NLI_FAIL_CLOSED=True,
             RAG_NLI_MIN_SCORE=0.72,
         )
-        fake = _FakeGenerator(
-            "O plano permite transporte individual na área central aos domingos."
-        )
+        fake = _FakeGenerator("O plano permite transporte individual na área central aos domingos.")
         monkeypatch.setattr(
             "app.rag.grounded_generation.grounded_answer_provider",
             lambda: fake,
@@ -396,9 +395,7 @@ def test_semantic_entailment_failure_is_fail_closed(app, monkeypatch):
         )
         monkeypatch.setattr(
             "app.rag.grounded_generation.grounded_answer_provider",
-            lambda: _FakeGenerator(
-                "O plano disciplina mobilidade urbana e transporte coletivo."
-            ),
+            lambda: _FakeGenerator("O plano disciplina mobilidade urbana e transporte coletivo."),
         )
         monkeypatch.setattr(
             "app.rag.grounded_generation.verify_entailment",

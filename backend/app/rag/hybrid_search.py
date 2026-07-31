@@ -38,6 +38,9 @@ WHERE c.tenant_id = CAST(:tenant_id AS uuid)
   AND d.active IS TRUE
   AND v.ingestion_status = 'INDEXADO'
   AND v.lifecycle_status = 'VIGENTE'
+  AND v.security_status = 'CLEAN'
+  AND v.security_action = 'ALLOW'
+  AND v.malware_scan_status = 'CLEAN'
   AND (v.valid_from IS NULL OR v.valid_from <= CURRENT_DATE)
   AND (v.valid_until IS NULL OR v.valid_until >= CURRENT_DATE)
   AND (:privileged OR d.access_level = 'INTERNO')
@@ -71,6 +74,9 @@ JOIN rag_global.documents d
 JOIN rag_global.tenant_published_chunks published
   ON published.chunk_id = c.id
  AND published.tenant_id = CAST(:tenant_id AS uuid)
+WHERE v.security_status = 'CLEAN'
+  AND v.security_action = 'ALLOW'
+  AND v.malware_scan_status = 'CLEAN'
 """
 
 

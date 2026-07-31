@@ -58,6 +58,20 @@ Responsável por:
 - controle de acesso;
 - avaliação e melhoria tenant-scoped por artefatos versionados e reversíveis.
 
+## Scanner ClamAV
+
+- recebe uploads por `INSTREAM`, sem volume de documentos compartilhado;
+- mantém a base de assinaturas em volume próprio e atualizável;
+- não publica a porta 3310 no host;
+- falha ou limite excedido nunca equivalem a arquivo limpo.
+
+## Parser isolado
+
+- não participa da rede do Compose e não recebe segredos ou credenciais;
+- monta anexos e RAG somente para leitura e escreve apenas no socket Unix e `/tmp`;
+- executa um subprocesso limitado e descartável por documento;
+- retorna somente texto, páginas, confiança, contagem e versão do parser.
+
 ## Banco Transacional
 
 Sugestão:

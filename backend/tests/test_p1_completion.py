@@ -234,13 +234,15 @@ def test_tenant_jurisdiction_can_be_configured_and_feeds_dashboard(app, client, 
                 "type": "Feature",
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": [[
-                        [-43.68, -21.82],
-                        [-43.18, -21.82],
-                        [-43.18, -21.52],
-                        [-43.68, -21.52],
-                        [-43.68, -21.82],
-                    ]],
+                    "coordinates": [
+                        [
+                            [-43.68, -21.82],
+                            [-43.18, -21.82],
+                            [-43.18, -21.52],
+                            [-43.68, -21.52],
+                            [-43.68, -21.82],
+                        ]
+                    ],
                 },
                 "properties": {"codarea": "3136702"},
             }

@@ -34,3 +34,19 @@
   logs, eventos ou artefato e nenhum sinal cruza tenant;
 - para conectores: allowlist, SSRF, cofre de segredos, limites, quarentena e snapshot versionado testados;
 - credenciais de runtime confirmadas como `NOSUPERUSER` e `NOBYPASSRLS`.
+- validação de saída exercitada com sinais críticos, canário, métricas e rollback;
+- criptografia em repouso comprovada por teste de autenticação cruzada entre tenants;
+- auditoria automatizada de RLS concluída sem tabela ou role não conforme.
+- para segurança de conteúdo: threat model revisado, dataset adversarial executado,
+  ataques críticos contidos, recall/falsos positivos dentro dos gates e ausência de
+  chunks ou embeddings para decisões diferentes de `CLEAN`;
+- falha de scanner ou classificador obrigatório validada como fail-closed, sem
+  publicação ou aprovação implícita;
+- canonicalização possui limites explícitos e testes para codificação, Unicode,
+  espaçamento e typos, sem perder partes não transformadas do conteúdo;
+- classificador usa modelo independente do gerador e rejeita qualquer campo ou
+  categoria fora do contrato fechado;
+- upload malicioso, MIME divergente, indisponibilidade do ClamAV e alteração de
+  checksum antes do parsing são bloqueados em testes fail-closed;
+- parser confirmado sem rede, segredos, escrita nos objetos, capabilities ou
+  privilégios adicionais, com limites e timeout testados;

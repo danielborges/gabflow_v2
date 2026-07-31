@@ -20,6 +20,12 @@ from app.models import (
     RequestHistory,
 )
 from app.notifications.service import notify_user
+from app.security.malware import (
+    MalwareDetectedError,
+    MalwareScannerUnavailable,
+    apply_malware_scan,
+    require_clean_stored_file,
+)
 
 DOCUMENT_OCR_EVENT = "OcrDocumentoSolicitacao"
 OCR_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png"}
@@ -181,17 +187,13 @@ class TesseractOcrProvider:
 
     @staticmethod
     def _normalize_native_text(text: str) -> str:
-        lines = [
-            re.sub(r"[ \t]+", " ", line).strip() for line in str(text).splitlines()
-        ]
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in str(text).splitlines()]
         return "\n".join(line for line in lines if line).strip()
 
     def _ocr_page(self, image, page_number: int) -> dict:
         width, height = image.size
         if width * height > self.maximum_pixels:
-            raise NonRetryableOcrError(
-                "A imagem excede o limite de resolução permitido para OCR."
-            )
+            raise NonRetryableOcrError("A imagem excede o limite de resolução permitido para OCR.")
         try:
             import pytesseract
             from pytesseract import Output
@@ -234,7 +236,40 @@ class TesseractOcrProvider:
         }
 
 
+class IsolatedOcrProvider:
+    provider = "ISOLATED_TESSERACT"
+
+    def __init__(self, model: str, language: str) -> None:
+        self.model = model
+        self.language = language
+
+    def extract(self, path: Path, mime_type: str) -> OcrResult:
+        from app.rag.isolated_parser import (
+            IsolatedParserError,
+            NonRetryableIsolatedParserError,
+            parse_document_isolated,
+        )
+
+        try:
+            result = parse_document_isolated(path, mime_type)
+        except NonRetryableIsolatedParserError as error:
+            raise NonRetryableOcrError(str(error)) from error
+        except IsolatedParserError as error:
+            raise OcrError(str(error)) from error
+        return OcrResult(
+            text=result.text,
+            confidence=result.confidence,
+            page_count=result.page_count,
+            pages=result.pages,
+        )
+
+
 def ocr_provider() -> OcrProvider:
+    if current_app.config["DOCUMENT_PARSER_ISOLATION_ENABLED"]:
+        return IsolatedOcrProvider(
+            model=current_app.config["DOCUMENT_OCR_MODEL"],
+            language=current_app.config["DOCUMENT_OCR_LANGUAGE"],
+        )
     provider = current_app.config["DOCUMENT_OCR_PROVIDER"].lower()
     if provider != "tesseract":
         raise RuntimeError(f"Provedor de OCR não suportado: {provider}.")
@@ -307,9 +342,32 @@ def execute_document_ocr(ocr: DocumentOcr) -> None:
     ocr.status = DocumentOcrStatus.PROCESSANDO
     ocr.started_at = datetime.now(UTC)
     db.session.flush()
-    result = ocr_provider().extract(
-        attachment_path(attachment.storage_key), attachment.mime_type
-    )
+    path = attachment_path(attachment.storage_key)
+    try:
+        scan = require_clean_stored_file(
+            path,
+            attachment.mime_type,
+            attachment.sha256,
+            encryption_scope=f"tenant:{attachment.tenant_id}",
+        )
+    except MalwareDetectedError as error:
+        attachment.scan_status = AttachmentScanStatus.BLOQUEADO
+        attachment.scan_error_code = "MALWARE_OR_INTEGRITY_DETECTED"
+        attachment.scanned_at = datetime.now(UTC)
+        raise NonRetryableOcrError("Anexo bloqueado pela verificacao antimalware.") from error
+    except MalwareScannerUnavailable as error:
+        attachment.scan_status = AttachmentScanStatus.PENDENTE
+        attachment.scan_error_code = "MALWARE_SCANNER_UNAVAILABLE"
+        attachment.scanned_at = datetime.now(UTC)
+        raise OcrError("Scanner antimalware indisponivel; tente novamente.") from error
+    apply_malware_scan(attachment, scan)
+    attachment.scan_status = AttachmentScanStatus.LIMPO
+    from app.security.encryption import plaintext_file
+
+    with plaintext_file(
+        path, f"tenant:{attachment.tenant_id}", suffix=path.suffix
+    ) as plaintext_path:
+        result = ocr_provider().extract(plaintext_path, attachment.mime_type)
     ocr.extracted_text = result.text
     ocr.confidence = result.confidence
     ocr.page_count = result.page_count

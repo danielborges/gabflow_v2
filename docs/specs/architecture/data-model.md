@@ -539,3 +539,30 @@ próxima execução sem apagar seu histórico.
   escopo nas citações e auditorias.
 - Feedback, julgamentos, execuções e artefatos de aprendizado usam foreign keys
   compostas com `tenant_id`; cache e worker também particionam por tenant.
+
+## Estado de segurança de conteúdo
+
+`RagDocumentVersion`, `GlobalKnowledgeDocumentVersion`, `RagKnowledgeSource` e
+`RagQueryFeedback` persistem o mesmo contrato do gateway:
+
+- `security_status`: `CLEAN`, `SUSPICIOUS`, `MALICIOUS` ou `INDETERMINATE`;
+- `security_action`: `ALLOW`, `QUARANTINE`, `BLOCK` ou `RETRY`;
+- `security_score`, `security_categories` e `security_signals`;
+- versões da política, detector e classificador;
+- checksum do material avaliado, instante da avaliação e código de erro.
+
+O estado não contém o payload analisado. Registros legados migram como
+`INDETERMINATE/RETRY` e só se tornam `CLEAN/ALLOW` após avaliação explícita.
+
+Versões privadas e globais também registram `security_quarantined_at`,
+`security_purged_at`, decisão/justificativa/revisor da revisão e o checksum ao qual
+a revisão se aplica. Aprovação não altera diretamente o estado: ela apenas autoriza
+novo processamento do mesmo checksum. Mudança do checksum invalida a aprovação.
+
+### Execução de revarredura de segurança
+
+`rag_security_rescan_runs` registra uma execução tenant-scoped ou global com corte
+temporal estável, versão da política, versão das assinaturas, fase, cursor e tamanho
+do lote. Os contadores distinguem alvos processados, limpos, em quarentena, erros e
+purges de chunks, OCR e transcrição. RLS permite a linha do tenant ou, para escopo
+global, o contexto explícito de administração do catálogo.

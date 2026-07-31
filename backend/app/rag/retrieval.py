@@ -30,7 +30,12 @@ from app.models import (
     RagKnowledgeSource,
     RagKnowledgeSourceStatus,
 )
-from app.rag.content_security import has_prompt_injection
+from app.rag.content_security import (
+    ContentSecurityAction,
+    ContentSecurityStatus,
+    ContentSecuritySurface,
+    assess_content_security,
+)
 from app.rag.distribution import global_versions_for_tenant
 from app.rag.grounded_generation import (
     GroundingSource,
@@ -86,6 +91,10 @@ def answer_query(
 ) -> dict:
     started = time.perf_counter()
     normalized_query = _validate_query(query)
+    query_security = assess_content_security(
+        normalized_query,
+        surface=ContentSecuritySurface.USER_QUERY,
+    )
     max_results = _safe_limit(limit)
     (
         ranked,
@@ -113,6 +122,7 @@ def answer_query(
     grounded = bool(ranked)
     sources = [_source_data(item) for item in ranked]
     safety_flags = _safety_summary(sources)
+    safety_flags["consulta"] = query_security.as_dict()
     generation_sources = tuple(
         GroundingSource(
             id=str(item.chunk.id),
@@ -724,6 +734,9 @@ def _private_candidate_chunks(tenant_id: UUID, role: str | None) -> Iterable[Rag
             RagDocument.active.is_(True),
             RagDocumentVersion.ingestion_status == RagIngestionStatus.INDEXADO,
             RagDocumentVersion.lifecycle_status == RagDocumentLifecycle.VIGENTE,
+            RagDocumentVersion.security_status == ContentSecurityStatus.CLEAN,
+            RagDocumentVersion.security_action == ContentSecurityAction.ALLOW,
+            RagDocumentVersion.malware_scan_status == "CLEAN",
             or_(RagDocumentVersion.valid_from.is_(None), RagDocumentVersion.valid_from <= today),
             or_(RagDocumentVersion.valid_until.is_(None), RagDocumentVersion.valid_until >= today),
             or_(~has_operational_source, has_eligible_operational_source),
@@ -859,6 +872,7 @@ def _private_source_data(item: RankedChunk) -> dict:
         "riscoPromptInjection": sanitized["risk"],
         "conteudoSanitizado": sanitized["sanitized"],
         "instrucoesIgnoradas": sanitized["ignoredInstructions"],
+        "segurancaConteudo": sanitized["securityDecision"],
     }
 
 
@@ -925,6 +939,7 @@ def _global_source_data(item: RankedChunk) -> dict:
         "riscoPromptInjection": sanitized["risk"],
         "conteudoSanitizado": sanitized["sanitized"],
         "instrucoesIgnoradas": sanitized["ignoredInstructions"],
+        "segurancaConteudo": sanitized["securityDecision"],
     }
 
 
@@ -1501,18 +1516,21 @@ def _excerpt(content: str, max_chars: int = 700) -> str:
     return f"{value[: max_chars - 1].rstrip()}..."
 
 
-def _has_prompt_injection(content: str) -> bool:
-    return has_prompt_injection(content)
-
-
 def _sanitize_source_content(content: str) -> dict:
+    content_decision = assess_content_security(
+        content,
+        surface=ContentSecuritySurface.CHUNK_SEQUENCE,
+    )
     removed = []
     safe_sentences = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", content):
         value = sentence.strip()
         if not value:
             continue
-        if _has_prompt_injection(value):
+        if assess_content_security(
+            value,
+            surface=ContentSecuritySurface.CHUNK_SEQUENCE,
+        ).risky:
             removed.append(_excerpt(value, 180))
             continue
         safe_sentences.append(value)
@@ -1524,9 +1542,10 @@ def _sanitize_source_content(content: str) -> dict:
     return {
         "content": sanitized_content,
         "usable": bool(safe_sentences),
-        "risk": bool(removed) or _has_prompt_injection(content),
+        "risk": bool(removed) or content_decision.risky,
         "sanitized": bool(removed),
         "ignoredInstructions": removed,
+        "securityDecision": content_decision.as_dict(),
     }
 
 

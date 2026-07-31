@@ -187,7 +187,12 @@ def _request(client, csrf):
 def _upload_image(client, csrf, request_id):
     return client.post(
         f"/api/v1/solicitacoes/{request_id}/anexos",
-        data={"arquivo": (io.BytesIO(b"imagem-original-preservada"), "documento.png")},
+        data={
+            "arquivo": (
+                io.BytesIO(b"\x89PNG\r\n\x1a\nimagem-original-preservada"),
+                "documento.png",
+            )
+        },
         headers={"X-CSRF-TOKEN": csrf},
         content_type="multipart/form-data",
     )
@@ -232,7 +237,7 @@ def test_document_is_processed_reviewed_and_original_is_preserved(app, client, m
     assert quality.json["cobertura"]["confiancaMediaOcr"] == 0.91
 
     download = client.get(attachment["downloadUrl"])
-    assert download.data == b"imagem-original-preservada"
+    assert download.data == b"\x89PNG\r\n\x1a\nimagem-original-preservada"
     with app.app_context():
         assert db.session.execute(
             select(AuditLog).where(AuditLog.action == "document.ocr.editar")

@@ -283,6 +283,19 @@ continuam apontando para a versão exata que as fundamentou.
 11. Executar testes de qualidade e segurança.
 12. Publicar a versão mediante autorização compatível com o escopo.
 
+O fluxo está implementado até a quarentena uniforme: projeções operacionais, uploads
+diretos e catálogo global passam pelo mesmo gateway; estados não limpos bloqueiam
+derivados, publicação e retrieval. Revisões humanas são vinculadas ao checksum e
+exigem novo processamento. O threat model, as fronteiras de confiança, os invariantes e os gates estão em
+`architecture/rag-content-security-threat-model.md`; a massa inicial está em
+`datasets/prompt-injection-adversarial-v1.json`.
+
+Desde a Release 5.4, a etapa de prompt injection primeiro canonicaliza o conteúdo
+dentro de limites de tamanho e decodifica somente payloads textuais e imprimíveis.
+Em seguida combina sinais determinísticos com um classificador dedicado, cujo modelo
+não pode ser o gerador de respostas. O retorno possui contrato fechado e sua
+indisponibilidade obrigatória resulta em `INDETERMINATE/RETRY`.
+
 ## Recuperação federada e roteamento híbrido
 
 Antes da recuperação, um roteador classifica a intenção:

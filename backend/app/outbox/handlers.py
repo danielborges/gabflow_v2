@@ -41,7 +41,9 @@ from app.models import (
     RagDocumentVersion,
     RagLearningArtifact,
     RagLearningRun,
+    RagSecurityRescanRun,
     RequestHistory,
+    RlsAuditRun,
     ServiceRequest,
 )
 from app.rag.calibration import (
@@ -68,12 +70,19 @@ from app.rag.operational_memory import (
     fail_operational_memory_sync,
 )
 from app.rag.projectors import ProjectorAction
+from app.rag.security_rescan import (
+    SECURITY_RESCAN_EVENT,
+    execute_security_rescan,
+    fail_security_rescan,
+)
 from app.rag.service import (
     RAG_INGESTION_EVENT,
     NonRetryableRagError,
     execute_ingestion,
     fail_ingestion,
 )
+from app.security.rls_audit import RLS_AUDIT_EVENT, execute_rls_audit, fail_rls_audit
+from app.tenant_context import activate_global_knowledge_context
 
 EMAIL_RESPONSE_EVENT = "RespostaEmailSolicitacao"
 
@@ -125,10 +134,7 @@ def handle_event(event: OutboxEvent) -> None:
                 str(event.payload.get("entityType") or ""),
                 _uuid(event.payload, "entityId"),
                 action=ProjectorAction(
-                    str(
-                        event.payload.get("action")
-                        or ProjectorAction.RECONCILE.value
-                    ).upper()
+                    str(event.payload.get("action") or ProjectorAction.RECONCILE.value).upper()
                 ),
                 revision=int(event.payload.get("revision") or 1),
                 source_module=event.payload.get("sourceModule"),
@@ -148,6 +154,15 @@ def handle_event(event: OutboxEvent) -> None:
             expected_stage_index=int(event.payload.get("stageIndex", -1)),
         )
         return
+    if event.event_type == SECURITY_RESCAN_EVENT:
+        execute_security_rescan(_security_rescan_run(event))
+        return
+    if event.event_type == RLS_AUDIT_EVENT:
+        run = db.session.get(RlsAuditRun, _uuid(event.payload, "runId"))
+        if run is None:
+            raise NonRetryableEventError("Auditoria RLS nao encontrada.")
+        execute_rls_audit(run)
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
         return
@@ -163,6 +178,11 @@ def handle_event(event: OutboxEvent) -> None:
 
 
 def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
+    if event.event_type == RLS_AUDIT_EVENT:
+        run = db.session.get(RlsAuditRun, _uuid(event.payload, "runId"))
+        if run is not None:
+            fail_rls_audit(run, error_message)
+        return
     if event.event_type in {AI_TRIAGE_EVENT, AI_ASSISTANCE_EVENT}:
         execution = _ai_execution(event)
         execution.status = AIExecutionStatus.FALHOU
@@ -195,9 +215,7 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         payload = event.payload
         try:
             action = ProjectorAction(
-                str(
-                    payload.get("action") or ProjectorAction.RECONCILE.value
-                ).upper()
+                str(payload.get("action") or ProjectorAction.RECONCILE.value).upper()
             )
             entity_id = _uuid(payload, "entityId")
             revision = int(payload.get("revision") or 1)
@@ -227,6 +245,9 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
             _rag_learning_artifact(event),
             error_message,
         )
+        return
+    if event.event_type == SECURITY_RESCAN_EVENT:
+        fail_security_rescan(_security_rescan_run(event), error_message)
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -399,9 +420,7 @@ def _rag_learning_run(event: OutboxEvent) -> RagLearningRun:
     run_id = _uuid(event.payload, "runId")
     run = db.session.get(RagLearningRun, run_id)
     if run is None or run.tenant_id != event.tenant_id:
-        raise NonRetryableEventError(
-            "Execução de compilação RAG não encontrada."
-        )
+        raise NonRetryableEventError("Execução de compilação RAG não encontrada.")
     return run
 
 
@@ -409,9 +428,7 @@ def _rag_learning_artifact(event: OutboxEvent) -> RagLearningArtifact:
     artifact_id = _uuid(event.payload, "artifactId")
     artifact = db.session.get(RagLearningArtifact, artifact_id)
     if artifact is None or artifact.tenant_id != event.tenant_id:
-        raise NonRetryableEventError(
-            "Perfil candidato da calibração RAG não encontrado."
-        )
+        raise NonRetryableEventError("Perfil candidato da calibração RAG não encontrado.")
     return artifact
 
 
@@ -425,3 +442,13 @@ def _global_rag_document_version(
             "Versão do catálogo global não encontrada ou evento com tenant inválido."
         )
     return version
+
+
+def _security_rescan_run(event: OutboxEvent) -> RagSecurityRescanRun:
+    if event.tenant_id is None:
+        activate_global_knowledge_context()
+    run_id = _uuid(event.payload, "runId")
+    run = db.session.get(RagSecurityRescanRun, run_id)
+    if run is None or run.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Execução de revarredura não encontrada.")
+    return run

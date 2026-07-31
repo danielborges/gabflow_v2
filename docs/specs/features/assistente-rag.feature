@@ -11,6 +11,80 @@ Funcionalidade: Assistente RAG hierárquico
     E deve criar fragmentos com página e gerar embeddings
     E deve registrar o processamento de forma assíncrona e auditável
 
+  Cenário: Avaliar o pipeline com dataset adversarial versionado
+    Dado que existe uma versão imutável do dataset de prompt injection
+    E o dataset contém ataques e controles benignos separados entre regressão e holdout
+    Quando uma versão do detector, classificador, prompt ou pipeline for candidata a release
+    Então todos os casos críticos conhecidos devem ser bloqueados ou colocados em quarentena
+    E recall adversarial e taxa de falsos positivos devem respeitar os gates do threat model
+    E conteúdo do dataset não deve ser indexado como fonte factual nem apresentado como citação
+
+  Esquema do Cenário: Cobrir superfícies adversariais de conteúdo
+    Dado que o caso adversarial usa a superfície "<superficie>"
+    E emprega a técnica "<tecnica>"
+    Quando o gateway de segurança avaliar o caso
+    Então deve produzir uma decisão fechada e reproduzível
+    E uma decisão diferente de CLEAN não deve gerar chunks ou embeddings
+
+    Exemplos:
+      | superficie        | tecnica                |
+      | DOCUMENT_BODY     | INSTRUCTION_OVERRIDE   |
+      | DOCUMENT_METADATA | METADATA_INJECTION     |
+      | OCR_LAYER         | MULTIMODAL_INJECTION   |
+      | CHUNK_SEQUENCE    | MULTI_CHUNK_ATTACK     |
+      | USER_QUERY        | PROMPT_EXTRACTION      |
+      | FEEDBACK          | PERSISTENT_INJECTION   |
+      | CONNECTOR_CONTENT | DATA_EXFILTRATION      |
+
+  Cenário: Preservar conteúdo legítimo que discute segurança
+    Dado que um documento legítimo cita uma frase de ataque para proibi-la ou analisá-la
+    Quando o dataset adversarial classificar esse controle benigno
+    Então a decisão esperada deve ser CLEAN
+    E o caso deve contribuir para a métrica de falsos positivos
+
+  Cenário: Canonicalizar e classificar conteúdo não confiável
+    Dado que uma entrada pode conter Unicode invisível, codificação ou texto ofuscado
+    Quando o gateway aplicar a política de segurança
+    Então deve canonicalizar a entrada dentro dos limites configurados
+    E deve usar um classificador dedicado diferente do gerador de respostas
+    E deve aceitar somente label, score e categorias do contrato fechado
+    E indisponibilidade do classificador obrigatório deve resultar em INDETERMINATE e RETRY
+
+  Cenário: Bloquear malware antes do parsing
+    Dado que um arquivo não confiável foi enviado ao GabFlow
+    Quando o gateway receber o upload
+    Então deve submetê-lo ao ClamAV antes de gravá-lo
+    E deve validar que o conteúdo corresponde ao MIME declarado
+    E falha, timeout, limite excedido ou detecção devem impedir o parsing
+
+  Cenário: Executar parsing em fronteira isolada
+    Dado que o arquivo foi classificado como limpo
+    Quando for necessário extrair texto, DOCX, PDF ou imagem
+    Então checksum e antimalware devem ser revalidados
+    E o parser não deve possuir rede, segredos, escrita nos objetos ou capabilities
+    E deve respeitar limites de arquivo, memória, CPU, processos, saída e timeout
+
+  Cenário: Revarrer o acervo após mudança da política de segurança
+    Dado que existem versões privadas, globais e anexos avaliados por política anterior
+    Quando um administrador iniciar uma revarredura
+    Então o sistema deve congelar um corte do acervo e invalidar os alvos por padrão
+    E deve processar lotes retomáveis registrando política, assinaturas, cursor e progresso
+    E somente itens novamente classificados como CLEAN devem voltar ao retrieval
+
+  Cenário: Purgar derivados de conteúdo reclassificado
+    Dado que uma revarredura detectou malware, adulteração ou conteúdo inseguro
+    Quando a decisão de quarentena for persistida
+    Então chunks, embeddings e texto extraído devem ser eliminados fisicamente
+    E OCR, transcrição e memória operacional derivados do anexo devem ser eliminados
+    E a trilha mínima de auditoria e os contadores do purge devem ser preservados
+
+  Cenário: Falhar de forma fechada antes da indexação
+    Dado que um scanner ou classificador obrigatório está indisponível
+    Quando uma nova versão documental aguardar avaliação de segurança
+    Então a decisão deve ser INDETERMINATE
+    E a versão não deve ser publicada, fragmentada ou vetorizada
+    E o processamento deve poder ser repetido sem aprovação implícita
+
   Cenário: Negar consulta privada sem contexto de tenant
     Dado que uma transação não possui o contexto app.tenant_id
     Quando tentar consultar documentos, versões, chunks ou feedback privado
@@ -430,6 +504,27 @@ Funcionalidade: Assistente RAG hierárquico
     Quando o contexto for preparado para a geração
     Então o trecho deve ser sanitizado e limitado
     E a instrução não deve alterar o contrato, as fontes ou a política do sistema
+
+  Cenário: Colocar upload suspeito em quarentena antes dos derivados
+    Dado que um upload privado ou global recebeu decisão diferente de CLEAN
+    Quando o worker concluir a avaliação de segurança
+    Então nenhum chunk, embedding ou texto extraído deve permanecer
+    E a versão não pode ser publicada nem recuperada
+    E a listagem de quarentena não deve expor payload ou link de download
+
+  Cenário: Reprocessar falso positivo somente após revisão vinculada ao checksum
+    Dado que uma versão suspeita foi aprovada por usuário autorizado com justificativa
+    E a aprovação corresponde ao checksum atual
+    Quando o administrador solicitar o reprocessamento
+    Então o gateway deve preservar a proveniência da revisão
+    E somente uma decisão final CLEAN e ALLOW pode recriar os derivados
+    E a publicação deve continuar sendo uma ação separada e auditada
+
+  Cenário: Invalidar revisão quando o checksum não corresponde
+    Dado que uma versão em quarentena possui aprovação para outro checksum
+    Quando o administrador solicitar o reprocessamento
+    Então o pedido deve ser rejeitado
+    E nenhum derivado deve ser criado
 
   Cenário: Rejeitar contradição apesar da semelhança lexical
     Dado que a fonte proíbe uma conduta

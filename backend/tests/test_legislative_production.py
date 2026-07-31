@@ -131,9 +131,7 @@ def test_legislative_draft_full_human_review_flow(app, client):
     assert [item["numero"] for item in history.json["content"]] == [2, 1]
     assert history.json["content"][0]["autor"] == "Admin A"
 
-    initial_version = client.get(
-        f"/api/v1/legislativo/minutas/{detail.json['id']}/versoes/1"
-    )
+    initial_version = client.get(f"/api/v1/legislativo/minutas/{detail.json['id']}/versoes/1")
     assert initial_version.status_code == 200
     assert initial_version.json["conteudo"] == detail.json["conteudo"]
 
@@ -240,9 +238,7 @@ def test_legislative_draft_full_human_review_flow(app, client):
     assert len(movement.json["tramitacoes"]) == 2
     assert movement.json["tramitacoes"][1]["referenciaExterna"] == "MOV-2026-002"
 
-    timeline = client.get(
-        f"/api/v1/legislativo/minutas/{detail.json['id']}/tramitacoes"
-    )
+    timeline = client.get(f"/api/v1/legislativo/minutas/{detail.json['id']}/tramitacoes")
     assert timeline.status_code == 200
     assert [item["status"] for item in timeline.json["content"]] == [
         "PROTOCOLADA",
@@ -279,9 +275,7 @@ def test_legislative_draft_full_human_review_flow(app, client):
         ).scalar_one()
 
 
-def test_normative_foundation_is_retrieved_and_only_applied_after_human_review(
-    app, client
-):
+def test_normative_foundation_is_retrieved_and_only_applied_after_human_review(app, client):
     csrf = _login(client)
     source = _post(
         client,
@@ -572,9 +566,7 @@ def test_multiple_legislative_request_links_are_validated(client):
     assert "máximo 20" in over_limit.json["message"]
 
 
-def test_semantic_precedent_search_ranks_filters_and_isolates_tenant(
-    app, client, monkeypatch
-):
+def test_semantic_precedent_search_ranks_filters_and_isolates_tenant(app, client, monkeypatch):
     _login(client)
     with app.app_context():
         tenant_a = db.session.execute(
@@ -583,12 +575,8 @@ def test_semantic_precedent_search_ranks_filters_and_isolates_tenant(
         tenant_b = db.session.execute(
             select(Tenant).where(Tenant.slug == "gabinete-b")
         ).scalar_one()
-        user_a = db.session.execute(
-            select(User).where(User.tenant_id == tenant_a.id)
-        ).scalar_one()
-        user_b = db.session.execute(
-            select(User).where(User.tenant_id == tenant_b.id)
-        ).scalar_one()
+        user_a = db.session.execute(select(User).where(User.tenant_id == tenant_a.id)).scalar_one()
+        user_b = db.session.execute(select(User).where(User.tenant_id == tenant_b.id)).scalar_one()
         related = LegislativeDraft(
             tenant_id=tenant_a.id,
             document_type=LegislativeDocumentType.INDICACAO,

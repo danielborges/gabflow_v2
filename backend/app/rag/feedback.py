@@ -22,7 +22,14 @@ from app.models import (
     RagQueryFeedbackRating,
     utc_now,
 )
-from app.rag.content_security import has_prompt_injection
+from app.rag.content_security import (
+    ContentSecurityDecision,
+    ContentSecurityStatus,
+    ContentSecuritySurface,
+    apply_content_security_decision,
+    assess_content_security,
+    content_security_state,
+)
 from app.rag.distribution import global_versions_for_tenant
 
 EXPECTED_METHODS = {"DOCUMENTAL", "ESTRUTURADO", "HIBRIDO"}
@@ -151,7 +158,9 @@ def create_feedback_revision(
         )
 
     now = utc_now()
-    status, moderation_mode, moderation_rule = _initial_moderation(values)
+    status, moderation_mode, moderation_rule, security_decision = _initial_moderation(
+        values
+    )
     feedback = RagQueryFeedback(
         tenant_id=tenant_id,
         query_id=query_id,
@@ -171,6 +180,7 @@ def create_feedback_revision(
         moderation_rule=moderation_rule,
         moderated_at=now if moderation_mode else None,
     )
+    apply_content_security_decision(feedback, security_decision)
     db.session.add(feedback)
     db.session.flush()
     for judgment in values["source_judgments"]:
@@ -255,6 +265,7 @@ def feedback_data(item: RagQueryFeedback) -> dict:
         "moderadoPorId": str(item.moderated_by_id) if item.moderated_by_id else None,
         "moderadoEm": item.moderated_at.isoformat() if item.moderated_at else None,
         "justificativaModeracao": item.moderation_reason,
+        "segurancaConteudo": content_security_state(item),
     }
 
 
@@ -611,17 +622,24 @@ def _initial_moderation(
     RagFeedbackStatus,
     RagFeedbackModerationMode | None,
     str | None,
+    ContentSecurityDecision,
 ]:
-    if has_prompt_injection(values["comment"] or "") or has_prompt_injection(
-        values["corrected_response"] or ""
-    ) or any(
-        has_prompt_injection(str(value))
-        for value in values["expected_filters"].values()
-    ):
+    security_decision = assess_content_security(
+        "\n".join(
+            (
+                values["comment"] or "",
+                values["corrected_response"] or "",
+            )
+        ),
+        surface=ContentSecuritySurface.FEEDBACK,
+        metadata=values["expected_filters"],
+    )
+    if security_decision.status != ContentSecurityStatus.CLEAN:
         return (
             RagFeedbackStatus.QUARENTENA,
             RagFeedbackModerationMode.AUTOMATICA,
             "prompt-injection-v1",
+            security_decision,
         )
     if (
         values["comment"]
@@ -631,11 +649,12 @@ def _initial_moderation(
             for item in values["source_judgments"]
         )
     ):
-        return RagFeedbackStatus.PENDENTE_REVISAO, None, None
+        return RagFeedbackStatus.PENDENTE_REVISAO, None, None, security_decision
     return (
         RagFeedbackStatus.APROVADO,
         RagFeedbackModerationMode.AUTOMATICA,
         "structured-low-risk-v1",
+        security_decision,
     )
 
 

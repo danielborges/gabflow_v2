@@ -28,6 +28,7 @@ from app.models import (
     PlatformSupportAccess,
     PublicLead,
     RagDocument,
+    RlsAuditRun,
     Role,
     ServiceRequest,
     Tenant,
@@ -37,6 +38,7 @@ from app.models import (
 )
 from app.modules import AVAILABLE_MODULES, DEFAULT_MODULES, normalize_modules, validate_modules
 from app.plans import USER_LIMIT_REACHED_MESSAGE, normalize_plan, user_limit_for_plan
+from app.security.rls_audit import create_rls_audit, rls_audit_data
 from app.territory_suggestions import reload_suggested_territories
 
 platform_bp = Blueprint("platform", __name__)
@@ -57,6 +59,32 @@ BR_PHONE_RE = re.compile(
     r"^\D*([1-9]{2})\D*(?:(9\d{4})\D*(\d{4})|([2-5]\d{3})\D*(\d{4}))\D*$"
 )
 TENANT_ROLES = {Role.ADMIN, Role.REPRESENTATIVE, Role.STAFF}
+
+
+@platform_bp.post("/seguranca/auditorias-rls")
+@platform_admin_required
+def request_rls_audit():
+    run = create_rls_audit(_actor_id())
+    db.session.commit()
+    return jsonify(rls_audit_data(run)), 202
+
+
+@platform_bp.get("/seguranca/auditorias-rls")
+@platform_admin_required
+def list_rls_audits():
+    items = db.session.scalars(
+        select(RlsAuditRun).order_by(RlsAuditRun.created_at.desc()).limit(100)
+    )
+    return jsonify(content=[rls_audit_data(item) for item in items])
+
+
+@platform_bp.get("/seguranca/auditorias-rls/<uuid:run_id>")
+@platform_admin_required
+def get_rls_audit(run_id: uuid.UUID):
+    run = db.session.get(RlsAuditRun, run_id)
+    if run is None:
+        return jsonify(error="resource_not_found", message="Auditoria RLS nao encontrada."), 404
+    return jsonify(rls_audit_data(run))
 
 
 def _actor_id() -> uuid.UUID:

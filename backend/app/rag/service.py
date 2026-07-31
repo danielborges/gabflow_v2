@@ -25,7 +25,25 @@ from app.models import (
     RagKnowledgeSourceStatus,
 )
 from app.notifications.service import notify_user
+from app.rag.content_security import (
+    ContentSecurityStatus,
+    ContentSecuritySurface,
+    apply_approved_review,
+    apply_content_security_decision,
+    assess_content_security,
+)
+from app.rag.isolated_parser import (
+    IsolatedParserError,
+    NonRetryableIsolatedParserError,
+    parse_document_isolated,
+)
 from app.rag.storage import rag_document_path
+from app.security.malware import (
+    MalwareDetectedError,
+    MalwareScannerUnavailable,
+    apply_malware_scan,
+    require_clean_stored_file,
+)
 
 RAG_INGESTION_EVENT = "IngestaoDocumentoRag"
 
@@ -64,7 +82,11 @@ def requeue_ingestion(version: RagDocumentVersion) -> None:
     enqueue_ingestion(version)
 
 
-def execute_ingestion(version: RagDocumentVersion) -> None:
+def execute_ingestion(
+    version: RagDocumentVersion,
+    *,
+    send_notification: bool = True,
+) -> None:
     if version.ingestion_status == RagIngestionStatus.INDEXADO:
         return
     operational_source = db.session.execute(
@@ -80,24 +102,48 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
         and operational_source.status != RagKnowledgeSourceStatus.PENDENTE
     ):
         version.ingestion_status = RagIngestionStatus.FALHOU
-        version.error = (
-            "Ingestão cancelada porque a fonte operacional não está pendente."
-        )
+        version.error = "Ingestão cancelada porque a fonte operacional não está pendente."
         return
     version.ingestion_status = RagIngestionStatus.PROCESSANDO
     version.started_at = datetime.now(UTC)
     version.error = None
     db.session.flush()
 
-    extracted = extract_document(
-        rag_document_path(
-            version.storage_key,
-            tenant_id=version.tenant_id,
-            document_id=version.document_id,
-            version_id=version.id,
-        ),
-        version.mime_type,
+    document_path = rag_document_path(
+        version.storage_key,
+        tenant_id=version.tenant_id,
+        document_id=version.document_id,
+        version_id=version.id,
     )
+    if not _rescan_before_parsing(version, document_path, operational_source):
+        return
+    extracted = extract_document(
+        document_path,
+        version.mime_type,
+        encryption_scope=f"tenant:{version.tenant_id}",
+    )
+    security_decision = apply_approved_review(
+        version,
+        assess_content_security(
+            extracted.text,
+            surface=ContentSecuritySurface.DOCUMENT_BODY,
+            metadata={
+                "filename": version.original_name,
+                "mimeType": version.mime_type,
+                "sourceUrl": version.source_url,
+                "documentType": version.document.document_type,
+            },
+        ),
+    )
+    apply_content_security_decision(version, security_decision)
+    if security_decision.status != ContentSecurityStatus.CLEAN:
+        quarantine_ingestion(
+            version,
+            security_decision,
+            operational_source,
+            send_notification=send_notification,
+        )
+        return
     if len(extracted.text.strip()) < current_app.config["RAG_MIN_TEXT_CHARS"]:
         raise NonRetryableRagError("O documento não possui texto suficiente para indexação.")
     chunks = split_chunks(
@@ -159,6 +205,13 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
         "modelo": provider.model,
         "paginas": version.page_count,
         "fragmentos": version.chunk_count,
+        "segurancaConteudo": {
+            "status": version.security_status.value,
+            "action": version.security_action.value,
+            "score": round(version.security_score, 4),
+            "policyVersion": version.security_policy_version,
+            "detectorVersion": version.security_detector_version,
+        },
     }
     db.session.add(
         AuditLog(
@@ -170,15 +223,139 @@ def execute_ingestion(version: RagDocumentVersion) -> None:
             after=details,
         )
     )
-    notify_user(
-        version.tenant_id,
-        version.created_by_id,
-        NotificationType.SISTEMA,
-        "Documento indexado",
-        f"{version.original_name} está disponível na base documental.",
-        "rag_document_version",
-        version.id,
+    if send_notification:
+        notify_user(
+            version.tenant_id,
+            version.created_by_id,
+            NotificationType.SISTEMA,
+            "Documento indexado",
+            f"{version.original_name} está disponível na base documental.",
+            "rag_document_version",
+            version.id,
+        )
+
+
+def quarantine_ingestion(
+    version: RagDocumentVersion,
+    security_decision,
+    operational_source: RagKnowledgeSource | None = None,
+    *,
+    send_notification: bool = True,
+) -> None:
+    now = datetime.now(UTC)
+    db.session.execute(delete(RagChunk).where(RagChunk.version_id == version.id))
+    version.extracted_text = None
+    version.page_count = None
+    version.embedding_model = None
+    version.chunk_count = 0
+    version.indexed_at = None
+    version.ingestion_status = RagIngestionStatus.FALHOU
+    version.error = (
+        "Conteúdo retido pela política de segurança; revisão autorizada necessária."
+        if security_decision.risky
+        else "Avaliação de segurança inconclusiva; reprocessamento necessário."
     )
+    version.security_quarantined_at = now
+    version.security_purged_at = now
+    if version.lifecycle_status == RagDocumentLifecycle.VIGENTE:
+        version.lifecycle_status = RagDocumentLifecycle.RASCUNHO
+    if operational_source is not None:
+        apply_content_security_decision(operational_source, security_decision)
+        operational_source.status = (
+            RagKnowledgeSourceStatus.QUARENTENA
+            if security_decision.risky
+            else RagKnowledgeSourceStatus.ERRO
+        )
+        operational_source.eligibility_reason = (
+            "PROMPT_INJECTION_DETECTED"
+            if security_decision.risky
+            else "CONTENT_SECURITY_INDETERMINATE"
+        )
+        operational_source.error_code = (
+            "CONTENT_SECURITY_REVIEW_REQUIRED"
+            if security_decision.risky
+            else "CONTENT_SECURITY_RETRY_REQUIRED"
+        )
+        operational_source.quarantined_at = now if security_decision.risky else None
+    db.session.add(
+        AuditLog(
+            tenant_id=version.tenant_id,
+            user_id=version.created_by_id,
+            action="rag_document.security_quarantined",
+            entity_type="rag_document_version",
+            entity_id=str(version.id),
+            after={
+                "documentoId": str(version.document_id),
+                "status": security_decision.status.value,
+                "action": security_decision.action.value,
+                "score": round(security_decision.score, 4),
+                "signals": list(security_decision.signals),
+                "policyVersion": security_decision.policy_version,
+                "contentChecksum": security_decision.content_checksum,
+                "derivedArtifactsPurged": True,
+            },
+        )
+    )
+    if send_notification:
+        notify_user(
+            version.tenant_id,
+            version.created_by_id,
+            NotificationType.SISTEMA,
+            "Documento em quarentena",
+            "Uma versão foi retida pela política de segurança e requer revisão.",
+            "rag_document_version",
+            version.id,
+        )
+
+
+def _rescan_before_parsing(version, path: Path, operational_source) -> bool:
+    try:
+        scan = require_clean_stored_file(
+            path,
+            version.mime_type,
+            version.checksum,
+            encryption_scope=f"tenant:{version.tenant_id}",
+        )
+    except MalwareDetectedError:
+        now = datetime.now(UTC)
+        version.malware_scan_status = "INFECTED"
+        version.malware_scan_provider = current_app.config["MALWARE_SCANNER_PROVIDER"]
+        version.malware_scan_error_code = "MALWARE_OR_INTEGRITY_DETECTED"
+        version.malware_scanned_at = now
+        db.session.execute(delete(RagChunk).where(RagChunk.version_id == version.id))
+        version.extracted_text = None
+        version.page_count = None
+        version.embedding_model = None
+        version.chunk_count = 0
+        version.indexed_at = None
+        version.security_purged_at = now
+        version.ingestion_status = RagIngestionStatus.FALHOU
+        version.lifecycle_status = RagDocumentLifecycle.RASCUNHO
+        version.error = "Arquivo bloqueado pela verificacao antimalware."
+        if operational_source is not None:
+            operational_source.status = RagKnowledgeSourceStatus.QUARENTENA
+            operational_source.eligibility_reason = "MALWARE_DETECTED"
+            operational_source.error_code = "MALWARE_REVIEW_REQUIRED"
+            operational_source.quarantined_at = now
+        db.session.add(
+            AuditLog(
+                tenant_id=version.tenant_id,
+                user_id=version.created_by_id,
+                action="rag_document.malware_quarantined",
+                entity_type="rag_document_version",
+                entity_id=str(version.id),
+                after={"derivedArtifactsPurged": True, "status": "INFECTED"},
+            )
+        )
+        return False
+    except MalwareScannerUnavailable as error:
+        version.malware_scan_status = "INDETERMINATE"
+        version.malware_scan_provider = current_app.config["MALWARE_SCANNER_PROVIDER"]
+        version.malware_scan_error_code = "MALWARE_SCANNER_UNAVAILABLE"
+        version.malware_scanned_at = datetime.now(UTC)
+        raise RagIngestionError("Scanner antimalware indisponivel; tente novamente.") from error
+    apply_malware_scan(version, scan)
+    return True
 
 
 def fail_ingestion(
@@ -202,9 +379,7 @@ def fail_ingestion(
     operational_source.status = RagKnowledgeSourceStatus.ERRO
     operational_source.eligibility_reason = "INGESTION_FAILED"
     operational_source.error_code = "RAG_INGESTION_EXHAUSTED"
-    operational_source.error_message = re.sub(
-        r"\s+", " ", str(error_message or "")
-    ).strip()[:500]
+    operational_source.error_message = re.sub(r"\s+", " ", str(error_message or "")).strip()[:500]
     operational_source.sync_attempts = max(1, attempts)
     db.session.add(
         AuditLog(
@@ -223,7 +398,25 @@ def fail_ingestion(
     )
 
 
-def extract_document(path: Path, mime_type: str) -> ExtractedDocument:
+def extract_document(
+    path: Path,
+    mime_type: str,
+    *,
+    encryption_scope: str | None = None,
+) -> ExtractedDocument:
+    if encryption_scope:
+        from app.security.encryption import plaintext_file
+
+        with plaintext_file(path, encryption_scope, suffix=path.suffix) as plaintext_path:
+            return extract_document(plaintext_path, mime_type)
+    if current_app.config["DOCUMENT_PARSER_ISOLATION_ENABLED"]:
+        try:
+            result = parse_document_isolated(path, mime_type)
+        except NonRetryableIsolatedParserError as error:
+            raise NonRetryableRagError(str(error)) from error
+        except IsolatedParserError as error:
+            raise RagIngestionError(str(error)) from error
+        return ExtractedDocument(text=result.text, pages=result.pages)
     if mime_type == "text/plain":
         try:
             text = path.read_text(encoding="utf-8")

@@ -30,8 +30,32 @@ class Config:
     SENTRY_DSN = os.getenv("SENTRY_DSN")
     SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
     ATTACHMENT_STORAGE_PATH = os.getenv("ATTACHMENT_STORAGE_PATH", "/data/attachments")
+    STORAGE_ENCRYPTION_MASTER_KEY = os.getenv(
+        "STORAGE_ENCRYPTION_MASTER_KEY", SECRET_KEY
+    )
+    STORAGE_ENCRYPTION_KEY_VERSION = int(
+        os.getenv("STORAGE_ENCRYPTION_KEY_VERSION", "1")
+    )
     MAX_ATTACHMENT_BYTES = int(os.getenv("MAX_ATTACHMENT_BYTES", str(15 * 1024 * 1024)))
     ATTACHMENT_TOKEN_MAX_AGE = int(os.getenv("ATTACHMENT_TOKEN_MAX_AGE", "300"))
+    MALWARE_SCANNER_ENABLED = (
+        os.getenv("MALWARE_SCANNER_ENABLED", "true").lower() == "true"
+    )
+    MALWARE_SCANNER_REQUIRED = (
+        os.getenv("MALWARE_SCANNER_REQUIRED", "true").lower() == "true"
+    )
+    MALWARE_SCANNER_PROVIDER = os.getenv("MALWARE_SCANNER_PROVIDER", "clamd")
+    MALWARE_SCANNER_HOST = os.getenv("MALWARE_SCANNER_HOST", "clamav")
+    MALWARE_SCANNER_PORT = int(os.getenv("MALWARE_SCANNER_PORT", "3310"))
+    MALWARE_SCANNER_TIMEOUT_SECONDS = float(
+        os.getenv("MALWARE_SCANNER_TIMEOUT_SECONDS", "30")
+    )
+    MALWARE_SCANNER_MAX_BYTES = int(
+        os.getenv("MALWARE_SCANNER_MAX_BYTES", str(30 * 1024 * 1024))
+    )
+    MALWARE_SCANNER_CHUNK_BYTES = int(
+        os.getenv("MALWARE_SCANNER_CHUNK_BYTES", "65536")
+    )
     RAG_STORAGE_PATH = os.getenv("RAG_STORAGE_PATH", "/data/rag")
     RAG_MAX_DOCUMENT_BYTES = int(os.getenv("RAG_MAX_DOCUMENT_BYTES", "26214400"))
     RAG_DOWNLOAD_TOKEN_MAX_AGE = int(os.getenv("RAG_DOWNLOAD_TOKEN_MAX_AGE", "300"))
@@ -115,6 +139,72 @@ class Config:
     )
     RAG_NEURAL_RERANK_MAX_TOKENS = int(
         os.getenv("RAG_NEURAL_RERANK_MAX_TOKENS", "384")
+    )
+    RAG_CONTENT_SECURITY_POLICY_VERSION = os.getenv(
+        "RAG_CONTENT_SECURITY_POLICY_VERSION",
+        "rag-content-security-v2",
+    )
+    RAG_CONTENT_SECURITY_DETECTOR_VERSION = os.getenv(
+        "RAG_CONTENT_SECURITY_DETECTOR_VERSION",
+        "canonical-deterministic-v2",
+    )
+    RAG_CONTENT_SECURITY_MAX_CANONICAL_CHARS = int(
+        os.getenv("RAG_CONTENT_SECURITY_MAX_CANONICAL_CHARS", "1000000")
+    )
+    RAG_CONTENT_SECURITY_MAX_DECODED_CHARS = int(
+        os.getenv("RAG_CONTENT_SECURITY_MAX_DECODED_CHARS", "4096")
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_ENABLED = (
+        os.getenv("RAG_PROMPT_INJECTION_CLASSIFIER_ENABLED", "true").lower() == "true"
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_REQUIRED = (
+        os.getenv("RAG_PROMPT_INJECTION_CLASSIFIER_REQUIRED", "true").lower() == "true"
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_PROVIDER = os.getenv(
+        "RAG_PROMPT_INJECTION_CLASSIFIER_PROVIDER", "ollama"
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_BASE_URL = os.getenv(
+        "RAG_PROMPT_INJECTION_CLASSIFIER_BASE_URL",
+        os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_MODEL = os.getenv(
+        "RAG_PROMPT_INJECTION_CLASSIFIER_MODEL", "qwen2.5:1.5b"
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_VERSION = os.getenv(
+        "RAG_PROMPT_INJECTION_CLASSIFIER_VERSION", "prompt-injection-classifier-v1"
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_TIMEOUT_SECONDS = int(
+        os.getenv("RAG_PROMPT_INJECTION_CLASSIFIER_TIMEOUT_SECONDS", "12")
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_MAX_CHARS = int(
+        os.getenv("RAG_PROMPT_INJECTION_CLASSIFIER_MAX_CHARS", "16000")
+    )
+    RAG_PROMPT_INJECTION_CLASSIFIER_MAX_TOKENS = int(
+        os.getenv("RAG_PROMPT_INJECTION_CLASSIFIER_MAX_TOKENS", "256")
+    )
+    RAG_PROMPT_INJECTION_REQUIRE_DISTINCT_MODEL = (
+        os.getenv("RAG_PROMPT_INJECTION_REQUIRE_DISTINCT_MODEL", "true").lower()
+        == "true"
+    )
+    RAG_PROMPT_INJECTION_FAIL_CLOSED = (
+        os.getenv("RAG_PROMPT_INJECTION_FAIL_CLOSED", "true").lower() == "true"
+    )
+    RAG_OUTPUT_VALIDATION_POLICY_VERSION = os.getenv(
+        "RAG_OUTPUT_VALIDATION_POLICY_VERSION", "rag-output-security-v1"
+    )
+    RAG_OUTPUT_VALIDATOR_VERSION = os.getenv(
+        "RAG_OUTPUT_VALIDATOR_VERSION", "deterministic-output-validator-v1"
+    )
+    RAG_OUTPUT_ROLLOUT_STAGES = [
+        int(value)
+        for value in os.getenv("RAG_OUTPUT_ROLLOUT_STAGES", "5,20,50,100").split(",")
+        if value.strip()
+    ]
+    RAG_OUTPUT_ROLLOUT_MIN_SAMPLES = int(
+        os.getenv("RAG_OUTPUT_ROLLOUT_MIN_SAMPLES", "20")
+    )
+    RAG_OUTPUT_ROLLOUT_MAX_BLOCK_RATE = float(
+        os.getenv("RAG_OUTPUT_ROLLOUT_MAX_BLOCK_RATE", "0.10")
     )
     RAG_ANSWER_GENERATION_ENABLED = (
         os.getenv("RAG_ANSWER_GENERATION_ENABLED", "true").lower() == "true"
@@ -349,6 +439,18 @@ class Config:
         os.getenv("DOCUMENT_OCR_NATIVE_MIN_CHARS", "40")
     )
     DOCUMENT_OCR_BATCH_SIZE = int(os.getenv("DOCUMENT_OCR_BATCH_SIZE", "8"))
+    DOCUMENT_PARSER_ISOLATION_ENABLED = (
+        os.getenv("DOCUMENT_PARSER_ISOLATION_ENABLED", "true").lower() == "true"
+    )
+    DOCUMENT_PARSER_SOCKET_PATH = os.getenv(
+        "DOCUMENT_PARSER_SOCKET_PATH", "/run/gabflow-parser/parser.sock"
+    )
+    DOCUMENT_PARSER_TIMEOUT_SECONDS = float(
+        os.getenv("DOCUMENT_PARSER_TIMEOUT_SECONDS", "120")
+    )
+    DOCUMENT_PARSER_MAX_RESPONSE_BYTES = int(
+        os.getenv("DOCUMENT_PARSER_MAX_RESPONSE_BYTES", "10485760")
+    )
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 
 
@@ -367,6 +469,10 @@ class TestConfig(Config):
     RAG_ANSWER_GENERATION_ENABLED = False
     RAG_ENTAILMENT_ENABLED = False
     RAG_NLI_ENABLED = False
+    RAG_PROMPT_INJECTION_CLASSIFIER_ENABLED = False
+    RAG_PROMPT_INJECTION_CLASSIFIER_REQUIRED = False
+    MALWARE_SCANNER_PROVIDER = "local"
+    DOCUMENT_PARSER_ISOLATION_ENABLED = False
     RAG_LEARNING_MIN_SIGNALS = 1
     RAG_LEARNING_ONLINE_MIN_SAMPLES = 2
     RAG_QUALITY_ONLINE_MIN_SAMPLES = 2

@@ -59,9 +59,10 @@ def test_regression_case_captures_minimized_baseline_and_is_idempotent(app, clie
     assert data["hardNegatives"] == [_reference(seeded, second=True)]
     assert data["baseline"]["schemaVersion"] == "rag-regression-baseline-v1"
     assert data["baseline"]["consultaId"] == seeded["query_id"]
-    assert data["baseline"]["respostaHash"] == hashlib.sha256(
-        b"A regra consta na fonte citada."
-    ).hexdigest()
+    assert (
+        data["baseline"]["respostaHash"]
+        == hashlib.sha256(b"A regra consta na fonte citada.").hexdigest()
+    )
     assert "resposta" not in data["baseline"]
     assert all("trecho" not in source for source in data["baseline"]["fontes"])
     assert data["baselineCapturadoEm"] is not None
@@ -76,22 +77,17 @@ def test_regression_case_captures_minimized_baseline_and_is_idempotent(app, clie
     assert repeated.get_json()["severidade"] == "ALTA"
 
     listed = client.get(
-        "/api/v1/assistente/avaliacoes/perguntas"
-        "?origem=REGRESSAO&severidade=ALTA&ativa=true"
+        "/api/v1/assistente/avaliacoes/perguntas?origem=REGRESSAO&severidade=ALTA&ativa=true"
     )
     assert listed.status_code == 200
     assert [item["id"] for item in listed.get_json()["content"]] == [data["id"]]
 
     with app.app_context():
         item = db.session.scalar(
-            select(RagEvaluationQuestion).where(
-                RagEvaluationQuestion.id == uuid.UUID(data["id"])
-            )
+            select(RagEvaluationQuestion).where(RagEvaluationQuestion.id == uuid.UUID(data["id"]))
         )
         audit = db.session.scalar(
-            select(AuditLog).where(
-                AuditLog.action == "rag_evaluation.regression_case_created"
-            )
+            select(AuditLog).where(AuditLog.action == "rag_evaluation.regression_case_created")
         )
         assert item.source_query_id == uuid.UUID(seeded["query_id"])
         assert audit is not None
