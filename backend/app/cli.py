@@ -5,6 +5,18 @@ from sqlalchemy import select
 from app.agency_suggestions import reload_suggested_agencies
 from app.auth.security import hash_password
 from app.default_categories import ensure_default_request_categories
+from app.electoral.geography import (
+    IBGE_GEOMETRY_SOURCE,
+    IBGE_LOCALITIES_SOURCE,
+    download_official_json,
+    import_geometry_geojson,
+)
+from app.electoral.ingestion import (
+    ElectoralImportError,
+    download_official_archive,
+    import_dataset_archive,
+    publish_validated_dataset,
+)
 from app.extensions import db
 from app.models import (
     ExternalAgency,
@@ -27,6 +39,92 @@ from app.territory_suggestions import reload_suggested_territories
 
 
 def register_commands(app: Flask) -> None:
+    @app.cli.command("electoral-import-geometry")
+    @click.option("--source-url", default=IBGE_GEOMETRY_SOURCE, show_default=True)
+    @click.option("--localities-url", default=IBGE_LOCALITIES_SOURCE, show_default=True)
+    @click.option("--year", type=click.IntRange(2000, 2100), default=2024, show_default=True)
+    @click.option("--uf", default="MG", show_default=True)
+    @click.option(
+        "--quality",
+        type=click.Choice(["minima", "intermediaria", "maxima"]),
+        default="intermediaria",
+        show_default=True,
+    )
+    def electoral_import_geometry(
+        source_url: str,
+        localities_url: str,
+        year: int,
+        uf: str,
+        quality: str,
+    ) -> None:
+        geometry_payload = download_official_json(source_url)
+        localities_payload = download_official_json(localities_url)
+        version, repeated, manifest = import_geometry_geojson(
+            geometry_payload,
+            localities_payload,
+            source_url=source_url,
+            reference_year=year,
+            uf=uf,
+            quality=quality,
+        )
+        click.echo(
+            f"Geometria {version.id}: status={version.status}, feicoes={version.feature_count}, "
+            f"crosswalk={manifest.get('crosswalkMatched')}, idempotente={str(repeated).lower()}."
+        )
+
+    @app.cli.command("electoral-import")
+    @click.option("--source-url", required=True, help="URL oficial do recurso TSE.")
+    @click.option("--file", "archive_file", type=click.Path(exists=True, dir_okay=False))
+    @click.option("--year", type=click.IntRange(2012, 2100), required=True)
+    @click.option("--scope", type=click.Choice(["municipal", "general"]), required=True)
+    @click.option("--uf", type=str, required=True)
+    @click.option("--office-code", type=str)
+    @click.option("--expected-total-votes", type=click.IntRange(0))
+    @click.option("--publish/--no-publish", default=True)
+    def electoral_import(
+        source_url: str,
+        archive_file: str | None,
+        year: int,
+        scope: str,
+        uf: str,
+        office_code: str | None,
+        expected_total_votes: int | None,
+        publish: bool,
+    ) -> None:
+        downloaded = archive_file is None
+        path = download_official_archive(source_url) if downloaded else archive_file
+        try:
+            dataset, idempotent = import_dataset_archive(
+                path,
+                source_url=source_url,
+                election_year=year,
+                election_scope=scope,
+                uf=uf,
+                office_code=office_code,
+                expected_total_votes=expected_total_votes,
+                publish=publish,
+            )
+        except ElectoralImportError as error:
+            suffix = f" Dataset: {error.dataset_id}." if error.dataset_id else ""
+            raise click.ClickException(f"{error}{suffix}") from error
+        finally:
+            if downloaded:
+                path.unlink(missing_ok=True)
+        click.echo(
+            f"Dataset {dataset.id}: status={dataset.status.value}, "
+            f"linhas={dataset.row_count}, votos={dataset.total_votes}, "
+            f"qualidade={dataset.quality_score}, idempotente={str(idempotent).lower()}."
+        )
+
+    @app.cli.command("electoral-publish")
+    @click.option("--dataset-id", type=click.UUID, required=True)
+    def electoral_publish(dataset_id) -> None:
+        try:
+            dataset = publish_validated_dataset(dataset_id)
+        except ElectoralImportError as error:
+            raise click.ClickException(str(error)) from error
+        click.echo(f"Dataset {dataset.id} publicado com qualidade {dataset.quality_score}.")
+
     @app.cli.command("worker")
     @click.option("--once", is_flag=True, help="Processa um lote e encerra.")
     def worker(once: bool) -> None:
@@ -69,15 +167,12 @@ def register_commands(app: Flask) -> None:
                         if not identifiers:
                             break
                         for entity_id in identifiers:
-                            enqueue_operational_memory(
-                                item.id, entity_type, entity_id
-                            )
+                            enqueue_operational_memory(item.id, entity_type, entity_id)
                         db.session.commit()
                         total += len(identifiers)
                         cursor = identifiers[-1]
         click.echo(
-            f"{total} entidade(s) operacional(is) enfileirada(s) "
-            f"em {len(tenants)} tenant(s)."
+            f"{total} entidade(s) operacional(is) enfileirada(s) em {len(tenants)} tenant(s)."
         )
 
     @app.cli.command("seed")

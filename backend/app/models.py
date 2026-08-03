@@ -60,6 +60,27 @@ class ContractStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class MandateStatus(str, enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ENDED = "ended"
+
+
+class ElectoralDatasetStatus(str, enum.Enum):
+    DISCOVERED = "DISCOVERED"
+    DOWNLOADED = "DOWNLOADED"
+    PARSED = "PARSED"
+    VALIDATED = "VALIDATED"
+    PUBLISHED = "PUBLISHED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class ElectoralTerritoryLevel(str, enum.Enum):
+    MUNICIPALITY = "municipality"
+    ELECTORAL_ZONE = "electoral_zone"
+
+
 class PlatformSettingType(str, enum.Enum):
     PARAMETER = "PARAMETER"
     GLOBAL_TEMPLATE = "GLOBAL_TEMPLATE"
@@ -485,6 +506,491 @@ class PoliticalParty(db.Model):
     )
 
 
+class ElectoralDatasetVersion(db.Model):
+    __tablename__ = "electoral_dataset_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_hash",
+            "coverage_key",
+            "parser_version",
+            name="uq_electoral_dataset_hash_coverage",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_format: Mapped[str] = mapped_column(String(20), default="ZIP_CSV", nullable=False)
+    parser_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    coverage_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    election_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    election_scope: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    office_code: Mapped[str | None] = mapped_column(String(10), index=True)
+    coverage: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    validation_manifest: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    raw_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[ElectoralDatasetStatus] = mapped_column(
+        Enum(ElectoralDatasetStatus, name="electoral_dataset_status"),
+        default=ElectoralDatasetStatus.DISCOVERED,
+        nullable=False,
+        index=True,
+    )
+    row_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    invalid_rows: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_votes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    quality_score: Mapped[float | None] = mapped_column(Float)
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ElectoralElection(db.Model):
+    __tablename__ = "electoral_elections"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id", "external_id", name="uq_electoral_election_version_external"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    round: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    election_date: Mapped[date | None] = mapped_column(Date)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+
+
+class ElectoralOffice(db.Model):
+    __tablename__ = "electoral_offices"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+
+class ElectoralParty(db.Model):
+    __tablename__ = "electoral_parties"
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "number", name="uq_electoral_party_version_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    acronym: Mapped[str] = mapped_column(String(30), nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+
+
+class ElectoralCandidate(db.Model):
+    __tablename__ = "electoral_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id", "external_id", name="uq_electoral_candidate_version_external"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    ballot_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(430), nullable=False, index=True)
+
+
+class ElectoralCandidacy(db.Model):
+    __tablename__ = "electoral_candidacies"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id",
+            "election_id",
+            "candidate_id",
+            "office_id",
+            name="uq_electoral_candidacy_version_election_candidate_office",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    election_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_elections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    office_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_offices.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    party_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_parties.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    ballot_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str | None] = mapped_column(String(120))
+
+
+class ElectoralTerritory(db.Model):
+    __tablename__ = "electoral_territories"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id",
+            "level",
+            "uf",
+            "municipality_code",
+            "zone",
+            name="uq_electoral_territory_version_place",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    level: Mapped[ElectoralTerritoryLevel] = mapped_column(
+        Enum(ElectoralTerritoryLevel, name="electoral_territory_level"), nullable=False, index=True
+    )
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    municipality_code: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    municipality_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    zone: Mapped[int | None] = mapped_column(Integer)
+    derived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class ElectoralResult(db.Model):
+    __tablename__ = "electoral_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id",
+            "election_id",
+            "candidacy_id",
+            "territory_id",
+            name="uq_electoral_result_version_candidacy_territory",
+        ),
+        CheckConstraint("votes >= 0", name="ck_electoral_results_votes_nonnegative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    election_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_elections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidacy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_candidacies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    territory_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_territories.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    votes: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculation_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class ElectoralStagingResult(db.Model):
+    __tablename__ = "electoral_staging_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id", "row_number", name="uq_electoral_staging_version_row"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_dataset_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    row_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    canonical_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    validation_error: Mapped[str | None] = mapped_column(String(500), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class ElectoralIdentityReview(db.Model):
+    __tablename__ = "electoral_identity_reviews"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_identity_reviews_tenant_user",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "subject_candidate_id",
+            "linked_candidate_id",
+            name="uq_electoral_identity_review_user_pair",
+        ),
+        CheckConstraint(
+            "subject_candidate_id <> linked_candidate_id",
+            name="ck_electoral_identity_review_distinct_candidates",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    subject_candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    linked_candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    decision: Mapped[str] = mapped_column(String(20), nullable=False)
+    method: Mapped[str] = mapped_column(String(40), default="human_review", nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(500))
+    reviewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class ElectoralFavorite(db.Model):
+    __tablename__ = "electoral_favorites"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_favorites_tenant_user",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "target_type",
+            "target_id",
+            name="uq_electoral_favorite_user_target",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    label: Mapped[str] = mapped_column(String(160), nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class ElectoralSavedComparison(db.Model):
+    __tablename__ = "electoral_saved_comparisons"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_saved_comparisons_tenant_user",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    election_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_elections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    level: Mapped[str] = mapped_column(String(30), nullable=False)
+    municipality_code: Mapped[str | None] = mapped_column(String(10))
+    filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ElectoralReportJob(db.Model):
+    __tablename__ = "electoral_report_jobs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "mandate_id"],
+            ["mandates.tenant_id", "mandates.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_report_jobs_tenant_mandate",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "requested_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_report_jobs_tenant_requester",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_electoral_report_jobs_tenant_id_id"),
+        CheckConstraint("format IN ('PDF', 'CSV', 'XLSX')", name="ck_electoral_report_format"),
+        CheckConstraint(
+            "report_type IN ('candidate', 'comparison')",
+            name="ck_electoral_report_type",
+        ),
+        CheckConstraint(
+            "status IN ('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'REVOKED')",
+            name="ck_electoral_report_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    requested_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    report_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    format: Mapped[str] = mapped_column(String(10), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(500), nullable=False)
+    filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="QUEUED", nullable=False, index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+
+
+class ElectoralGeneratedReport(db.Model):
+    __tablename__ = "electoral_generated_reports"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "report_job_id"],
+            ["electoral_report_jobs.tenant_id", "electoral_report_jobs.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_generated_reports_tenant_job",
+        ),
+        UniqueConstraint("report_job_id", name="uq_electoral_generated_report_job"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    report_job_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    filename: Mapped[str] = mapped_column(String(240), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    encryption_key_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    encryption_algorithm: Mapped[str] = mapped_column(String(40), nullable=False)
+    encrypted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    download_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class ElectoralGeometryVersion(db.Model):
+    __tablename__ = "electoral_geometry_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_hash",
+            "reference_year",
+            "uf",
+            "level",
+            "quality",
+            name="uq_electoral_geometry_source_coverage",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    reference_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    level: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    quality: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    feature_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    raw_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ElectoralGeometryFeature(db.Model):
+    __tablename__ = "electoral_geometry_features"
+    __table_args__ = (
+        UniqueConstraint(
+            "geometry_version_id",
+            "official_code",
+            name="uq_electoral_geometry_feature_version_code",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    geometry_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_geometry_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    official_code: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
+    geometry_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    geometry_geojson: Mapped[dict] = mapped_column(JSON, nullable=False)
+    bbox: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    derived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class ElectoralTerritoryCrosswalk(db.Model):
+    __tablename__ = "electoral_territory_crosswalks"
+    __table_args__ = (
+        UniqueConstraint(
+            "geometry_version_id",
+            "electoral_code",
+            name="uq_electoral_crosswalk_version_electoral_code",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    geometry_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_geometry_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    geometry_feature_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("electoral_geometry_features.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    electoral_code: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    official_code: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(40), nullable=False)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    review_notes: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
 class User(db.Model):
     __tablename__ = "users"
     __table_args__ = (
@@ -513,6 +1019,181 @@ class User(db.Model):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     tenant: Mapped[Tenant | None] = relationship(back_populates="users", foreign_keys=[tenant_id])
+
+
+class Mandate(db.Model):
+    __tablename__ = "mandates"
+    __table_args__ = (UniqueConstraint("tenant_id", "id", name="uq_mandates_tenant_id_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    representative_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    status: Mapped[MandateStatus] = mapped_column(
+        Enum(MandateStatus, name="mandate_status"),
+        default=MandateStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    office: Mapped[str | None] = mapped_column(String(120))
+    jurisdiction: Mapped[str | None] = mapped_column(String(160))
+    starts_on: Mapped[date | None] = mapped_column(Date)
+    ends_on: Mapped[date | None] = mapped_column(Date)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ElectoralModuleSettings(db.Model):
+    __tablename__ = "electoral_module_settings"
+    __table_args__ = (
+        CheckConstraint("privacy_threshold >= 1", name="ck_electoral_settings_privacy_threshold"),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    privacy_threshold: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    feature_flags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    updated_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ElectoralCoverageProfile(db.Model):
+    __tablename__ = "electoral_coverage_profiles"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "mandate_id"],
+            ["mandates.tenant_id", "mandates.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_coverage_profiles_tenant_mandate",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_coverage_profiles_tenant_creator",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "mandate_id",
+            "version",
+            name="uq_electoral_coverage_profile_version",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_electoral_coverage_profiles_tenant_id_id"),
+        CheckConstraint("version >= 1", name="ck_electoral_coverage_profile_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    formula_code: Mapped[str] = mapped_column(String(40), default="ICT-1.0", nullable=False)
+    weights: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    targets: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    sensitive_categories: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    explanation: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class ElectoralMandateSnapshot(db.Model):
+    __tablename__ = "electoral_mandate_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "mandate_id"],
+            ["mandates.tenant_id", "mandates.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_mandate_snapshots_tenant_mandate",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "coverage_profile_id"],
+            ["electoral_coverage_profiles.tenant_id", "electoral_coverage_profiles.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_mandate_snapshots_tenant_profile",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_mandate_snapshots_tenant_creator",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_electoral_mandate_snapshots_tenant_id_id"),
+        CheckConstraint("period_end >= period_start", name="ck_electoral_snapshot_period"),
+        CheckConstraint("privacy_threshold >= 1", name="ck_electoral_snapshot_privacy_threshold"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    coverage_profile_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    privacy_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    electoral_context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class ElectoralAccessDelegation(db.Model):
+    __tablename__ = "electoral_access_delegations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "mandate_id"],
+            ["mandates.tenant_id", "mandates.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_delegations_tenant_mandate",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "grantor_user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_delegations_tenant_grantor",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "grantee_user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_delegations_tenant_grantee",
+        ),
+        CheckConstraint("valid_until > valid_from", name="ck_electoral_delegation_window"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    grantor_user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    grantee_user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    capabilities: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
 
 
 class AuditLog(db.Model):

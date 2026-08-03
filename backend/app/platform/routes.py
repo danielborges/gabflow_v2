@@ -36,7 +36,12 @@ from app.models import (
     User,
     UserStatus,
 )
-from app.modules import AVAILABLE_MODULES, DEFAULT_MODULES, normalize_modules, validate_modules
+from app.modules import (
+    AVAILABLE_MODULES,
+    DEFAULT_MODULES,
+    normalize_modules,
+    validate_modules_for_plan,
+)
 from app.plans import USER_LIMIT_REACHED_MESSAGE, normalize_plan, user_limit_for_plan
 from app.security.rls_audit import create_rls_audit, rls_audit_data
 from app.territory_suggestions import reload_suggested_territories
@@ -55,9 +60,7 @@ LEAD_STATUSES = {
 }
 LEAD_PAYMENT_STATUSES = {"pending", "invoice_sent", "paid", "overdue", "cancelled"}
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
-BR_PHONE_RE = re.compile(
-    r"^\D*([1-9]{2})\D*(?:(9\d{4})\D*(\d{4})|([2-5]\d{3})\D*(\d{4}))\D*$"
-)
+BR_PHONE_RE = re.compile(r"^\D*([1-9]{2})\D*(?:(9\d{4})\D*(\d{4})|([2-5]\d{3})\D*(\d{4}))\D*$")
 TENANT_ROLES = {Role.ADMIN, Role.REPRESENTATIVE, Role.STAFF}
 
 
@@ -473,7 +476,9 @@ def update_tenant(tenant_id: uuid.UUID):
             tenant.plan = plan
             tenant.user_limit = plan_limit
         if "modulosHabilitados" in payload:
-            tenant.enabled_modules = _modules(payload["modulosHabilitados"])
+            tenant.enabled_modules = _modules(payload["modulosHabilitados"], tenant.plan)
+        else:
+            validate_modules_for_plan(normalize_modules(tenant.enabled_modules), tenant.plan)
         if "observacoesContrato" in payload:
             tenant.contract_notes = str(payload["observacoesContrato"]).strip()[:2000] or None
     except ValueError as error:
@@ -747,9 +752,8 @@ def reset_tenant_admin(tenant_id: uuid.UUID):
             404,
         )
     before = {"role": user.role.value, "status": user.status.value}
-    if (
-        user.status != UserStatus.ACTIVE
-        and _active_tenant_users(tenant_id) >= user_limit_for_plan(tenant.plan)
+    if user.status != UserStatus.ACTIVE and _active_tenant_users(tenant_id) >= user_limit_for_plan(
+        tenant.plan
     ):
         return jsonify(error="user_limit_reached", message=USER_LIMIT_REACHED_MESSAGE), 422
     user.role = Role.ADMIN
@@ -1214,8 +1218,8 @@ def _positive_int(value, label: str) -> int:
     return parsed
 
 
-def _modules(value) -> list[str]:
-    return validate_modules(value)
+def _modules(value, plan) -> list[str]:
+    return validate_modules_for_plan(value, plan)
 
 
 def _apply_contract_transition(

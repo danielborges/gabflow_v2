@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 
 from app.communications.service import generate_due_return_reminders
 from app.database_security import assert_runtime_database_role
+from app.electoral.reports import cleanup_expired_reports
 from app.extensions import db
 from app.models import Tenant
 from app.outbox.service import ProcessingResult, process_batch, worker_identity
@@ -45,17 +46,21 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
             )
 
             now = time.monotonic()
-            if (
-                app.config["WORKER_RUN_SCHEDULER"]
-                and (once or now - last_scheduler_run >= app.config["SCHEDULER_INTERVAL_SECONDS"])
+            if app.config["WORKER_RUN_SCHEDULER"] and (
+                once or now - last_scheduler_run >= app.config["SCHEDULER_INTERVAL_SECONDS"]
             ):
-                reminders, expirations = _run_scheduler_once()
+                reminders, expirations, report_expirations = _run_scheduler_once()
                 if reminders:
                     app.logger.info("Scheduler generated %s return reminders", reminders)
                 if expirations:
                     app.logger.info(
                         "Scheduler enqueued %s operational memory expirations",
                         expirations,
+                    )
+                if report_expirations:
+                    app.logger.info(
+                        "Scheduler revoked %s expired electoral reports",
+                        report_expirations,
                     )
                 last_scheduler_run = now
 
@@ -75,22 +80,21 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
     return aggregate
 
 
-def _run_scheduler_once() -> tuple[int, int]:
+def _run_scheduler_once() -> tuple[int, int, int]:
     if db.engine.dialect.name == "postgresql":
         acquired = db.session.execute(
-            text(
-                "SELECT pg_try_advisory_xact_lock("
-                "hashtext('gabflow.scheduler.return-reminders'))"
-            )
+            text("SELECT pg_try_advisory_xact_lock(hashtext('gabflow.scheduler.return-reminders'))")
         ).scalar_one()
         if not acquired:
             db.session.commit()
-            return 0, 0
+            return 0, 0, 0
     reminders = generate_due_return_reminders()
     expirations = 0
+    report_expirations = 0
     tenant_ids = list(db.session.scalars(select(Tenant.id).order_by(Tenant.id)))
     for tenant_id in tenant_ids:
         with tenant_context(tenant_id):
             expirations += enqueue_expired_operational_memory(tenant_id)
+            report_expirations += cleanup_expired_reports(tenant_id)
     db.session.commit()
-    return reminders, expirations
+    return reminders, expirations, report_expirations

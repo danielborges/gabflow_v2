@@ -179,6 +179,15 @@ services:
       SEED_PLATFORM_ADMIN_PASSWORD: ${SEED_PLATFORM_ADMIN_PASSWORD:-}
       APP_DB_USER: ${APP_DB_USER:-gabflow_app}
       WORKER_DB_USER: ${WORKER_DB_USER:-gabflow_worker}
+      ELECTORAL_STORAGE_PATH: /app/data/electoral
+      ELECTORAL_MAX_ARCHIVE_BYTES: ${ELECTORAL_MAX_ARCHIVE_BYTES:-2147483648}
+      ELECTORAL_MAX_UNCOMPRESSED_BYTES: ${ELECTORAL_MAX_UNCOMPRESSED_BYTES:-8589934592}
+      ELECTORAL_IMPORT_BATCH_SIZE: ${ELECTORAL_IMPORT_BATCH_SIZE:-2000}
+      ELECTORAL_REPORT_RETENTION_DAYS: ${ELECTORAL_REPORT_RETENTION_DAYS:-30}
+      ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS: ${ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS:-300}
+      ELECTORAL_REPORT_MAX_ROWS: ${ELECTORAL_REPORT_MAX_ROWS:-10000}
+    volumes:
+      - electoral_data:/app/data/electoral
     command: ["true"]
     depends_on:
       db-roles:
@@ -272,6 +281,10 @@ services:
       MALWARE_SCANNER_MAX_BYTES: ${MALWARE_SCANNER_MAX_BYTES:-31457280}
       MALWARE_SCANNER_CHUNK_BYTES: ${MALWARE_SCANNER_CHUNK_BYTES:-65536}
       RAG_STORAGE_PATH: /app/data/rag
+      ELECTORAL_STORAGE_PATH: /app/data/electoral
+      ELECTORAL_REPORT_RETENTION_DAYS: ${ELECTORAL_REPORT_RETENTION_DAYS:-30}
+      ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS: ${ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS:-300}
+      ELECTORAL_REPORT_MAX_ROWS: ${ELECTORAL_REPORT_MAX_ROWS:-10000}
       RAG_MAX_DOCUMENT_BYTES: ${RAG_MAX_DOCUMENT_BYTES:-26214400}
       RAG_DOWNLOAD_TOKEN_MAX_AGE: ${RAG_DOWNLOAD_TOKEN_MAX_AGE:-300}
       RAG_ALLOW_LEGACY_STORAGE_KEYS: ${RAG_ALLOW_LEGACY_STORAGE_KEYS:-true}
@@ -387,6 +400,7 @@ services:
     volumes:
       - attachment_data:/app/data/attachments
       - rag_data:/app/data/rag
+      - electoral_data:/app/data/electoral
       - parser_socket:/run/gabflow-parser
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
@@ -478,6 +492,10 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       ATTACHMENT_STORAGE_PATH: /app/data/attachments
       RAG_STORAGE_PATH: /app/data/rag
+      ELECTORAL_STORAGE_PATH: /app/data/electoral
+      ELECTORAL_REPORT_RETENTION_DAYS: ${ELECTORAL_REPORT_RETENTION_DAYS:-30}
+      ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS: ${ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS:-300}
+      ELECTORAL_REPORT_MAX_ROWS: ${ELECTORAL_REPORT_MAX_ROWS:-10000}
       MALWARE_SCANNER_ENABLED: ${MALWARE_SCANNER_ENABLED:-true}
       MALWARE_SCANNER_REQUIRED: ${MALWARE_SCANNER_REQUIRED:-true}
       MALWARE_SCANNER_PROVIDER: ${MALWARE_SCANNER_PROVIDER:-clamd}
@@ -587,6 +605,7 @@ services:
     volumes:
       - attachment_data:/app/data/attachments
       - rag_data:/app/data/rag
+      - electoral_data:/app/data/electoral
       - parser_socket:/run/gabflow-parser
       - whisper_models:/models/whisper
     tmpfs:
@@ -633,5 +652,6 @@ volumes:
   postgres_data:
   attachment_data:
   rag_data:
+  electoral_data:
   ollama_data:
   whisper_models:

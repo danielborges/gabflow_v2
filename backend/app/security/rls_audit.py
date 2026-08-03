@@ -61,7 +61,22 @@ def execute_rls_audit(run: RlsAuditRun) -> None:
             JOIN pg_namespace n ON n.oid = c.relnamespace
             LEFT JOIN pg_policies p ON p.schemaname = n.nspname AND p.tablename = c.relname
             WHERE n.nspname = 'public' AND c.relkind = 'r'
-              AND (c.relname LIKE 'rag_%' OR c.relname = 'attachments')
+              AND (
+                  c.relname LIKE 'rag_%'
+                  OR c.relname IN (
+                      'attachments',
+                      'mandates',
+                      'electoral_module_settings',
+                      'electoral_access_delegations',
+                      'electoral_identity_reviews',
+                      'electoral_favorites',
+                      'electoral_saved_comparisons',
+                      'electoral_report_jobs',
+                      'electoral_generated_reports',
+                      'electoral_coverage_profiles',
+                      'electoral_mandate_snapshots'
+                  )
+              )
               AND EXISTS (
                   SELECT 1 FROM information_schema.columns col
                   WHERE col.table_schema = 'public' AND col.table_name = c.relname
@@ -96,9 +111,7 @@ def execute_rls_audit(run: RlsAuditRun) -> None:
         os.getenv("WORKER_DB_USER", "gabflow_worker"),
     }
     role_rows = db.session.execute(
-        text(
-            "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = ANY(:roles)"
-        ),
+        text("SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = ANY(:roles)"),
         {"roles": list(role_names)},
     ).mappings()
     role_checks = [

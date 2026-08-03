@@ -1,0 +1,1 @@
+"""Electoral intelligence bounded context."""

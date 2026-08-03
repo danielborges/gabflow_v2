@@ -15,6 +15,7 @@ from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.auth.security import hash_password
 from app.default_categories import ensure_default_request_categories
+from app.electoral.service import sync_active_mandate
 from app.extensions import db
 from app.models import (
     AuditLog,
@@ -314,6 +315,7 @@ def update_parliamentarian_profile():
         tenant.representative_info = _clean_parliamentarian(payload, before)
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
+    sync_active_mandate(tenant)
     after = _parliamentarian_data(tenant)
     add_audit(
         tenant_id,
@@ -335,9 +337,7 @@ def parliamentarian_official_insights():
     tenant = db.session.get(Tenant, tenant_id)
     data = _parliamentarian_data(tenant)
     payload = request.get_json(silent=True) or {}
-    name = str(
-        payload.get("nome") or data["nomeParlamentar"] or data["nomeCompleto"]
-    ).strip()
+    name = str(payload.get("nome") or data["nomeParlamentar"] or data["nomeCompleto"]).strip()
     party = str(data.get("partido") or "").strip()
     query = " ".join(item for item in [name, party] if item).strip() or "parlamentar"
     encoded = urllib.parse.quote_plus(query)
@@ -406,9 +406,7 @@ def update_office_profile():
             payload.get("vereador"), tenant.representative_info
         )
         tenant.mandate_info = _clean_dict(payload.get("mandato"), tenant.mandate_info)
-        visual_identity = _clean_dict(
-            payload.get("identidadeVisual"), tenant.visual_identity
-        )
+        visual_identity = _clean_dict(payload.get("identidadeVisual"), tenant.visual_identity)
         if "dadosInstitucionais" in payload:
             visual_identity["dadosInstitucionais"] = _clean_dict(
                 payload.get("dadosInstitucionais"),
@@ -446,6 +444,7 @@ def update_office_profile():
                 message="Chefe de gabinete deve ser assessor ou administrador interno.",
             ), 422
         tenant.chief_of_staff_id = chief.id
+    sync_active_mandate(tenant)
     after = _office_profile_data(tenant)
     add_audit(
         tenant_id, user_id, "tenant.office_profile.updated", "tenant", tenant.id, before, after
@@ -514,6 +513,7 @@ def admin_create_user():
     )
     db.session.add(item)
     db.session.flush()
+    sync_active_mandate(tenant)
     after = _user_data(item)
     add_audit(tenant_id, user_id, "tenant.user.created", "user", item.id, None, after)
     db.session.commit()
@@ -595,6 +595,7 @@ def admin_update_user(item_id: uuid.UUID):
             )
         item.password_hash = hash_password(password)
     db.session.flush()
+    sync_active_mandate(db.session.get(Tenant, tenant_id))
     after = _user_data(item)
     add_audit(tenant_id, user_id, "tenant.user.updated", "user", item.id, before, after)
     db.session.commit()
@@ -614,11 +615,11 @@ def admin_audit():
     )
     items = list(
         db.session.execute(
-        select(AuditLog)
-        .where(AuditLog.tenant_id == tenant_id)
-        .order_by(AuditLog.created_at.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
+            select(AuditLog)
+            .where(AuditLog.tenant_id == tenant_id)
+            .order_by(AuditLog.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
         ).scalars()
     )
     user_ids = {item.user_id for item in items if item.user_id}
@@ -851,11 +852,7 @@ def _clean_parliamentarian(value, fallback) -> dict:
     for mandate in mandates:
         if not isinstance(mandate, dict):
             raise ValueError("Mandato invalido.")
-        cleaned = {
-            str(key): item
-            for key, item in mandate.items()
-            if item not in (None, "")
-        }
+        cleaned = {str(key): item for key, item in mandate.items() if item not in (None, "")}
         status = str(cleaned.get("status", "")).upper()
         if status in {"ATUAL", "ATIVO"}:
             active_count += 1
@@ -876,9 +873,7 @@ def _clean_parliamentarian(value, fallback) -> dict:
         raise ValueError("Redes sociais invalidas.")
     data["areasPrioritarias"] = [str(item).strip() for item in areas if str(item).strip()]
     data["redesSociais"] = {
-        str(key): str(item).strip()
-        for key, item in redes.items()
-        if item not in (None, "")
+        str(key): str(item).strip() for key, item in redes.items() if item not in (None, "")
     }
     email = str(data.get("email") or "").strip()
     phone = str(data.get("telefoneInstitucional") or "").strip()

@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 info:
   title: GabFlow Electoral Intelligence Events
   version: 0.1.0
-  description: Eventos internos do módulo.
+  description: Eventos internos versionados, idempotentes e processados pelo outbox do GabFlow.
 channels:
   datasetImported:
     address: electoral.dataset.imported
@@ -58,29 +58,37 @@ components:
     DatasetImported:
       payload:
         type: object
-        required: [event_id, occurred_at, dataset_version_id, source_hash]
+        required: [event_id, event_version, occurred_at, idempotency_key, dataset_version_id, source_hash]
         properties:
           event_id: { type: string, format: uuid }
+          event_version: { type: integer, const: 1 }
           occurred_at: { type: string, format: date-time }
+          idempotency_key: { type: string, minLength: 1, maxLength: 200 }
+          correlation_id: { type: string, maxLength: 200 }
           dataset_version_id: { type: string, format: uuid }
           source_hash: { type: string }
     DatasetPublished:
       payload:
         type: object
-        required: [event_id, occurred_at, dataset_version_id, quality_score]
+        required: [event_id, event_version, occurred_at, idempotency_key, dataset_version_id, quality_score]
         properties:
           event_id: { type: string, format: uuid }
+          event_version: { type: integer, const: 1 }
           occurred_at: { type: string, format: date-time }
+          idempotency_key: { type: string, minLength: 1, maxLength: 200 }
+          correlation_id: { type: string, maxLength: 200 }
           dataset_version_id: { type: string, format: uuid }
           quality_score: { type: number, minimum: 0, maximum: 1 }
     TenantJob:
       payload:
         type: object
-        required: [event_id, occurred_at, tenant_id, user_id, job_id]
+        required: [event_id, event_version, occurred_at, idempotency_key, tenant_id, user_id, job_id]
         properties:
           event_id: { type: string, format: uuid }
+          event_version: { type: integer, const: 1 }
           occurred_at: { type: string, format: date-time }
+          idempotency_key: { type: string, minLength: 1, maxLength: 200 }
           tenant_id: { type: string, format: uuid }
           user_id: { type: string, format: uuid }
           job_id: { type: string, format: uuid }
-          correlation_id: { type: string }
+          correlation_id: { type: string, maxLength: 200 }

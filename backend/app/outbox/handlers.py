@@ -20,6 +20,12 @@ from app.ai.transcription import (
     execute_audio_transcription,
 )
 from app.communications.email import EmailDeliveryError, send_email
+from app.electoral.reports import (
+    REPORT_EVENT,
+    NonRetryableReportError,
+    execute_report,
+    fail_report,
+)
 from app.extensions import db
 from app.legislative.service import (
     LEGISLATIVE_GENERATION_EVENT,
@@ -36,6 +42,7 @@ from app.models import (
     ContactAttemptOutcome,
     DocumentOcr,
     DocumentOcrStatus,
+    ElectoralReportJob,
     GlobalKnowledgeDocumentVersion,
     OutboxEvent,
     RagDocumentVersion,
@@ -163,6 +170,12 @@ def handle_event(event: OutboxEvent) -> None:
             raise NonRetryableEventError("Auditoria RLS nao encontrada.")
         execute_rls_audit(run)
         return
+    if event.event_type == REPORT_EVENT:
+        try:
+            execute_report(_electoral_report_job(event))
+        except NonRetryableReportError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
         return
@@ -178,6 +191,9 @@ def handle_event(event: OutboxEvent) -> None:
 
 
 def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
+    if event.event_type == REPORT_EVENT:
+        fail_report(_electoral_report_job(event), error_message)
+        return
     if event.event_type == RLS_AUDIT_EVENT:
         run = db.session.get(RlsAuditRun, _uuid(event.payload, "runId"))
         if run is not None:
@@ -452,3 +468,10 @@ def _security_rescan_run(event: OutboxEvent) -> RagSecurityRescanRun:
     if run is None or run.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Execução de revarredura não encontrada.")
     return run
+
+
+def _electoral_report_job(event: OutboxEvent) -> ElectoralReportJob:
+    job = db.session.get(ElectoralReportJob, _uuid(event.payload, "jobId"))
+    if job is None or job.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Job de exportacao eleitoral nao encontrado.")
+    return job

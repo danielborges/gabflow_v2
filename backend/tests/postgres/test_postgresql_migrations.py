@@ -4,11 +4,11 @@ import pytest
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from flask_migrate import downgrade, upgrade
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Citizen, RequestSource, Role, ServiceRequest, Tenant, User
+from app.models import Citizen, Mandate, RequestSource, Role, ServiceRequest, Tenant, User
 
 pytestmark = pytest.mark.postgres
 TEST_PASSWORD_HASH = "integration-test-only"  # noqa: S105
@@ -30,11 +30,33 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "audit_logs",
         "citizens",
         "document_ocrs",
+        "electoral_access_delegations",
+        "electoral_coverage_profiles",
+        "electoral_candidates",
+        "electoral_candidacies",
+        "electoral_dataset_versions",
+        "electoral_elections",
+        "electoral_favorites",
+        "electoral_generated_reports",
+        "electoral_geometry_features",
+        "electoral_geometry_versions",
+        "electoral_identity_reviews",
+        "electoral_module_settings",
+        "electoral_mandate_snapshots",
+        "electoral_offices",
+        "electoral_parties",
+        "electoral_results",
+        "electoral_report_jobs",
+        "electoral_saved_comparisons",
+        "electoral_staging_results",
+        "electoral_territory_crosswalks",
+        "electoral_territories",
         "legislative_drafts",
         "legislative_draft_requests",
         "legislative_tramitations",
         "legislative_draft_versions",
         "legislative_templates",
+        "mandates",
         "normative_sources",
         "privacy_requests",
         "political_parties",
@@ -65,8 +87,69 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "chunks",
     } == global_table_names
 
+
+def test_electoral_foundation_backfills_existing_representative(postgres_app):
+    with postgres_app.app_context():
+        downgrade(revision="h9d4f6a1c853", directory="migrations")
+        tenant = Tenant(
+            name="Gabinete preexistente",
+            slug="gabinete-preexistente",
+            chamber_type="CAMARA_MUNICIPAL",
+            jurisdiction_name="Juiz de Fora/MG",
+        )
+        db.session.add(tenant)
+        db.session.flush()
+        representative = User(
+            tenant_id=tenant.id,
+            name="Parlamentar preexistente",
+            email="preexistente@teste.local",
+            password_hash=TEST_PASSWORD_HASH,
+            role=Role.REPRESENTATIVE,
+        )
+        db.session.add(representative)
+        db.session.commit()
+
+        upgrade(directory="migrations")
+
+        mandate = db.session.execute(
+            select(Mandate).where(Mandate.representative_user_id == representative.id)
+        ).scalar_one()
+        assert mandate.status.value == "active"
+        assert mandate.office == "CAMARA_MUNICIPAL"
+        assert mandate.jurisdiction == "Juiz de Fora/MG"
+
     with postgres_app.app_context(), db.engine.connect() as connection:
         inspector = inspect(connection)
+        electoral_candidate_columns = {
+            column["name"] for column in inspector.get_columns("electoral_candidates")
+        }
+        electoral_rls = {
+            row.table_name: (row.rls_enabled, row.rls_forced)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT relname AS table_name,
+                           relrowsecurity AS rls_enabled,
+                           relforcerowsecurity AS rls_forced
+                    FROM pg_class
+                    WHERE relname = ANY(:tables)
+                    """
+                ),
+                {
+                    "tables": [
+                        "mandates",
+                        "electoral_module_settings",
+                        "electoral_access_delegations",
+                    ]
+                },
+            )
+        }
+        assert electoral_rls == {
+            "mandates": (True, True),
+            "electoral_module_settings": (True, True),
+            "electoral_access_delegations": (True, True),
+        }
+        assert "normalized_name" in electoral_candidate_columns
         query_columns = {
             column["name"] for column in inspector.get_columns("rag_assistant_queries")
         }
@@ -453,6 +536,90 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
     ]
 
 
+def test_electoral_private_rls_and_official_geometry_index(postgres_app):
+    private_tables = {
+        "electoral_identity_reviews",
+        "electoral_favorites",
+        "electoral_saved_comparisons",
+    }
+    with postgres_app.app_context(), db.engine.connect() as connection:
+        policies = {
+            row.table_name: (row.rls_enabled, row.rls_forced, row.expression)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT c.relname AS table_name,
+                           c.relrowsecurity AS rls_enabled,
+                           c.relforcerowsecurity AS rls_forced,
+                           COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expression
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    JOIN pg_policies p ON p.schemaname = n.nspname AND p.tablename = c.relname
+                    WHERE n.nspname = 'public' AND c.relname = ANY(:tables)
+                    """
+                ),
+                {"tables": list(private_tables)},
+            )
+        }
+        geometry_type = connection.execute(
+            text(
+                """
+                SELECT type, srid
+                FROM geometry_columns
+                WHERE f_table_name = 'electoral_geometry_features'
+                  AND f_geometry_column = 'geometry'
+                """
+            )
+        ).one()
+        geometry_index = connection.scalar(
+            text(
+                """
+                SELECT indexdef FROM pg_indexes
+                WHERE tablename = 'electoral_geometry_features'
+                  AND indexname = 'ix_electoral_geometry_features_geometry_gist'
+                """
+            )
+        )
+
+    assert set(policies) == private_tables
+    assert all(enabled and forced for enabled, forced, _ in policies.values())
+    assert all("app.tenant_id" in expression for _, _, expression in policies.values())
+    assert all("app.user_id" in expression for _, _, expression in policies.values())
+    assert geometry_type == ("MULTIPOLYGON", 4326)
+    assert "using gist" in geometry_index.lower()
+
+
+def test_electoral_export_tables_use_forced_tenant_rls(postgres_app):
+    export_tables = {
+        "electoral_report_jobs",
+        "electoral_generated_reports",
+        "electoral_coverage_profiles",
+        "electoral_mandate_snapshots",
+    }
+    with postgres_app.app_context(), db.engine.connect() as connection:
+        policies = {
+            row.table_name: (row.rls_enabled, row.rls_forced, row.expression)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT c.relname AS table_name,
+                           c.relrowsecurity AS rls_enabled,
+                           c.relforcerowsecurity AS rls_forced,
+                           COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expression
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    JOIN pg_policies p ON p.schemaname = n.nspname AND p.tablename = c.relname
+                    WHERE n.nspname = 'public' AND c.relname = ANY(:tables)
+                    """
+                ),
+                {"tables": list(export_tables)},
+            )
+        }
+    assert set(policies) == export_tables
+    assert all(enabled and forced for enabled, forced, _ in policies.values())
+    assert all("app.tenant_id" in expression for _, _, expression in policies.values())
+
+
 def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
     with postgres_app.app_context():
         extension_enabled = db.session.execute(
@@ -631,10 +798,12 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "scan_provider" in rolled_back_attachment_columns
         assert "rag_security_rescan_runs" in rolled_back_tables
         assert "rag_output_validation_profiles" in rolled_back_tables
-        assert "rls_audit_runs" not in rolled_back_tables
-        assert "encryption_key_version" not in rolled_back_private_version_columns
-        assert "encryption_key_version" not in rolled_back_global_version_columns
-        assert "encryption_key_version" not in rolled_back_attachment_columns
+        assert "rls_audit_runs" in rolled_back_tables
+        assert "electoral_coverage_profiles" not in rolled_back_tables
+        assert "electoral_mandate_snapshots" not in rolled_back_tables
+        assert "encryption_key_version" in rolled_back_private_version_columns
+        assert "encryption_key_version" in rolled_back_global_version_columns
+        assert "encryption_key_version" in rolled_back_attachment_columns
         assert "embedding_vector" in rolled_back_chunk_columns
         assert "search_vector" in rolled_back_chunk_columns
         assert "routing_accuracy" in rolled_back_evaluation_run_columns
@@ -724,6 +893,8 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_security_rescan_runs" in reapplied_tables
         assert "rag_output_validation_profiles" in reapplied_tables
         assert "rls_audit_runs" in reapplied_tables
+        assert "electoral_coverage_profiles" in reapplied_tables
+        assert "electoral_mandate_snapshots" in reapplied_tables
         assert "learning_artifacts" in reapplied_query_columns
         assert "activation_mode" in reapplied_learning_artifact_columns
         assert "security_status" in reapplied_private_version_columns

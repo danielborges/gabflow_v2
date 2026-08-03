@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.extensions import db
 
 TENANT_SETTING = "app.tenant_id"
+USER_SETTING = "app.user_id"
 GLOBAL_KNOWLEDGE_ADMIN_SETTING = "app.global_knowledge_admin"
 
 
@@ -29,6 +30,12 @@ def restore_transaction_local_context(
             text("SELECT set_config(:setting, :tenant_id, true)"),
             {"setting": TENANT_SETTING, "tenant_id": str(tenant_id)},
         )
+        user_id = session.info.get("user_id")
+        if user_id is not None:
+            connection.execute(
+                text("SELECT set_config(:setting, :user_id, true)"),
+                {"setting": USER_SETTING, "user_id": str(user_id)},
+            )
         return
 
     if session.info.get("global_knowledge_admin"):
@@ -69,8 +76,25 @@ def current_tenant_id(*, required: bool = True) -> uuid.UUID | None:
     return value
 
 
+def activate_user_context(user_id: uuid.UUID | str) -> uuid.UUID:
+    try:
+        resolved = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+    except (TypeError, ValueError) as error:
+        raise TenantContextError("Usuário inválido para o contexto transacional.") from error
+    if db.session.info.get("tenant_id") is None:
+        raise TenantContextError("Ative o tenant antes do contexto privado do usuário.")
+    if db.engine.dialect.name == "postgresql":
+        db.session.execute(
+            text("SELECT set_config(:setting, :user_id, true)"),
+            {"setting": USER_SETTING, "user_id": str(resolved)},
+        )
+    db.session.info["user_id"] = resolved
+    return resolved
+
+
 def clear_tenant_context() -> None:
     db.session.info.pop("tenant_id", None)
+    db.session.info.pop("user_id", None)
     db.session.info.pop("global_knowledge_admin", None)
     if has_request_context():
         g.pop("tenant_id", None)

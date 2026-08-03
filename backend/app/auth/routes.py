@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.auth.security import verify_password
 from app.extensions import db, limiter
 from app.models import AuditLog, Role, TenantStatus, User, UserStatus
-from app.modules import BLOCKING_CONTRACT_STATUSES, normalize_modules
+from app.modules import BLOCKING_CONTRACT_STATUSES, effective_modules
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -36,7 +36,7 @@ def _serialize_user(user: User) -> dict:
             "status": user.tenant.status.value,
             "contrato": user.tenant.contract_status.value,
             "plano": user.tenant.plan,
-            "modulosHabilitados": normalize_modules(user.tenant.enabled_modules),
+            "modulosHabilitados": effective_modules(user.tenant),
         }
         if user.tenant is not None
         else None,
@@ -84,10 +84,7 @@ def login():
         user is None
         or user.status != UserStatus.ACTIVE
         or (user.tenant is not None and user.tenant.status != TenantStatus.ACTIVE)
-        or (
-            user.tenant is not None
-            and user.tenant.contract_status in BLOCKING_CONTRACT_STATUSES
-        )
+        or (user.tenant is not None and user.tenant.contract_status in BLOCKING_CONTRACT_STATUSES)
         or not verify_password(user.password_hash, password)
     ):
         return jsonify(error="invalid_credentials", message="Credenciais inválidas."), 401

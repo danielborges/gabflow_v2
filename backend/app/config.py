@@ -5,9 +5,7 @@ from datetime import timedelta
 class Config:
     APP_ENV = os.getenv("APP_ENV", "development")
     APP_RELEASE = os.getenv("APP_RELEASE")
-    LOG_FORMAT = os.getenv(
-        "LOG_FORMAT", "json" if APP_ENV == "production" else "text"
-    ).lower()
+    LOG_FORMAT = os.getenv("LOG_FORMAT", "json" if APP_ENV == "production" else "text").lower()
     SECRET_KEY = os.getenv("SECRET_KEY", "development-only-change-me")
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL",
@@ -30,42 +28,41 @@ class Config:
     SENTRY_DSN = os.getenv("SENTRY_DSN")
     SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
     ATTACHMENT_STORAGE_PATH = os.getenv("ATTACHMENT_STORAGE_PATH", "/data/attachments")
-    STORAGE_ENCRYPTION_MASTER_KEY = os.getenv(
-        "STORAGE_ENCRYPTION_MASTER_KEY", SECRET_KEY
-    )
-    STORAGE_ENCRYPTION_KEY_VERSION = int(
-        os.getenv("STORAGE_ENCRYPTION_KEY_VERSION", "1")
-    )
+    STORAGE_ENCRYPTION_MASTER_KEY = os.getenv("STORAGE_ENCRYPTION_MASTER_KEY", SECRET_KEY)
+    STORAGE_ENCRYPTION_KEY_VERSION = int(os.getenv("STORAGE_ENCRYPTION_KEY_VERSION", "1"))
     MAX_ATTACHMENT_BYTES = int(os.getenv("MAX_ATTACHMENT_BYTES", str(15 * 1024 * 1024)))
     ATTACHMENT_TOKEN_MAX_AGE = int(os.getenv("ATTACHMENT_TOKEN_MAX_AGE", "300"))
-    MALWARE_SCANNER_ENABLED = (
-        os.getenv("MALWARE_SCANNER_ENABLED", "true").lower() == "true"
-    )
-    MALWARE_SCANNER_REQUIRED = (
-        os.getenv("MALWARE_SCANNER_REQUIRED", "true").lower() == "true"
-    )
+    MALWARE_SCANNER_ENABLED = os.getenv("MALWARE_SCANNER_ENABLED", "true").lower() == "true"
+    MALWARE_SCANNER_REQUIRED = os.getenv("MALWARE_SCANNER_REQUIRED", "true").lower() == "true"
     MALWARE_SCANNER_PROVIDER = os.getenv("MALWARE_SCANNER_PROVIDER", "clamd")
     MALWARE_SCANNER_HOST = os.getenv("MALWARE_SCANNER_HOST", "clamav")
     MALWARE_SCANNER_PORT = int(os.getenv("MALWARE_SCANNER_PORT", "3310"))
-    MALWARE_SCANNER_TIMEOUT_SECONDS = float(
-        os.getenv("MALWARE_SCANNER_TIMEOUT_SECONDS", "30")
-    )
-    MALWARE_SCANNER_MAX_BYTES = int(
-        os.getenv("MALWARE_SCANNER_MAX_BYTES", str(30 * 1024 * 1024))
-    )
-    MALWARE_SCANNER_CHUNK_BYTES = int(
-        os.getenv("MALWARE_SCANNER_CHUNK_BYTES", "65536")
-    )
+    MALWARE_SCANNER_TIMEOUT_SECONDS = float(os.getenv("MALWARE_SCANNER_TIMEOUT_SECONDS", "30"))
+    MALWARE_SCANNER_MAX_BYTES = int(os.getenv("MALWARE_SCANNER_MAX_BYTES", str(30 * 1024 * 1024)))
+    MALWARE_SCANNER_CHUNK_BYTES = int(os.getenv("MALWARE_SCANNER_CHUNK_BYTES", "65536"))
     RAG_STORAGE_PATH = os.getenv("RAG_STORAGE_PATH", "/data/rag")
+    ELECTORAL_STORAGE_PATH = os.getenv("ELECTORAL_STORAGE_PATH", "/data/electoral")
+    ELECTORAL_DOWNLOAD_TIMEOUT_SECONDS = int(os.getenv("ELECTORAL_DOWNLOAD_TIMEOUT_SECONDS", "120"))
+    ELECTORAL_MAX_ARCHIVE_BYTES = int(
+        os.getenv("ELECTORAL_MAX_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024))
+    )
+    ELECTORAL_MAX_UNCOMPRESSED_BYTES = int(
+        os.getenv("ELECTORAL_MAX_UNCOMPRESSED_BYTES", str(8 * 1024 * 1024 * 1024))
+    )
+    ELECTORAL_IMPORT_BATCH_SIZE = int(os.getenv("ELECTORAL_IMPORT_BATCH_SIZE", "2000"))
+    ELECTORAL_REPORT_RETENTION_DAYS = int(os.getenv("ELECTORAL_REPORT_RETENTION_DAYS", "30"))
+    ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS = min(
+        7 * 24 * 60 * 60,
+        int(os.getenv("ELECTORAL_REPORT_LINK_MAX_AGE_SECONDS", "300")),
+    )
+    ELECTORAL_REPORT_MAX_ROWS = int(os.getenv("ELECTORAL_REPORT_MAX_ROWS", "10000"))
     RAG_MAX_DOCUMENT_BYTES = int(os.getenv("RAG_MAX_DOCUMENT_BYTES", "26214400"))
     RAG_DOWNLOAD_TOKEN_MAX_AGE = int(os.getenv("RAG_DOWNLOAD_TOKEN_MAX_AGE", "300"))
     RAG_ALLOW_LEGACY_STORAGE_KEYS = (
         os.getenv("RAG_ALLOW_LEGACY_STORAGE_KEYS", "true").lower() == "true"
     )
     RAG_EMBEDDING_PROVIDER = os.getenv("RAG_EMBEDDING_PROVIDER", "ollama")
-    RAG_INGESTION_TIMEOUT_SECONDS = int(
-        os.getenv("RAG_INGESTION_TIMEOUT_SECONDS", "120")
-    )
+    RAG_INGESTION_TIMEOUT_SECONDS = int(os.getenv("RAG_INGESTION_TIMEOUT_SECONDS", "120"))
     RAG_CHUNK_SIZE_CHARS = int(os.getenv("RAG_CHUNK_SIZE_CHARS", "1200"))
     RAG_CHUNK_OVERLAP_CHARS = int(os.getenv("RAG_CHUNK_OVERLAP_CHARS", "150"))
     RAG_MIN_TEXT_CHARS = int(os.getenv("RAG_MIN_TEXT_CHARS", "20"))
@@ -75,71 +72,45 @@ class Config:
     RAG_RETRIEVAL_MAX_RESULTS = int(os.getenv("RAG_RETRIEVAL_MAX_RESULTS", "5"))
     RAG_RETRIEVAL_CANDIDATE_LIMIT = int(os.getenv("RAG_RETRIEVAL_CANDIDATE_LIMIT", "200"))
     RAG_RETRIEVAL_SCAN_BATCH_SIZE = int(os.getenv("RAG_RETRIEVAL_SCAN_BATCH_SIZE", "500"))
-    RAG_HYBRID_DATABASE_ENABLED = (
-        os.getenv("RAG_HYBRID_DATABASE_ENABLED", "true").lower() == "true"
-    )
+    RAG_HYBRID_DATABASE_ENABLED = os.getenv("RAG_HYBRID_DATABASE_ENABLED", "true").lower() == "true"
     RAG_HYBRID_RRF_K = int(os.getenv("RAG_HYBRID_RRF_K", "60"))
-    RAG_HYBRID_HNSW_EF_SEARCH = int(
-        os.getenv("RAG_HYBRID_HNSW_EF_SEARCH", "100")
-    )
-    RAG_QUERY_EXPANSION_MAX_QUERIES = int(
-        os.getenv("RAG_QUERY_EXPANSION_MAX_QUERIES", "3")
-    )
+    RAG_HYBRID_HNSW_EF_SEARCH = int(os.getenv("RAG_HYBRID_HNSW_EF_SEARCH", "100"))
+    RAG_QUERY_EXPANSION_MAX_QUERIES = int(os.getenv("RAG_QUERY_EXPANSION_MAX_QUERIES", "3"))
     RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT = int(
         os.getenv("RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT", "2")
     )
     RAG_RETRIEVAL_SCORE_THRESHOLD = float(os.getenv("RAG_RETRIEVAL_SCORE_THRESHOLD", "0.28"))
-    RAG_RETRIEVAL_MIN_EVIDENCE_SCORE = float(
-        os.getenv("RAG_RETRIEVAL_MIN_EVIDENCE_SCORE", "0.42")
-    )
+    RAG_RETRIEVAL_MIN_EVIDENCE_SCORE = float(os.getenv("RAG_RETRIEVAL_MIN_EVIDENCE_SCORE", "0.42"))
     RAG_RETRIEVAL_AUTHORITY_RERANK_WEIGHT = float(
         os.getenv("RAG_RETRIEVAL_AUTHORITY_RERANK_WEIGHT", "0.03")
     )
     RAG_RETRIEVAL_FRESHNESS_RERANK_WEIGHT = float(
         os.getenv("RAG_RETRIEVAL_FRESHNESS_RERANK_WEIGHT", "0.01")
     )
-    RAG_NEURAL_RERANK_ENABLED = (
-        os.getenv("RAG_NEURAL_RERANK_ENABLED", "true").lower() == "true"
-    )
-    RAG_NEURAL_RERANK_PROVIDER = os.getenv(
-        "RAG_NEURAL_RERANK_PROVIDER", "ollama"
-    )
+    RAG_NEURAL_RERANK_ENABLED = os.getenv("RAG_NEURAL_RERANK_ENABLED", "true").lower() == "true"
+    RAG_NEURAL_RERANK_PROVIDER = os.getenv("RAG_NEURAL_RERANK_PROVIDER", "ollama")
     RAG_NEURAL_RERANK_MODEL = os.getenv(
         "RAG_NEURAL_RERANK_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
     )
     RAG_NEURAL_RERANK_PROMPT_VERSION = os.getenv(
         "RAG_NEURAL_RERANK_PROMPT_VERSION", "rag-neural-rerank-v1"
     )
-    RAG_NEURAL_RERANK_TIMEOUT_SECONDS = int(
-        os.getenv("RAG_NEURAL_RERANK_TIMEOUT_SECONDS", "8")
-    )
-    RAG_NEURAL_RERANK_CANDIDATE_LIMIT = int(
-        os.getenv("RAG_NEURAL_RERANK_CANDIDATE_LIMIT", "12")
-    )
-    RAG_NEURAL_RERANK_CONTENT_CHARS = int(
-        os.getenv("RAG_NEURAL_RERANK_CONTENT_CHARS", "700")
-    )
-    RAG_NEURAL_RERANK_WEIGHT = float(
-        os.getenv("RAG_NEURAL_RERANK_WEIGHT", "0.55")
-    )
-    RAG_NEURAL_RERANK_MIN_SCORE = float(
-        os.getenv("RAG_NEURAL_RERANK_MIN_SCORE", "0.20")
-    )
+    RAG_NEURAL_RERANK_TIMEOUT_SECONDS = int(os.getenv("RAG_NEURAL_RERANK_TIMEOUT_SECONDS", "8"))
+    RAG_NEURAL_RERANK_CANDIDATE_LIMIT = int(os.getenv("RAG_NEURAL_RERANK_CANDIDATE_LIMIT", "12"))
+    RAG_NEURAL_RERANK_CONTENT_CHARS = int(os.getenv("RAG_NEURAL_RERANK_CONTENT_CHARS", "700"))
+    RAG_NEURAL_RERANK_WEIGHT = float(os.getenv("RAG_NEURAL_RERANK_WEIGHT", "0.55"))
+    RAG_NEURAL_RERANK_MIN_SCORE = float(os.getenv("RAG_NEURAL_RERANK_MIN_SCORE", "0.20"))
     RAG_NEURAL_RERANK_FALLBACK_ENABLED = (
         os.getenv("RAG_NEURAL_RERANK_FALLBACK_ENABLED", "true").lower() == "true"
     )
     RAG_NEURAL_RERANK_ADAPTIVE_ENABLED = (
         os.getenv("RAG_NEURAL_RERANK_ADAPTIVE_ENABLED", "true").lower() == "true"
     )
-    RAG_NEURAL_RERANK_SKIP_MIN_SCORE = float(
-        os.getenv("RAG_NEURAL_RERANK_SKIP_MIN_SCORE", "0.70")
-    )
+    RAG_NEURAL_RERANK_SKIP_MIN_SCORE = float(os.getenv("RAG_NEURAL_RERANK_SKIP_MIN_SCORE", "0.70"))
     RAG_NEURAL_RERANK_SKIP_MIN_MARGIN = float(
         os.getenv("RAG_NEURAL_RERANK_SKIP_MIN_MARGIN", "0.10")
     )
-    RAG_NEURAL_RERANK_MAX_TOKENS = int(
-        os.getenv("RAG_NEURAL_RERANK_MAX_TOKENS", "384")
-    )
+    RAG_NEURAL_RERANK_MAX_TOKENS = int(os.getenv("RAG_NEURAL_RERANK_MAX_TOKENS", "384"))
     RAG_CONTENT_SECURITY_POLICY_VERSION = os.getenv(
         "RAG_CONTENT_SECURITY_POLICY_VERSION",
         "rag-content-security-v2",
@@ -183,8 +154,7 @@ class Config:
         os.getenv("RAG_PROMPT_INJECTION_CLASSIFIER_MAX_TOKENS", "256")
     )
     RAG_PROMPT_INJECTION_REQUIRE_DISTINCT_MODEL = (
-        os.getenv("RAG_PROMPT_INJECTION_REQUIRE_DISTINCT_MODEL", "true").lower()
-        == "true"
+        os.getenv("RAG_PROMPT_INJECTION_REQUIRE_DISTINCT_MODEL", "true").lower() == "true"
     )
     RAG_PROMPT_INJECTION_FAIL_CLOSED = (
         os.getenv("RAG_PROMPT_INJECTION_FAIL_CLOSED", "true").lower() == "true"
@@ -200,9 +170,7 @@ class Config:
         for value in os.getenv("RAG_OUTPUT_ROLLOUT_STAGES", "5,20,50,100").split(",")
         if value.strip()
     ]
-    RAG_OUTPUT_ROLLOUT_MIN_SAMPLES = int(
-        os.getenv("RAG_OUTPUT_ROLLOUT_MIN_SAMPLES", "20")
-    )
+    RAG_OUTPUT_ROLLOUT_MIN_SAMPLES = int(os.getenv("RAG_OUTPUT_ROLLOUT_MIN_SAMPLES", "20"))
     RAG_OUTPUT_ROLLOUT_MAX_BLOCK_RATE = float(
         os.getenv("RAG_OUTPUT_ROLLOUT_MAX_BLOCK_RATE", "0.10")
     )
@@ -210,15 +178,9 @@ class Config:
         os.getenv("RAG_ANSWER_GENERATION_ENABLED", "true").lower() == "true"
     )
     RAG_ANSWER_PROVIDER = os.getenv("RAG_ANSWER_PROVIDER", "ollama")
-    RAG_ANSWER_MODEL = os.getenv(
-        "RAG_ANSWER_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
-    )
-    RAG_ANSWER_PROMPT_VERSION = os.getenv(
-        "RAG_ANSWER_PROMPT_VERSION", "rag-grounded-answer-v1"
-    )
-    RAG_ANSWER_TIMEOUT_SECONDS = int(
-        os.getenv("RAG_ANSWER_TIMEOUT_SECONDS", "20")
-    )
+    RAG_ANSWER_MODEL = os.getenv("RAG_ANSWER_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b"))
+    RAG_ANSWER_PROMPT_VERSION = os.getenv("RAG_ANSWER_PROMPT_VERSION", "rag-grounded-answer-v1")
+    RAG_ANSWER_TIMEOUT_SECONDS = int(os.getenv("RAG_ANSWER_TIMEOUT_SECONDS", "20"))
     RAG_ANSWER_MAX_SOURCES = int(os.getenv("RAG_ANSWER_MAX_SOURCES", "3"))
     RAG_ANSWER_SOURCE_CHARS = int(os.getenv("RAG_ANSWER_SOURCE_CHARS", "900"))
     RAG_ANSWER_MAX_CLAIMS = int(os.getenv("RAG_ANSWER_MAX_CLAIMS", "5"))
@@ -230,73 +192,45 @@ class Config:
     RAG_ANSWER_FALLBACK_REFUSAL_ENABLED = (
         os.getenv("RAG_ANSWER_FALLBACK_REFUSAL_ENABLED", "true").lower() == "true"
     )
-    RAG_ENTAILMENT_ENABLED = (
-        os.getenv("RAG_ENTAILMENT_ENABLED", "true").lower() == "true"
-    )
+    RAG_ENTAILMENT_ENABLED = os.getenv("RAG_ENTAILMENT_ENABLED", "true").lower() == "true"
     RAG_ENTAILMENT_PROVIDER = os.getenv("RAG_ENTAILMENT_PROVIDER", "ollama")
     RAG_ENTAILMENT_MODEL = os.getenv(
         "RAG_ENTAILMENT_MODEL", os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
     )
-    RAG_ENTAILMENT_PROMPT_VERSION = os.getenv(
-        "RAG_ENTAILMENT_PROMPT_VERSION", "rag-entailment-v1"
-    )
-    RAG_ENTAILMENT_TIMEOUT_SECONDS = int(
-        os.getenv("RAG_ENTAILMENT_TIMEOUT_SECONDS", "45")
-    )
-    RAG_ENTAILMENT_MIN_SCORE = float(
-        os.getenv("RAG_ENTAILMENT_MIN_SCORE", "0.72")
-    )
-    RAG_ENTAILMENT_FAIL_CLOSED = (
-        os.getenv("RAG_ENTAILMENT_FAIL_CLOSED", "true").lower() == "true"
-    )
+    RAG_ENTAILMENT_PROMPT_VERSION = os.getenv("RAG_ENTAILMENT_PROMPT_VERSION", "rag-entailment-v1")
+    RAG_ENTAILMENT_TIMEOUT_SECONDS = int(os.getenv("RAG_ENTAILMENT_TIMEOUT_SECONDS", "45"))
+    RAG_ENTAILMENT_MIN_SCORE = float(os.getenv("RAG_ENTAILMENT_MIN_SCORE", "0.72"))
+    RAG_ENTAILMENT_FAIL_CLOSED = os.getenv("RAG_ENTAILMENT_FAIL_CLOSED", "true").lower() == "true"
     RAG_NLI_ENABLED = os.getenv("RAG_NLI_ENABLED", "true").lower() == "true"
     RAG_NLI_PROVIDER = os.getenv("RAG_NLI_PROVIDER", "ollama")
-    RAG_NLI_BASE_URL = os.getenv("RAG_NLI_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"))
+    RAG_NLI_BASE_URL = os.getenv(
+        "RAG_NLI_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+    )
     RAG_NLI_MODEL = os.getenv("RAG_NLI_MODEL", "qwen2.5:0.5b")
     RAG_NLI_PROMPT_VERSION = os.getenv("RAG_NLI_PROMPT_VERSION", "rag-nli-v2")
     RAG_NLI_TIMEOUT_SECONDS = int(os.getenv("RAG_NLI_TIMEOUT_SECONDS", "12"))
     RAG_NLI_MIN_SCORE = float(
         os.getenv("RAG_NLI_MIN_SCORE", os.getenv("RAG_ENTAILMENT_MIN_SCORE", "0.72"))
     )
-    RAG_NLI_FAIL_CLOSED = (
-        os.getenv("RAG_NLI_FAIL_CLOSED", "true").lower() == "true"
-    )
+    RAG_NLI_FAIL_CLOSED = os.getenv("RAG_NLI_FAIL_CLOSED", "true").lower() == "true"
     RAG_NLI_REQUIRE_DISTINCT_MODEL = (
         os.getenv("RAG_NLI_REQUIRE_DISTINCT_MODEL", "true").lower() == "true"
     )
-    RAG_NLI_MAX_EVIDENCE_CHARS = int(
-        os.getenv("RAG_NLI_MAX_EVIDENCE_CHARS", "2400")
-    )
+    RAG_NLI_MAX_EVIDENCE_CHARS = int(os.getenv("RAG_NLI_MAX_EVIDENCE_CHARS", "2400"))
     RAG_NLI_MAX_TOKENS = int(os.getenv("RAG_NLI_MAX_TOKENS", "256"))
-    RAG_QUERY_LATENCY_BUDGET_MS = int(
-        os.getenv("RAG_QUERY_LATENCY_BUDGET_MS", "30000")
-    )
+    RAG_QUERY_LATENCY_BUDGET_MS = int(os.getenv("RAG_QUERY_LATENCY_BUDGET_MS", "30000"))
     RAG_LEARNING_MIN_SIGNALS = int(os.getenv("RAG_LEARNING_MIN_SIGNALS", "3"))
-    RAG_LEARNING_MAX_ADJUSTMENT = float(
-        os.getenv("RAG_LEARNING_MAX_ADJUSTMENT", "0.12")
-    )
-    RAG_LEARNING_DECAY_HALF_LIFE_DAYS = int(
-        os.getenv("RAG_LEARNING_DECAY_HALF_LIFE_DAYS", "90")
-    )
-    RAG_LEARNING_MAX_EXAMPLES = int(
-        os.getenv("RAG_LEARNING_MAX_EXAMPLES", "200")
-    )
+    RAG_LEARNING_MAX_ADJUSTMENT = float(os.getenv("RAG_LEARNING_MAX_ADJUSTMENT", "0.12"))
+    RAG_LEARNING_DECAY_HALF_LIFE_DAYS = int(os.getenv("RAG_LEARNING_DECAY_HALF_LIFE_DAYS", "90"))
+    RAG_LEARNING_MAX_EXAMPLES = int(os.getenv("RAG_LEARNING_MAX_EXAMPLES", "200"))
     RAG_LEARNING_EVALUATION_K = int(os.getenv("RAG_LEARNING_EVALUATION_K", "5"))
-    RAG_LEARNING_MAX_REGRESSION = float(
-        os.getenv("RAG_LEARNING_MAX_REGRESSION", "0.05")
-    )
-    RAG_LEARNING_CANARY_PERCENT = int(
-        os.getenv("RAG_LEARNING_CANARY_PERCENT", "10")
-    )
-    RAG_LEARNING_ONLINE_MIN_SAMPLES = int(
-        os.getenv("RAG_LEARNING_ONLINE_MIN_SAMPLES", "10")
-    )
+    RAG_LEARNING_MAX_REGRESSION = float(os.getenv("RAG_LEARNING_MAX_REGRESSION", "0.05"))
+    RAG_LEARNING_CANARY_PERCENT = int(os.getenv("RAG_LEARNING_CANARY_PERCENT", "10"))
+    RAG_LEARNING_ONLINE_MIN_SAMPLES = int(os.getenv("RAG_LEARNING_ONLINE_MIN_SAMPLES", "10"))
     RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE = float(
         os.getenv("RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE", "0.60")
     )
-    RAG_QUALITY_ONLINE_MIN_SAMPLES = int(
-        os.getenv("RAG_QUALITY_ONLINE_MIN_SAMPLES", "20")
-    )
+    RAG_QUALITY_ONLINE_MIN_SAMPLES = int(os.getenv("RAG_QUALITY_ONLINE_MIN_SAMPLES", "20"))
     RAG_QUALITY_ONLINE_MAX_FALLBACK_RATE = float(
         os.getenv("RAG_QUALITY_ONLINE_MAX_FALLBACK_RATE", "0.20")
     )
@@ -309,12 +243,8 @@ class Config:
     RAG_QUALITY_ONLINE_MAX_LATENCY_BUDGET_RATE = float(
         os.getenv("RAG_QUALITY_ONLINE_MAX_LATENCY_BUDGET_RATE", "0.10")
     )
-    RAG_QUALITY_ROLLOUT_STAGES = os.getenv(
-        "RAG_QUALITY_ROLLOUT_STAGES", "5,20,50,100"
-    )
-    RAG_QUALITY_ROLLOUT_MIN_SAMPLES = int(
-        os.getenv("RAG_QUALITY_ROLLOUT_MIN_SAMPLES", "20")
-    )
+    RAG_QUALITY_ROLLOUT_STAGES = os.getenv("RAG_QUALITY_ROLLOUT_STAGES", "5,20,50,100")
+    RAG_QUALITY_ROLLOUT_MIN_SAMPLES = int(os.getenv("RAG_QUALITY_ROLLOUT_MIN_SAMPLES", "20"))
     RAG_QUALITY_ROLLOUT_MIN_WINDOW_SECONDS = int(
         os.getenv("RAG_QUALITY_ROLLOUT_MIN_WINDOW_SECONDS", "3600")
     )
@@ -340,18 +270,12 @@ class Config:
     WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv("WORKER_LOCK_TIMEOUT_SECONDS", "300"))
     WORKER_HEARTBEAT_SECONDS = int(os.getenv("WORKER_HEARTBEAT_SECONDS", "60"))
     WORKER_QUEUE = os.getenv("WORKER_QUEUE", "all").lower()
-    WORKER_RUN_SCHEDULER = (
-        os.getenv("WORKER_RUN_SCHEDULER", "true").lower() == "true"
-    )
+    WORKER_RUN_SCHEDULER = os.getenv("WORKER_RUN_SCHEDULER", "true").lower() == "true"
     SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "30"))
     RAG_SLO_QUERY_P95_MS = int(os.getenv("RAG_SLO_QUERY_P95_MS", "15000"))
-    RAG_SLO_QUEUE_MAX_AGE_SECONDS = int(
-        os.getenv("RAG_SLO_QUEUE_MAX_AGE_SECONDS", "300")
-    )
+    RAG_SLO_QUEUE_MAX_AGE_SECONDS = int(os.getenv("RAG_SLO_QUEUE_MAX_AGE_SECONDS", "300"))
     RAG_METRICS_WINDOW_HOURS = int(os.getenv("RAG_METRICS_WINDOW_HOURS", "24"))
-    RAG_THEMATIC_MIN_GROUP_SIZE = int(
-        os.getenv("RAG_THEMATIC_MIN_GROUP_SIZE", "3")
-    )
+    RAG_THEMATIC_MIN_GROUP_SIZE = int(os.getenv("RAG_THEMATIC_MIN_GROUP_SIZE", "3"))
     METRICS_BEARER_TOKEN = os.getenv("METRICS_BEARER_TOKEN")
     AI_TRIAGE_PROVIDER = os.getenv("AI_TRIAGE_PROVIDER", "ollama")
     AI_TRIAGE_MODEL = os.getenv("AI_TRIAGE_MODEL", "qwen2.5:3b")
@@ -361,38 +285,37 @@ class Config:
     )
     AI_TRIAGE_PROMPT_VERSION = os.getenv("AI_TRIAGE_PROMPT_VERSION", "triage-v3")
     AI_TRIAGE_TIMEOUT_SECONDS = int(os.getenv("AI_TRIAGE_TIMEOUT_SECONDS", "120"))
-    AI_TRIAGE_FALLBACK_ENABLED = os.getenv(
-        "AI_TRIAGE_FALLBACK_ENABLED",
-        "true",
-    ).lower() == "true"
+    AI_TRIAGE_FALLBACK_ENABLED = (
+        os.getenv(
+            "AI_TRIAGE_FALLBACK_ENABLED",
+            "true",
+        ).lower()
+        == "true"
+    )
     AI_ASSISTANCE_PROVIDER = os.getenv("AI_ASSISTANCE_PROVIDER", AI_TRIAGE_PROVIDER)
     AI_ASSISTANCE_MODEL = os.getenv("AI_ASSISTANCE_MODEL", AI_TRIAGE_MODEL)
     AI_ASSISTANCE_FALLBACK_MODEL = os.getenv(
         "AI_ASSISTANCE_FALLBACK_MODEL", "gabflow-assistance-rules-v1"
     )
-    AI_ASSISTANCE_PROMPT_VERSION = os.getenv(
-        "AI_ASSISTANCE_PROMPT_VERSION", "assistance-v1"
-    )
+    AI_ASSISTANCE_PROMPT_VERSION = os.getenv("AI_ASSISTANCE_PROMPT_VERSION", "assistance-v1")
     AI_ASSISTANCE_TIMEOUT_SECONDS = int(
         os.getenv("AI_ASSISTANCE_TIMEOUT_SECONDS", str(AI_TRIAGE_TIMEOUT_SECONDS))
     )
-    AI_ASSISTANCE_FALLBACK_ENABLED = os.getenv(
-        "AI_ASSISTANCE_FALLBACK_ENABLED", "true"
-    ).lower() == "true"
+    AI_ASSISTANCE_FALLBACK_ENABLED = (
+        os.getenv("AI_ASSISTANCE_FALLBACK_ENABLED", "true").lower() == "true"
+    )
     AI_LEGISLATIVE_PROVIDER = os.getenv("AI_LEGISLATIVE_PROVIDER", AI_TRIAGE_PROVIDER)
     AI_LEGISLATIVE_MODEL = os.getenv("AI_LEGISLATIVE_MODEL", AI_TRIAGE_MODEL)
     AI_LEGISLATIVE_FALLBACK_MODEL = os.getenv(
         "AI_LEGISLATIVE_FALLBACK_MODEL", "gabflow-legislative-rules-v1"
     )
-    AI_LEGISLATIVE_PROMPT_VERSION = os.getenv(
-        "AI_LEGISLATIVE_PROMPT_VERSION", "legislative-v1"
-    )
+    AI_LEGISLATIVE_PROMPT_VERSION = os.getenv("AI_LEGISLATIVE_PROMPT_VERSION", "legislative-v1")
     AI_LEGISLATIVE_TIMEOUT_SECONDS = int(
         os.getenv("AI_LEGISLATIVE_TIMEOUT_SECONDS", str(AI_TRIAGE_TIMEOUT_SECONDS))
     )
-    AI_LEGISLATIVE_FALLBACK_ENABLED = os.getenv(
-        "AI_LEGISLATIVE_FALLBACK_ENABLED", "true"
-    ).lower() == "true"
+    AI_LEGISLATIVE_FALLBACK_ENABLED = (
+        os.getenv("AI_LEGISLATIVE_FALLBACK_ENABLED", "true").lower() == "true"
+    )
     AI_DUPLICATE_PROVIDER = os.getenv("AI_DUPLICATE_PROVIDER", "ollama")
     AI_EMBEDDING_MODEL = os.getenv("AI_EMBEDDING_MODEL", "nomic-embed-text")
     AI_DUPLICATE_WINDOW_DAYS = int(os.getenv("AI_DUPLICATE_WINDOW_DAYS", "180"))
@@ -400,33 +323,19 @@ class Config:
     AI_DUPLICATE_MAX_SUGGESTIONS = int(os.getenv("AI_DUPLICATE_MAX_SUGGESTIONS", "5"))
     AI_DUPLICATE_CANDIDATE_LIMIT = int(os.getenv("AI_DUPLICATE_CANDIDATE_LIMIT", "100"))
     AI_PRECEDENT_PROVIDER = os.getenv("AI_PRECEDENT_PROVIDER", AI_DUPLICATE_PROVIDER)
-    AI_PRECEDENT_SCORE_THRESHOLD = float(
-        os.getenv("AI_PRECEDENT_SCORE_THRESHOLD", "0.60")
-    )
+    AI_PRECEDENT_SCORE_THRESHOLD = float(os.getenv("AI_PRECEDENT_SCORE_THRESHOLD", "0.60"))
     AI_PRECEDENT_MAX_RESULTS = int(os.getenv("AI_PRECEDENT_MAX_RESULTS", "10"))
-    AI_PRECEDENT_CANDIDATE_LIMIT = int(
-        os.getenv("AI_PRECEDENT_CANDIDATE_LIMIT", "200")
-    )
+    AI_PRECEDENT_CANDIDATE_LIMIT = int(os.getenv("AI_PRECEDENT_CANDIDATE_LIMIT", "200"))
     AI_FOUNDATION_PROVIDER = os.getenv("AI_FOUNDATION_PROVIDER", AI_PRECEDENT_PROVIDER)
-    AI_FOUNDATION_SCORE_THRESHOLD = float(
-        os.getenv("AI_FOUNDATION_SCORE_THRESHOLD", "0.55")
-    )
+    AI_FOUNDATION_SCORE_THRESHOLD = float(os.getenv("AI_FOUNDATION_SCORE_THRESHOLD", "0.55"))
     AI_FOUNDATION_MAX_RESULTS = int(os.getenv("AI_FOUNDATION_MAX_RESULTS", "5"))
-    AI_FOUNDATION_CANDIDATE_LIMIT = int(
-        os.getenv("AI_FOUNDATION_CANDIDATE_LIMIT", "200")
-    )
-    AUDIO_TRANSCRIPTION_PROVIDER = os.getenv(
-        "AUDIO_TRANSCRIPTION_PROVIDER", "faster-whisper"
-    )
+    AI_FOUNDATION_CANDIDATE_LIMIT = int(os.getenv("AI_FOUNDATION_CANDIDATE_LIMIT", "200"))
+    AUDIO_TRANSCRIPTION_PROVIDER = os.getenv("AUDIO_TRANSCRIPTION_PROVIDER", "faster-whisper")
     AUDIO_TRANSCRIPTION_MODEL = os.getenv("AUDIO_TRANSCRIPTION_MODEL", "base")
     AUDIO_TRANSCRIPTION_DEVICE = os.getenv("AUDIO_TRANSCRIPTION_DEVICE", "cpu")
-    AUDIO_TRANSCRIPTION_COMPUTE_TYPE = os.getenv(
-        "AUDIO_TRANSCRIPTION_COMPUTE_TYPE", "int8"
-    )
+    AUDIO_TRANSCRIPTION_COMPUTE_TYPE = os.getenv("AUDIO_TRANSCRIPTION_COMPUTE_TYPE", "int8")
     AUDIO_TRANSCRIPTION_LANGUAGE = os.getenv("AUDIO_TRANSCRIPTION_LANGUAGE", "pt")
-    AUDIO_TRANSCRIPTION_CACHE_DIR = os.getenv(
-        "AUDIO_TRANSCRIPTION_CACHE_DIR", "/models/whisper"
-    )
+    AUDIO_TRANSCRIPTION_CACHE_DIR = os.getenv("AUDIO_TRANSCRIPTION_CACHE_DIR", "/models/whisper")
     AUDIO_TRANSCRIPTION_MAX_DURATION_SECONDS = int(
         os.getenv("AUDIO_TRANSCRIPTION_MAX_DURATION_SECONDS", "900")
     )
@@ -435,9 +344,7 @@ class Config:
     DOCUMENT_OCR_LANGUAGE = os.getenv("DOCUMENT_OCR_LANGUAGE", "por")
     DOCUMENT_OCR_MAX_PAGES = int(os.getenv("DOCUMENT_OCR_MAX_PAGES", "500"))
     DOCUMENT_OCR_MAX_PIXELS = int(os.getenv("DOCUMENT_OCR_MAX_PIXELS", "25000000"))
-    DOCUMENT_OCR_NATIVE_MIN_CHARS = int(
-        os.getenv("DOCUMENT_OCR_NATIVE_MIN_CHARS", "40")
-    )
+    DOCUMENT_OCR_NATIVE_MIN_CHARS = int(os.getenv("DOCUMENT_OCR_NATIVE_MIN_CHARS", "40"))
     DOCUMENT_OCR_BATCH_SIZE = int(os.getenv("DOCUMENT_OCR_BATCH_SIZE", "8"))
     DOCUMENT_PARSER_ISOLATION_ENABLED = (
         os.getenv("DOCUMENT_PARSER_ISOLATION_ENABLED", "true").lower() == "true"
@@ -445,9 +352,7 @@ class Config:
     DOCUMENT_PARSER_SOCKET_PATH = os.getenv(
         "DOCUMENT_PARSER_SOCKET_PATH", "/run/gabflow-parser/parser.sock"
     )
-    DOCUMENT_PARSER_TIMEOUT_SECONDS = float(
-        os.getenv("DOCUMENT_PARSER_TIMEOUT_SECONDS", "120")
-    )
+    DOCUMENT_PARSER_TIMEOUT_SECONDS = float(os.getenv("DOCUMENT_PARSER_TIMEOUT_SECONDS", "120"))
     DOCUMENT_PARSER_MAX_RESPONSE_BYTES = int(
         os.getenv("DOCUMENT_PARSER_MAX_RESPONSE_BYTES", "10485760")
     )

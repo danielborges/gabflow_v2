@@ -13,6 +13,12 @@
 | `dataset_version` | Proveniência, hash, qualidade e publicação | Global |
 | `analysis_favorite` | Favorito do usuário | Sim |
 | `saved_comparison` | Configuração de comparativo | Sim |
+| `electoral_report_job` | Finalidade, filtros, formato, estado e retries | Sim |
+| `electoral_generated_report` | Objeto cifrado, hash, expiração e downloads | Sim |
+| `electoral_identity_review` | Revisão privada do vínculo entre candidaturas | Sim |
+| `electoral_geometry_version` | Fonte, hash e referência da malha oficial | Global/versionado |
+| `electoral_geometry_feature` | Polígono oficial PostGIS e GeoJSON | Global/versionado |
+| `electoral_territory_crosswalk` | Vínculo revisável TSE–IBGE | Global/versionado |
 | `territory_segment` | Grupo manual de territórios | Sim |
 | `mandate_metric_snapshot` | Indicador agregado do mandato | Sim |
 | `territorial_coverage_index` | Resultado e pesos do ICT | Sim |

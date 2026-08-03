@@ -7,6 +7,7 @@ import {
   Database,
   FileText,
   LayoutDashboard,
+  Landmark,
   LogOut,
   MessagesSquare,
   Menu,
@@ -15,12 +16,14 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiRequest } from "../api";
 import { AdministrationPage } from "./AdministrationPage";
 import { AgendaPage } from "./AgendaPage";
 import { AIQualityPage } from "./AIQualityPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { DirectoryPage } from "./DirectoryPage";
+import { ElectoralIntelligencePage } from "./electoral/ElectoralIntelligencePage";
 import { GlobalSearch } from "./GlobalSearch";
 import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
@@ -41,6 +44,7 @@ const navigation = [
   { id: "agenda", label: "Agenda", icon: CalendarDays, enabled: true, module: "agenda" },
   { id: "oversight", label: "Fiscalização", icon: ClipboardCheck, enabled: true, module: "fiscalizacao" },
   { id: "channels", label: "Canais", icon: MessagesSquare, enabled: true, module: "canais" },
+  { id: "electoral", label: "Inteligência Eleitoral", icon: Landmark, enabled: true, module: "inteligencia_eleitoral", representativeOnly: true },
   { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true, module: "rag" },
 ];
 
@@ -49,10 +53,20 @@ export function Workspace({ user, onLogout }) {
   const enabledModules = Array.isArray(configuredModules)
     ? configuredModules
     : navigation.map((item) => item.module).filter(Boolean);
-  const representativeViews = new Set(["overview", "requests", "agenda", "documents", "rag-assistant", "channels"]);
+  const representativeViews = new Set(["overview", "requests", "agenda", "documents", "rag-assistant", "channels", "electoral"]);
   const isModuleEnabled = (module) => !module || enabledModules.includes(module);
+  const electoralModuleEnabled = enabledModules.includes("inteligencia_eleitoral");
+  const [delegatedElectoralAccess, setDelegatedElectoralAccess] = useState(false);
+  useEffect(() => {
+    if (user.role === "representative" || !electoralModuleEnabled) return;
+    apiRequest("/api/v1/electoral/disponibilidade")
+      .then(() => setDelegatedElectoralAccess(true))
+      .catch(() => setDelegatedElectoralAccess(false));
+  }, [user.role, electoralModuleEnabled]);
   const availableNavigation = navigation.filter((item) => (
-    isModuleEnabled(item.module) && (user.role !== "representative" || representativeViews.has(item.id))
+    isModuleEnabled(item.module) &&
+    (!item.representativeOnly || user.role === "representative" || delegatedElectoralAccess) &&
+    (user.role !== "representative" || representativeViews.has(item.id))
   ));
   const initialView =
     availableNavigation.find((item) => item.id === "requests")?.id ||
@@ -66,6 +80,7 @@ export function Workspace({ user, onLogout }) {
     const target = navigation.find((entry) => entry.id === item.view);
     if (
       !isModuleEnabled(target?.module) ||
+      (target?.representativeOnly && user.role !== "representative" && !delegatedElectoralAccess) ||
       (user.role === "representative" && !representativeViews.has(target?.id))
     ) {
       return;
@@ -149,6 +164,9 @@ export function Workspace({ user, onLogout }) {
         {activeView === "agenda" && isModuleEnabled("agenda") && <AgendaPage />}
         {activeView === "oversight" && isModuleEnabled("fiscalizacao") && <OversightPage />}
         {activeView === "channels" && isModuleEnabled("canais") && <ChannelsPage />}
+        {activeView === "electoral" && isModuleEnabled("inteligencia_eleitoral") && (
+          <ElectoralIntelligencePage />
+        )}
         {activeView === "citizens" && isModuleEnabled("cidadaos") && <DirectoryPage />}
         {activeView === "ai-quality" && isModuleEnabled("ia") && <AIQualityPage />}
         {activeView === "rag-assistant" && isModuleEnabled("rag") && <RagAssistantPage />}
