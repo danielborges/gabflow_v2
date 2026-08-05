@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-mkdir -p /app/data/attachments /app/data/rag
-chown -R gabflow:gabflow /app/data/attachments /app/data/rag
+mkdir -p /app/data/attachments /app/data/rag /app/data/electoral
+chown -R gabflow:gabflow /app/data/attachments /app/data/rag /app/data/electoral
 
 if [ "$(id -u)" = "0" ]; then
   exec gosu gabflow "$0" "$@"

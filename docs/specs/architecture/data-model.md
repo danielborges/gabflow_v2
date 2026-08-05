@@ -297,6 +297,8 @@ na auditoria nem no evento de sincronização.
 - secao
 - checksum
 - embedding
+- embedding_vector (`vector`, sincronizado por trigger)
+- search_vector (`tsvector`, gerado em português)
 - modelo_embedding
 
 ## ChunkPrivado
@@ -310,7 +312,14 @@ na auditoria nem no evento de sincronização.
 - secao
 - checksum
 - embedding
+- embedding_vector (`vector`, sincronizado por trigger)
+- search_vector (`tsvector`, gerado em português)
 - modelo_embedding
+
+Os dois escopos usam GIN sobre `search_vector` e HNSW de distância cosseno
+sobre as dimensões atualmente suportadas (128 e 768). A coluna vetorial não
+possui dimensão fixa para permitir coexistência de modelos; consultas e índices
+sempre filtram e convertem explicitamente pela dimensão e pelo modelo.
 
 ## ConsultaAssistente
 - id
@@ -327,6 +336,7 @@ na auditoria nem no evento de sincronização.
 - fontes_privadas
 - modelo
 - prompt_version
+- artefatos_aprendizado
 - criada_em
 
 ## FeedbackAssistente
@@ -402,18 +412,47 @@ esperada pode ser indicada por documento/versão visível ao mesmo tenant.
 - baseline
 - metricas_antes
 - metricas_depois
+- detalhes_avaliacao
 - estado
 - aprovado_por
 - aprovado_em
+- ativado_por
 - ativado_em
+- modo_ativacao
+- percentual_canario
+- estado_rollout
+- indice_etapa_rollout
+- rollout_iniciado_em
+- etapa_rollout_iniciada_em
+- proxima_avaliacao_rollout_em
+- historico_rollout
+- metricas_online
 - substituido_por_id
 - revogado_em
 - motivo_revogacao
 - criado_em
 
-Tipos iniciais: `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES` e
-`ANSWER_EXEMPLARS`. Existe no máximo um artefato `ATIVO` por tenant e tipo.
+Tipos: `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES`,
+`ANSWER_EXEMPLARS` e `QUALITY_PROFILE`. Existe no máximo um artefato `ATIVO` por tenant e tipo.
 O payload usa schema fechado e não contém comentário bruto.
+
+`QUALITY_PROFILE` não deriva de feedback individual: sua proveniência é uma
+execução de calibração que preserva parâmetros de baseline e candidato, dataset,
+métricas, gates e decisão. Ele reutiliza os campos de canário e rollback.
+Os campos de rollout preservam a máquina de estados `MONITORANDO`, `PROMOVIDO`,
+`ROLLBACK` ou `ERRO`, além das métricas e decisões imutáveis de cada etapa.
+
+## FeedbackArtefatoAprendizadoRag
+- id
+- tenant_id
+- artefato_id
+- feedback_id
+- contribuicao
+- criado_em
+
+A relação preserva a proveniência de cada sinal por foreign keys compostas com
+`tenant_id`. Na etapa 4.7.3, todo artefato nasce em `CANDIDATO`; a compilação não
+o aplica ao retrieval, roteamento ou geração.
 
 ## MemoriaTematicaRag
 - id
@@ -443,6 +482,13 @@ do limiar mínimo não originam documento privado.
 - metodo_esperado
 - filtros_esperados
 - observacoes
+- origem (`MANUAL`, `FEEDBACK` ou `REGRESSAO`)
+- motivos_falha
+- severidade
+- tags
+- baseline_snapshot
+- baseline_capturado_em
+- consulta_origem_id
 - ativa
 - feedback_origem_id
 - curada_por
@@ -450,6 +496,12 @@ do limiar mínimo não originam documento privado.
 - motivo_desativacao
 - criada_por
 - criada_em
+
+Casos `REGRESSAO` são únicos por `tenant_id + consulta_origem_id`. O snapshot
+registra apenas hashes, identificadores, scores, método, filtros e metadados
+necessários para reproduzir o baseline; resposta e trechos brutos não são
+duplicados. Fontes marcadas como irrelevantes precisam ter sido retornadas na
+consulta original, e fontes esperadas devem estar visíveis ao mesmo tenant.
 
 Casos manuais mantêm `feedback_origem_id` nulo. Casos curados possuem no máximo
 um registro por feedback e usam FK composta com `tenant_id`. Feedback que deixe o
@@ -487,3 +539,30 @@ próxima execução sem apagar seu histórico.
   escopo nas citações e auditorias.
 - Feedback, julgamentos, execuções e artefatos de aprendizado usam foreign keys
   compostas com `tenant_id`; cache e worker também particionam por tenant.
+
+## Estado de segurança de conteúdo
+
+`RagDocumentVersion`, `GlobalKnowledgeDocumentVersion`, `RagKnowledgeSource` e
+`RagQueryFeedback` persistem o mesmo contrato do gateway:
+
+- `security_status`: `CLEAN`, `SUSPICIOUS`, `MALICIOUS` ou `INDETERMINATE`;
+- `security_action`: `ALLOW`, `QUARANTINE`, `BLOCK` ou `RETRY`;
+- `security_score`, `security_categories` e `security_signals`;
+- versões da política, detector e classificador;
+- checksum do material avaliado, instante da avaliação e código de erro.
+
+O estado não contém o payload analisado. Registros legados migram como
+`INDETERMINATE/RETRY` e só se tornam `CLEAN/ALLOW` após avaliação explícita.
+
+Versões privadas e globais também registram `security_quarantined_at`,
+`security_purged_at`, decisão/justificativa/revisor da revisão e o checksum ao qual
+a revisão se aplica. Aprovação não altera diretamente o estado: ela apenas autoriza
+novo processamento do mesmo checksum. Mudança do checksum invalida a aprovação.
+
+### Execução de revarredura de segurança
+
+`rag_security_rescan_runs` registra uma execução tenant-scoped ou global com corte
+temporal estável, versão da política, versão das assinaturas, fase, cursor e tamanho
+do lote. Os contadores distinguem alvos processados, limpos, em quarentena, erros e
+purges de chunks, OCR e transcrição. RLS permite a linha do tenant ou, para escopo
+global, o contexto explícito de administração do catálogo.

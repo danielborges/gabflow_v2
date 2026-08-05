@@ -104,10 +104,34 @@
 - **RF-107** Cadastrar perguntas reais e documentos esperados ou expectativa de recusa por tenant, executar avaliação por `k` e preservar o histórico de métricas. **Implementado.**
 - **RF-108** Registrar revisões imutáveis de feedback, motivos normalizados, método/filtros esperados e julgamentos por fonte, preservando compatibilidade com a avaliação atual. **Implementado na Release 4.7.**
 - **RF-109** Listar e moderar feedback do próprio tenant nos estados pendente, aprovado, quarentena, rejeitado, revogado e superado. **Implementado na Release 4.7.**
-- **RF-110** Executar compilação idempotente de sinais aprovados e consultar histórico, métricas, erros e proveniência da execução. **Especificado; implementação planejada.**
-- **RF-111** Gerenciar artefatos de aprendizado candidatos, aprovados, ativos, substituídos e revogados por tenant e tipo. **Especificado; implementação planejada.**
-- **RF-112** Ativar, aplicar em canário e reverter artefatos de aprendizado com auditoria e apenas uma versão ativa por tenant e tipo. **Especificado; implementação planejada.**
-- **RF-113** Exibir na consulta as versões de perfil de ranking, exemplos de roteamento ou outros artefatos que influenciaram a resposta. **Especificado; implementação planejada.**
+- **RF-110** Executar compilação idempotente de sinais aprovados e consultar histórico, métricas, erros e proveniência da execução. **Implementado na etapa 4.7.3.**
+- **RF-111** Gerenciar artefatos de aprendizado candidatos, aprovados, ativos, substituídos e revogados por tenant e tipo. **Implementado nas etapas 4.7.3 e 4.7.4.**
+- **RF-112** Ativar, aplicar em canário e reverter artefatos de aprendizado com auditoria e apenas uma versão ativa por tenant e tipo. **Implementado na etapa 4.7.4, incluindo rollback automático por regressão online.**
+- **RF-113** Exibir na consulta as versões de perfil de ranking, exemplos de roteamento ou outros artefatos que influenciaram a resposta. **Implementado para os artefatos que efetivamente alteram ranking ou roteamento.**
 - **RF-114** Promover feedback aprovado de forma explícita e idempotente para o dataset tenant-scoped, preservando proveniência e diagnóstico. **Implementado na Release 4.7.**
 - **RF-115** Avaliar documentos esperados, hard negatives, rota, filtros e recusa nos casos curados, sem alterar o comportamento dos casos manuais existentes. **Implementado na Release 4.7.**
 - **RF-116** Desativar automaticamente casos curados cujo feedback ou fonte deixe de ser elegível. **Implementado na Release 4.7.**
+- **RF-117** Capturar consultas problemáticas como casos de regressão tenant-scoped, com taxonomia, severidade, tags, fontes esperadas, hard negatives e snapshot minimizado e idempotente do baseline. **Implementado no incremento 4.8.1.**
+- **RF-118** Formar o pool documental por PostgreSQL FTS e `pgvector`, fundir os canais por RRF e aplicar tenant, ACL, vigência, retenção e publicação antes do ranking final. **Implementado no incremento 4.8.2.**
+- **RF-119** Aplicar reranking neural configurável sobre candidatos elegíveis, validar integralmente o retorno do modelo e preservar o ranking híbrido em caso de falha. **Implementado no incremento 4.8.3.**
+- **RF-120** Auditar e medir aplicação, modelo, versão do prompt, pontuações, justificativas e fallback do reranker neural. **Implementado no incremento 4.8.3.**
+- **RF-121** Entender consultas documentais e aceitar filtros de tema, tipo documental, órgão, jurisdição e período sem afrouxar os filtros obrigatórios de segurança. **Implementado no incremento 4.8.4.**
+- **RF-122** Recuperar a consulta original e expansões controladas, fundir seus resultados antes do reranking e expor o plano aplicado. **Implementado no incremento 4.8.4.**
+- **RF-123** Produzir resposta substantiva com afirmações vinculadas somente aos chunks autorizados e sanitizados que compõem o contexto do gerador. **Implementado no incremento 4.8.5.**
+- **RF-124** Validar as citações de cada afirmação, recusar a resposta quando o contrato ou o suporte falhar e expor citações rastreáveis até chunk, documento, versão e escopo. **Implementado no incremento 4.8.5.**
+- **RF-125** Criar calibração tenant-scoped de thresholds permitidos, comparar candidato e baseline no mesmo dataset e preservar parâmetros, métricas, decisão e auditoria. **Implementado no incremento 4.9.1.**
+- **RF-126** Versionar a calibração aprovada como `QUALITY_PROFILE` e aplicar seus parâmetros somente às consultas incluídas no canário determinístico. **Implementado no incremento 4.9.1.**
+- **RF-127** Submeter cada afirmação gerada a verificação semântica independente e expor modelo, prompt, score, contradição, justificativa e fallback. **Implementado no incremento 4.9.1.**
+- **RF-128** Monitorar fallback e rejeição semântica do perfil ativo e restaurar atomicamente a versão anterior quando os gates online forem violados. **Implementado no incremento 4.9.1.**
+- **RF-129** Iniciar automaticamente o rollout de um `QUALITY_PROFILE` aprovado nas etapas configuradas e promover somente depois de validar 100% do tráfego. **Implementado no incremento 4.9.2.**
+- **RF-130** Servir o perfil baseline fora do bucket candidato durante o canário e preservar decisão e métricas independentes por etapa. **Implementado no incremento 4.9.2.**
+- **RF-131** Reverter automaticamente o rollout por regressão de fallback, rejeição semântica, recusa ou feedback negativo. **Implementado no incremento 4.9.2.**
+- **RF-132** Listar calibrações com perfil ativo, etapa, próxima avaliação e histórico no painel administrativo do tenant. **Implementado no incremento 4.9.2.**
+- **RF-133** Configurar e auditar provider, endpoint, modelo, versão e latência do classificador NLI independentemente do gerador. **Implementado no incremento 4.9.3.**
+- **RF-134** Pular o reranker neural quando o ranking híbrido já possuir liderança inequívoca, registrando score, margem e motivo. **Implementado no incremento 4.9.3.**
+- **RF-135** Expor tempos de recuperação, geração, validação, NLI e total, juntamente com orçamento e indicador de estouro. **Implementado no incremento 4.9.3.**
+- **RF-136** Considerar a taxa de estouro do orçamento de latência nos gates do rollout progressivo. **Implementado no incremento 4.9.3.**
+- **RF-137** Validar e executar versões imutáveis do dataset adversarial de prompt injection, separando regressão, holdout, ataques e controles benignos. **Especificado no incremento 5.1.**
+- **RF-138** Registrar para cada avaliação de conteúdo a decisão, ação, score, categorias, sinais e versões da política, detector e classificador. **Implementado no incremento 5.2 para versões privadas e globais, fontes operacionais e feedback.**
+- **RF-139** Listar conteúdo em quarentena sem expor o payload malicioso, permitir revisão autorizada e reprocessar somente após decisão auditável. **Implementado no incremento 5.3 para bases privadas e catálogo global.**
+- **RF-140** Revarrer o acervo por versão da política, despublicar imediatamente conteúdo reclassificado e purgar chunks, embeddings e outros derivados. **Implementado no incremento 5.6 para acervo privado, global e anexos, com progresso consultável e execução retomável.**

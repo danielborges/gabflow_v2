@@ -46,6 +46,7 @@ const sections = [
   ["territories", "Territórios"],
   ["agencies", "Órgãos"],
   ["templates", "Templates"],
+  ["rag-quality", "Qualidade RAG"],
   ["integrations", "Integrações"],
   ["audit", "Auditoria"],
 ];
@@ -534,7 +535,7 @@ export function AdministrationPage() {
     integrations: ["Nova integração", "Configure canais e sistemas externos autorizados.", PlugZap],
   };
   const [title, description, Icon] = labels[active] || [];
-  const wideLayout = ["audit", "office", "parliamentarian"].includes(active);
+  const wideLayout = ["audit", "office", "parliamentarian", "rag-quality"].includes(active);
 
   return <>
     <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuração administrativa</h1><p>Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna.</p></div></section>
@@ -627,7 +628,8 @@ export function AdministrationPage() {
           }}
         />
       )}
-      {!["office", "parliamentarian", "users", "territories", "agencies", "templates", "audit"].includes(active) && <>
+      {active === "rag-quality" && <RagQualityRolloutSettings />}
+      {!["office", "parliamentarian", "users", "territories", "agencies", "templates", "audit", "rag-quality"].includes(active) && <>
         <form className="settings-form" onSubmit={submit}>
           <div className="settings-title"><Settings2 size={21} /><div><strong>{title}</strong><small>{description}</small></div></div>
           <label>Nome<input required value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} /></label>
@@ -670,6 +672,79 @@ export function AdministrationPage() {
       </>}
     </section>
   </>;
+}
+
+function RagQualityRolloutSettings() {
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      setResult(await apiRequest("/api/v1/assistente/calibracoes"));
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (error) return <p className="form-error">{error}</p>;
+  if (!result) return <div className="table-message">Carregando rollouts RAG...</div>;
+
+  const activeProfile = result.perfilAtivo;
+  return (
+    <section className="ai-model-table">
+      <header>
+        <div>
+          <h2>Calibração e rollout do RAG</h2>
+          <p>Baseline, candidato, gates online e decisões por etapa deste gabinete.</p>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={load}>
+          Atualizar
+        </button>
+      </header>
+      {activeProfile && (
+        <div className="metric-grid ai-quality-metrics">
+          <article className="metric-neutral"><div><strong>v{activeProfile.versao}</strong><span>Perfil ativo</span></div></article>
+          <article className="metric-neutral"><div><strong>{activeProfile.percentualCanario}%</strong><span>Tráfego candidato</span></div></article>
+          <article className="metric-neutral"><div><strong>{activeProfile.rollout?.estado || "—"}</strong><span>Estado do rollout</span></div></article>
+          <article className="metric-neutral"><div><strong>{activeProfile.rollout?.etapaAtual ?? "—"}</strong><span>Etapa atual</span></div></article>
+          <article className="metric-neutral"><div><strong>{Math.round((activeProfile.metricasOnline?.latencyBudgetExceededRate || 0) * 100)}%</strong><span>Acima do orçamento</span></div></article>
+        </div>
+      )}
+      {!result.content.length && <div className="table-message">Nenhuma calibração foi executada.</div>}
+      {!!result.content.length && (
+        <div className="table-scroll">
+          <table>
+            <thead><tr><th>Versão</th><th>Estado</th><th>Rollout</th><th>Tráfego</th><th>Próxima avaliação</th><th>Decisão mais recente</th></tr></thead>
+            <tbody>{result.content.map((item) => {
+              const history = item.rollout?.historico || [];
+              const latest = history[history.length - 1];
+              return <tr key={item.id}>
+                <td><strong>v{item.versao}</strong></td>
+                <td>{item.estado}</td>
+                <td>{item.rollout?.estado || "—"}</td>
+                <td>{item.percentualCanario}%</td>
+                <td>{formatRolloutDate(item.rollout?.proximaAvaliacaoEm)}</td>
+                <td>{latest ? `${latest.estado} · ${(latest.motivos || []).join(", ") || "sem motivo"}` : "—"}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatRolloutDate(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function OfficeSettings({

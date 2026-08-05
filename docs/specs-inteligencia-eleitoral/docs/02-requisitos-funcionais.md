@@ -2,6 +2,14 @@
 
 Prioridade: `MUST`, `SHOULD`, `COULD`.
 
+## Fechamento SHOULD/COULD — Release 8.11
+
+Os requisitos RF-005, RF-026, RF-034, RF-044 e RF-072 passam a ter implementação
+tenant-facing. Preferências e segmentos são privados por usuário; briefings, heatmaps,
+clusters e rotas usam apenas agregados não suprimidos e referências públicas confirmadas;
+relatórios recorrentes aceitam somente destinatários internos ativos. Nenhuma dessas
+funcionalidades usa endereço residencial ou dado individual de cidadão.
+
 ## Épico E01 — Acesso e configuração
 
 | ID | Pri. | Requisito | Aceite resumido |
@@ -106,3 +114,15 @@ Prioridade: `MUST`, `SHOULD`, `COULD`.
 | RNF-008 | Logs sem CPF, endereço, telefone, conteúdo de demanda ou prompt pessoal bruto. |
 | RNF-009 | APIs versionadas em `/api/v1`. |
 | RNF-010 | Processamento aderente à LGPD e às regras eleitorais vigentes. |
+## Épico E10 — Identidade eleitoral e exploração
+
+| ID | Pri. | Requisito | Aceite resumido |
+|---|---|---|---|
+| RF-090 | MUST | Vincular automaticamente o parlamentar às candidaturas cujo CPF oficial corresponda deterministicamente ao CPF cadastrado. | Apenas impressão HMAC versionada é persistida na base eleitoral; CPF não aparece em API, log ou auditoria. |
+| RF-091 | MUST | Restringir os combos operacionais de eleição às participações confirmadas do parlamentar titular. | Resultados, Comparações, GabIA, Simulador e Relatórios recebem a mesma lista centralizada. |
+| RF-092 | MUST | Selecionar inicialmente a participação confirmada mais recente. | URL inválida ou eleição não vinculada não amplia o escopo. |
+| RF-093 | MUST | Oferecer “Explorar outras eleições” como área separada de pesquisa pública. | O catálogo completo não altera o contexto operacional sem vínculo verificado ou contingencial. |
+| RF-094 | MUST | Permitir confirmação manual somente quando o CPF estiver ausente, a fonte oficial indisponível ou houver divergência cadastral. | A contingência é exclusiva do titular, auditada e distinguível do vínculo automático. |
+| RF-095 | MUST | Compartilhar o contexto do titular com assessores delegados. | O assessor não cria identidade eleitoral independente no mandato. |
+| RF-096 | MUST | Sincronizar idempotentemente o cadastro oficial de candidaturas do TSE e reconciliar vínculos após atualização. | Falha do TSE preserva o último estado válido e não bloqueia login ou análises. |
+| RF-097 | MUST | Impedir remoção direta de vínculo automático. | Correção de CPF ou revisão de divergência substitui exclusão manual e evita recriação silenciosa. |

@@ -31,6 +31,9 @@ Este repositório contém a documentação de especificação utilizada para evo
     quantitativos permanecem em consultas estruturadas tenant-scoped.
 12. Feedback humano é dado não confiável até validação e somente influencia o
     próprio tenant por artefatos versionados, avaliados e reversíveis.
+13. Todo conteúdo externo ou textual permanece não confiável como instrução mesmo
+    depois de autorizado para indexação; segurança de conteúdo exige defesa em
+    profundidade e falha fechada.
 
 ## Estrutura do repositório
 
@@ -135,3 +138,28 @@ gabflow-spec-driven/
 - Requisitos analíticos: `RA-XXX`
 - Eventos: nomes no passado, por exemplo `SolicitacaoCriada`
 - Todos os timestamps em UTC e exibidos no fuso configurado pelo tenant.
+
+## Datasets de especificação
+
+Datasets em `datasets/` são contratos versionados de avaliação e não fontes do RAG.
+O dataset adversarial de prompt injection possui JSON Schema próprio, casos
+`REGRESSION` e `HOLDOUT`, ataques sintéticos e controles benignos. Seu conteúdo não
+pode ser indexado, recuperado pelo assistente ou promovido para catálogo factual.
+
+O incremento 5.2 materializa esse contrato em um gateway único e persiste seu
+estado nas versões privadas/globais, fontes operacionais e feedback. A API expõe
+somente metadados de decisão e checksum, nunca o payload analisado.
+
+O incremento 5.4 torna o dataset um gate executável do gateway e adiciona
+canonicalização defensiva limitada e classificador dedicado, independente do modelo
+gerador. O contrato do classificador aceita somente `label`, `score` e categorias
+allowlisted; erro, timeout ou contrato inválido falham de forma fechada.
+
+O incremento 5.5 substitui o smoke test EICAR isolado por ClamAV operacional,
+valida o MIME real, revalida checksum e malware antes do parsing e move TXT, DOCX,
+PDF e imagens para um sidecar sem rede, segredos ou escrita nos objetos.
+
+O incremento 5.6 reavalia o acervo privado, global e os anexos em execuções
+assíncronas e retomáveis. Alvos pendentes ficam inelegíveis no retrieval e uma
+reclassificação elimina chunks, embeddings, OCR, transcrição e memória operacional
+derivada antes de registrar a conclusão auditável.

@@ -103,3 +103,18 @@ O nome é provisório e configurável.
 - Insights aceitos, descartados e contestados.
 - Percentual de insights com fontes e explicação completas.
 - Incidentes de isolamento de tenant: meta zero.
+## Contexto eleitoral do parlamentar — Release 8.9
+
+Os fluxos de Resultados, Comparações, GabIA, Simulador, Relatórios e camadas do
+mandato usam exclusivamente eleições associadas ao parlamentar por reconciliação
+determinística entre o CPF cadastrado e o cadastro oficial sincronizado do TSE. O CPF
+não é exposto nem duplicado na base eleitoral: a comparação utiliza impressão
+criptográfica versionada. O sistema nunca presume a identidade por nome, partido,
+número ou similaridade textual.
+
+O catálogo completo permanece disponível em **Explorar outras eleições**, uma área
+de pesquisa pública e claramente separada. Nela o usuário pode localizar eleições e
+candidaturas. A confirmação manual somente aparece como contingência quando o CPF
+está ausente, a fonte oficial está indisponível ou há divergência cadastral. Consultas
+exploratórias não alteram automaticamente o contexto operacional, não selecionam adversários e não criam
+cenários ou análises em nome do mandato.

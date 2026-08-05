@@ -15,7 +15,7 @@ from app.models import (
     ServiceRequest,
     Tenant,
 )
-from app.modules import normalize_modules
+from app.modules import effective_modules
 
 search_bp = Blueprint("search", __name__)
 
@@ -25,7 +25,7 @@ search_bp = Blueprint("search", __name__)
 def global_search():
     tenant_id = uuid.UUID(get_jwt()["tenant_id"])
     tenant = db.session.get(Tenant, tenant_id)
-    enabled_modules = set(normalize_modules(tenant.enabled_modules if tenant else []))
+    enabled_modules = set(effective_modules(tenant)) if tenant else set()
     query = str(request.args.get("q", "")).strip()
     if len(query) < 2:
         return jsonify(content=[])

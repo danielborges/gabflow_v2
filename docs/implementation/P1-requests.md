@@ -55,8 +55,8 @@ evoluindo juntos em fatias verticais.
 
 ## Limites desta entrega
 
-- a verificação de anexos usa controles locais e a assinatura EICAR; a implantação
-  produtiva deve conectar o fluxo a um scanner dedicado, como ClamAV ou equivalente;
+- desde a Release 5.5, anexos usam ClamAV por `INSTREAM`, validação de MIME real e
+  nova varredura por checksum antes de OCR ou transcrição;
 - o worker publica eventos de domínio no log estruturado até a adoção de um barramento
   externo; o outbox e os consumidores já preservam o contrato idempotente;
 - e-mails usam Resend pelo worker; outros canais externos ainda dependem de provedores.

@@ -1,12 +1,14 @@
 import {
   BrainCircuit,
   CalendarDays,
+  ChevronDown,
   ChevronRight,
   ClipboardCheck,
   ClipboardList,
   Database,
   FileText,
   LayoutDashboard,
+  Landmark,
   LogOut,
   MessagesSquare,
   Menu,
@@ -15,12 +17,15 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { apiRequest } from "../api";
 import { AdministrationPage } from "./AdministrationPage";
 import { AgendaPage } from "./AgendaPage";
 import { AIQualityPage } from "./AIQualityPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { DirectoryPage } from "./DirectoryPage";
+import { ElectoralIntelligencePage } from "./electoral/ElectoralIntelligencePage";
+import { electoralSectionDefinitions } from "./electoral/electoralNavigation";
 import { GlobalSearch } from "./GlobalSearch";
 import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
@@ -41,6 +46,7 @@ const navigation = [
   { id: "agenda", label: "Agenda", icon: CalendarDays, enabled: true, module: "agenda" },
   { id: "oversight", label: "Fiscalização", icon: ClipboardCheck, enabled: true, module: "fiscalizacao" },
   { id: "channels", label: "Canais", icon: MessagesSquare, enabled: true, module: "canais" },
+  { id: "electoral", label: "Inteligência Eleitoral", icon: Landmark, enabled: true, module: "inteligencia_eleitoral", representativeOnly: true },
   { id: "rag", label: "Base RAG", icon: Database, enabled: true, managerOnly: true, module: "rag" },
 ];
 
@@ -49,10 +55,20 @@ export function Workspace({ user, onLogout }) {
   const enabledModules = Array.isArray(configuredModules)
     ? configuredModules
     : navigation.map((item) => item.module).filter(Boolean);
-  const representativeViews = new Set(["overview", "requests", "agenda", "documents", "rag-assistant", "channels"]);
+  const representativeViews = new Set(["overview", "requests", "agenda", "documents", "rag-assistant", "channels", "electoral"]);
   const isModuleEnabled = (module) => !module || enabledModules.includes(module);
+  const electoralModuleEnabled = enabledModules.includes("inteligencia_eleitoral");
+  const [delegatedElectoralAccess, setDelegatedElectoralAccess] = useState(false);
+  useEffect(() => {
+    if (user.role === "representative" || !electoralModuleEnabled) return;
+    apiRequest("/api/v1/electoral/disponibilidade")
+      .then(() => setDelegatedElectoralAccess(true))
+      .catch(() => setDelegatedElectoralAccess(false));
+  }, [user.role, electoralModuleEnabled]);
   const availableNavigation = navigation.filter((item) => (
-    isModuleEnabled(item.module) && (user.role !== "representative" || representativeViews.has(item.id))
+    isModuleEnabled(item.module) &&
+    (!item.representativeOnly || user.role === "representative" || delegatedElectoralAccess) &&
+    (user.role !== "representative" || representativeViews.has(item.id))
   ));
   const initialView =
     availableNavigation.find((item) => item.id === "requests")?.id ||
@@ -60,12 +76,31 @@ export function Workspace({ user, onLogout }) {
     "overview";
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState(initialView);
+  const [electoralMenuOpen, setElectoralMenuOpen] = useState(false);
+  const [electoralSection, setElectoralSection] = useState(() => (
+    new URLSearchParams(window.location.search).get("secao") || "overview"
+  ));
+  const [electoralSectionIds, setElectoralSectionIds] = useState(() => (
+    user.role === "representative"
+      ? ["overview", "results", "comparisons"]
+      : ["overview", "results"]
+  ));
   const [requestSearch, setRequestSearch] = useState("");
+
+  const updateElectoralSections = useCallback((sectionIds) => {
+    setElectoralSectionIds((current) => (
+      current.join(",") === sectionIds.join(",") ? current : sectionIds
+    ));
+    setElectoralSection((current) => (
+      sectionIds.includes(current) ? current : sectionIds[0] || "overview"
+    ));
+  }, []);
 
   function openSearchResult(item) {
     const target = navigation.find((entry) => entry.id === item.view);
     if (
       !isModuleEnabled(target?.module) ||
+      (target?.representativeOnly && user.role !== "representative" && !delegatedElectoralAccess) ||
       (user.role === "representative" && !representativeViews.has(target?.id))
     ) {
       return;
@@ -74,12 +109,33 @@ export function Workspace({ user, onLogout }) {
       setRequestSearch(item.pesquisa);
     }
     setActiveView(item.view || "requests");
+    setElectoralMenuOpen(item.view === "electoral");
     setMenuOpen(false);
   }
 
   function openView(id) {
+    if (id === "electoral") {
+      if (activeView === "electoral") {
+        setElectoralMenuOpen((current) => !current);
+      } else {
+        setActiveView(id);
+        setElectoralMenuOpen(true);
+      }
+      return;
+    }
     setActiveView(id);
+    setElectoralMenuOpen(false);
     setMenuOpen(false);
+  }
+
+  function openElectoralSection(sectionId) {
+    setActiveView("electoral");
+    setElectoralSection(sectionId);
+    setElectoralMenuOpen(true);
+    setMenuOpen(false);
+    const params = new URLSearchParams(window.location.search);
+    params.set("secao", sectionId);
+    window.history.pushState({}, "", `${window.location.pathname}?${params}`);
   }
 
   return (
@@ -97,15 +153,43 @@ export function Workspace({ user, onLogout }) {
         </div>
         <nav aria-label="Navegacao principal">
           {availableNavigation.map(({ id, label, icon: Icon, enabled, managerOnly }) => (
-            <button
-              key={id}
-              className={activeView === id ? "nav-item active" : "nav-item"}
-              disabled={!enabled || (managerOnly && !["admin", "manager"].includes(user.role))}
-              onClick={() => openView(id)}
-            >
-              <Icon size={19} />
-              <span>{label}</span>
-            </button>
+            <div className={id === "electoral" ? "nav-group" : undefined} key={id}>
+              <button
+                className={activeView === id ? "nav-item active" : "nav-item"}
+                disabled={!enabled || (managerOnly && !["admin", "manager"].includes(user.role))}
+                onClick={() => openView(id)}
+                aria-expanded={id === "electoral" ? electoralMenuOpen : undefined}
+              >
+                <Icon size={19} />
+                <span>{label}</span>
+                {id === "electoral" && <ChevronDown
+                  className={electoralMenuOpen ? "nav-group-chevron expanded" : "nav-group-chevron"}
+                  size={16}
+                  aria-hidden="true"
+                />}
+              </button>
+              {id === "electoral" && electoralMenuOpen && <div
+                className="nav-submenu"
+                role="group"
+                aria-label="Submenu Inteligência Eleitoral"
+              >
+                {electoralSectionDefinitions
+                  .filter((section) => electoralSectionIds.includes(section.id))
+                  .map((section) => {
+                    const SectionIcon = section.icon;
+                    return <button
+                      type="button"
+                      key={section.id}
+                      className={electoralSection === section.id ? "active" : ""}
+                      aria-current={electoralSection === section.id ? "page" : undefined}
+                      onClick={() => openElectoralSection(section.id)}
+                    >
+                      <SectionIcon size={16} aria-hidden="true" />
+                      <span>{section.label}</span>
+                    </button>;
+                  })}
+              </div>}
+            </div>
           ))}
         </nav>
         <div className="sidebar-footer">
@@ -149,6 +233,13 @@ export function Workspace({ user, onLogout }) {
         {activeView === "agenda" && isModuleEnabled("agenda") && <AgendaPage />}
         {activeView === "oversight" && isModuleEnabled("fiscalizacao") && <OversightPage />}
         {activeView === "channels" && isModuleEnabled("canais") && <ChannelsPage />}
+        {activeView === "electoral" && isModuleEnabled("inteligencia_eleitoral") && (
+          <ElectoralIntelligencePage
+            activeSection={electoralSection}
+            onSectionChange={setElectoralSection}
+            onSectionsChange={updateElectoralSections}
+          />
+        )}
         {activeView === "citizens" && isModuleEnabled("cidadaos") && <DirectoryPage />}
         {activeView === "ai-quality" && isModuleEnabled("ia") && <AIQualityPage />}
         {activeView === "rag-assistant" && isModuleEnabled("rag") && <RagAssistantPage />}

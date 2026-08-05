@@ -35,6 +35,12 @@
 - acurácia de roteamento e de filtros nos casos curados;
 - taxa de recuperação de hard negatives;
 - casos curados desativados por feedback ou fonte inelegível.
+- recall do detector no dataset adversarial e no holdout;
+- taxa de falso positivo sobre controles benignos;
+- decisões `CLEAN`, `SUSPICIOUS`, `MALICIOUS` e `INDETERMINATE` por superfície;
+- conteúdo bloqueado antes de chunks e embeddings;
+- versões em quarentena, tempo de revisão e resultado do reprocessamento;
+- divergência entre versão da política e última varredura do acervo.
 
 ## Alertas
 
@@ -55,6 +61,21 @@
 - artefato candidato com regressão acima da tolerância;
 - aprendizado ativo sem baseline, aprovação ou versão de rollback;
 - divergência entre feedback revogado e artefato ainda ativo.
+- ataque crítico aceito no dataset adversarial;
+- conteúdo diferente de `CLEAN` com chunk, embedding ou publicação ativa;
+- indisponibilidade ou contrato inválido de scanner/classificador obrigatório;
+- crescimento de `INDETERMINATE/RETRY`, timeout ou resposta inválida por provider,
+  modelo e versão do classificador, sem registrar o conteúdo analisado;
+- indisponibilidade do ClamAV, assinatura desatualizada, limite de stream excedido,
+  malware detectado, MIME divergente, checksum alterado ou timeout do parser;
+- aumento anormal de falso positivo ou queda de recall adversarial;
+- acervo pendente de revarredura após mudança de política.
+- duração, progresso, erros e backlog por execução de revarredura;
+- quantidade de chunks, OCRs, transcrições e memórias operacionais eliminados.
+- respostas validadas, bloqueadas, efetivamente recusadas e apenas monitoradas;
+- sinais de validação de saída por tenant, versão da política e etapa do rollout;
+- objetos legados ou em versão criptográfica anterior;
+- resultado, tabelas não conformes e roles privilegiadas em cada auditoria RLS.
 
 ## Implementação RAG
 
@@ -82,6 +103,24 @@ A Release 4.7 planeja:
 - comparação de candidato com baseline;
 - ativação, canário, rollback e drift por versão de artefato;
 - correlação sem conteúdo entre consulta, feedback, execução e artefato.
+
+A Release 4.9 adiciona:
+
+- estado, percentual, janela, amostra e próxima avaliação do rollout por tenant;
+- taxas por etapa de fallback, rejeição semântica, recusa e feedback negativo;
+- decisão e motivos de promoção ou rollback em histórico auditável;
+- heartbeat do lease para impedir retomada concorrente de avaliações longas.
+- latência separada de recuperação, geração, validação e NLI;
+- taxa de consultas acima do orçamento e skip adaptativo do reranker;
+- provider/modelo NLI e comprovação de independência em relação ao gerador.
+
+O incremento 5.1 especifica:
+
+- dataset adversarial versionado com partições de regressão e holdout;
+- métricas separadas para ataques e controles benignos;
+- gates de ataques críticos, recall e falsos positivos;
+- correlação por versão da política, detector, classificador e checksum;
+- alertas de falha aberta, derivados indevidos e acervo sem revarredura.
 
 Metas iniciais:
 

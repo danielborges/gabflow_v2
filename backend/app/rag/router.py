@@ -1,3 +1,4 @@
+import hashlib
 import re
 import unicodedata
 import uuid
@@ -5,7 +6,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
+from app.models import RagLearningArtifactType
 from app.rag.analytics import structured_query
+from app.rag.calibration import quality_parameters_from_artifact
+from app.rag.learning import active_learning_artifacts, learning_influence_data
+from app.rag.query_understanding import (
+    DOCUMENTARY_FILTER_KEYS,
+    understand_documentary_query,
+)
 from app.rag.retrieval import answer_query
 
 
@@ -50,7 +58,7 @@ _DOCUMENTARY_PATTERNS = (
     r"\bo que (?:diz|dizem|consta)\b",
     r"\bquais temas recorrentes\b",
 )
-_FILTER_KEYS = {
+_STRUCTURED_FILTER_KEYS = {
     "dataset",
     "metrica",
     "agruparPor",
@@ -61,6 +69,7 @@ _FILTER_KEYS = {
     "territorioId",
     "orgaoId",
 }
+_FILTER_KEYS = _STRUCTURED_FILTER_KEYS | DOCUMENTARY_FILTER_KEYS
 
 
 def route_query(
@@ -70,24 +79,90 @@ def route_query(
     *,
     limit: int | None = None,
     explicit_filters: dict | None = None,
+    learning_artifacts: dict | None = None,
+    canary_key: str | None = None,
 ) -> dict:
+    artifacts = (
+        active_learning_artifacts(tenant_id, canary_key=canary_key)
+        if learning_artifacts is None
+        else learning_artifacts
+    )
     intent = classify_query(query, explicit_filters=explicit_filters)
+    applied_artifacts = []
+    routing_artifact = artifacts.get(RagLearningArtifactType.ROUTING_EXAMPLES)
+    if routing_artifact is not None:
+        intent, routing_applied = _apply_routing_artifact(
+            query,
+            intent,
+            routing_artifact,
+        )
+        if routing_applied:
+            applied_artifacts.append(learning_influence_data(routing_artifact))
+    rerank_artifact = artifacts.get(RagLearningArtifactType.RERANK_PROFILE)
+    quality_artifact = artifacts.get(RagLearningArtifactType.QUALITY_PROFILE)
+    quality_profile = (
+        quality_parameters_from_artifact(quality_artifact)
+        if quality_artifact is not None
+        else None
+    )
+    if quality_artifact is not None and intent.method in {
+        QueryMethod.DOCUMENTAL,
+        QueryMethod.HIBRIDO,
+    }:
+        applied_artifacts.append(learning_influence_data(quality_artifact))
+    documentary_plan = (
+        understand_documentary_query(query, explicit_filters=explicit_filters)
+        if intent.method in {QueryMethod.DOCUMENTAL, QueryMethod.HIBRIDO}
+        else None
+    )
     if intent.method == QueryMethod.DOCUMENTAL:
-        answer = answer_query(tenant_id, role, query, limit)
-        return _with_routing(answer, intent, None)
+        answer = answer_query(
+            tenant_id,
+            role,
+            query,
+            limit,
+            rerank_artifact=rerank_artifact,
+            applied_artifacts=applied_artifacts,
+            retrieval_plan=documentary_plan,
+            quality_profile=quality_profile,
+        )
+        return _with_routing(
+            answer,
+            intent,
+            None,
+            applied_artifacts,
+            documentary_plan=documentary_plan,
+        )
 
     structured = structured_query(tenant_id, intent.structured_payload)
     if intent.method == QueryMethod.ESTRUTURADO:
-        return _structured_answer(query, intent, structured)
+        answer = _structured_answer(query, intent, structured)
+        answer["artefatosAprendizado"] = applied_artifacts
+        return answer
 
-    documentary = answer_query(tenant_id, role, query, limit)
+    documentary = answer_query(
+        tenant_id,
+        role,
+        query,
+        limit,
+        rerank_artifact=rerank_artifact,
+        applied_artifacts=applied_artifacts,
+        retrieval_plan=documentary_plan,
+        quality_profile=quality_profile,
+    )
     documentary["resposta"] = (
         f"{_structured_response(structured)} "
         f"Complemento documental: {documentary['resposta']}"
     )
     documentary["fundamentada"] = True
     documentary["recusaConclusiva"] = False
-    return _with_routing(documentary, intent, structured)
+    return _with_routing(
+        documentary,
+        intent,
+        structured,
+        applied_artifacts,
+        documentary_plan=documentary_plan,
+    )
 
 
 def classify_query(
@@ -126,6 +201,7 @@ def classify_query(
             {
                 key: value
                 for key, value in explicit_filters.items()
+                if key in _STRUCTURED_FILTER_KEYS
                 if value not in (None, "")
             }
         )
@@ -244,6 +320,21 @@ def _structured_answer(query: str, intent: QueryIntent, result: dict) -> dict:
                 "instruções do usuário."
             ),
         },
+        "geracao": {
+            "habilitada": False,
+            "aplicada": False,
+            "modelo": None,
+            "versaoPrompt": None,
+            "fallbackUtilizado": False,
+            "erroFallback": None,
+            "afirmacoes": 0,
+            "citacoes": 0,
+            "validacaoCruzada": {
+                "valida": False,
+                "motivo": "CONSULTA_ESTRUTURADA",
+            },
+        },
+        "citacoes": [],
         "fontes": [],
         "escoposConsultados": ["PRIVADO"],
         "recuperacao": {
@@ -259,14 +350,61 @@ def _structured_answer(query: str, intent: QueryIntent, result: dict) -> dict:
     }
 
 
-def _with_routing(answer: dict, intent: QueryIntent, structured: dict | None) -> dict:
+def _with_routing(
+    answer: dict,
+    intent: QueryIntent,
+    structured: dict | None,
+    applied_artifacts: list | None = None,
+    documentary_plan=None,
+) -> dict:
     answer["metodo"] = intent.method.value
     answer["motivosRoteamento"] = list(intent.reasons)
-    answer["filtrosAplicados"] = (
-        structured["filtros"] if structured is not None else {}
+    structured_filters = structured["filtros"] if structured is not None else {}
+    documentary_filters = (
+        documentary_plan.filters if documentary_plan is not None else {}
+    )
+    answer["filtrosAplicados"] = {
+        **structured_filters,
+        **documentary_filters,
+    }
+    answer["entendimentoConsulta"] = (
+        documentary_plan.audit_data() if documentary_plan is not None else None
     )
     answer["resultadoEstruturado"] = structured
+    answer["artefatosAprendizado"] = applied_artifacts or []
     return answer
+
+
+def _apply_routing_artifact(query: str, intent: QueryIntent, artifact):
+    normalized = " ".join(str(query or "").split())
+    query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    example = next(
+        (
+            item
+            for item in artifact.payload.get("exemplos", [])
+            if item.get("consultaHash") == query_hash
+        ),
+        None,
+    )
+    if example is None:
+        return intent, False
+    method_value = example.get("metodoEsperado") or intent.method.value
+    try:
+        method = QueryMethod(method_value)
+    except ValueError:
+        return intent, False
+    filters = dict(intent.structured_payload)
+    filters.update(
+        {
+            key: value
+            for key, value in (example.get("filtrosEsperados") or {}).items()
+            if key in _FILTER_KEYS and value not in (None, "")
+        }
+    )
+    reasons = tuple(
+        dict.fromkeys((*intent.reasons, "EXEMPLO_DE_ROTEAMENTO_APROVADO"))
+    )
+    return QueryIntent(method, filters, reasons), True
 
 
 def _structured_response(result: dict) -> str:

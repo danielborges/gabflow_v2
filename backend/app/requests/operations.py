@@ -1,3 +1,4 @@
+import io
 import uuid
 from datetime import UTC, datetime
 
@@ -41,6 +42,8 @@ from app.models import (
     UserStatus,
 )
 from app.notifications.service import notify_user
+from app.security.encryption import read_plaintext
+from app.security.malware import malware_scan_state
 
 request_ops_bp = Blueprint("request_operations", __name__)
 
@@ -81,6 +84,7 @@ def attachment_data(item: Attachment) -> dict:
         "tamanho": item.size_bytes,
         "sha256": item.sha256,
         "statusVerificacao": item.scan_status.value,
+        "verificacaoMalware": malware_scan_state(item),
         "downloadUrl": f"/api/v1/anexos/{item.id}/download?token={token}",
         "transcricao": transcription_data(item.transcription),
         "ocr": ocr_data(item.ocr),
@@ -564,7 +568,10 @@ def download_attachment(attachment_id: uuid.UUID):
     except AttachmentError:
         return jsonify(error="resource_not_found", message="Arquivo não encontrado."), 404
     return send_file(
-        path, mimetype=item.mime_type, as_attachment=True, download_name=item.original_name
+        io.BytesIO(read_plaintext(path, f"tenant:{tenant_id}")),
+        mimetype=item.mime_type,
+        as_attachment=True,
+        download_name=item.original_name,
     )
 
 

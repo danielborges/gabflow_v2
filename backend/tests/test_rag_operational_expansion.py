@@ -139,9 +139,7 @@ def test_remaining_operational_modules_publish_only_approved_content(app):
             model="test",
             language="pt",
             transcript="Texto bruto que não deve ser utilizado.",
-            reviewed_transcript=(
-                "Relato revisado sobre a necessidade de manutenção viária."
-            ),
+            reviewed_transcript=("Relato revisado sobre a necessidade de manutenção viária."),
             requested_by_id=user.id,
             reviewed_by_id=user.id,
             reviewed_at=now,
@@ -203,16 +201,11 @@ def test_remaining_operational_modules_publish_only_approved_content(app):
         sources = {
             item.entity_type: item
             for item in db.session.scalars(
-                select(RagKnowledgeSource).where(
-                    RagKnowledgeSource.entity_type.in_(expected_types)
-                )
+                select(RagKnowledgeSource).where(RagKnowledgeSource.entity_type.in_(expected_types))
             )
         }
         assert set(sources) == expected_types
-        assert all(
-            item.status == RagKnowledgeSourceStatus.ATIVA
-            for item in sources.values()
-        )
+        assert all(item.status == RagKnowledgeSourceStatus.ATIVA for item in sources.values())
         texts = {}
         for entity_type, source in sources.items():
             version = db.session.get(RagDocumentVersion, source.latest_version_id)
@@ -228,9 +221,7 @@ def test_remaining_operational_modules_publish_only_approved_content(app):
         assert "Nome que deve" not in texts[OVERSIGHT_ACTION_ENTITY]
 
 
-def test_thematic_structured_analytics_and_tenant_evaluation(
-    app, client, monkeypatch
-):
+def test_thematic_structured_analytics_and_tenant_evaluation(app, client, monkeypatch):
     app.config["RAG_OPERATIONAL_MEMORY_ENABLED"] = True
     app.config["RAG_THEMATIC_MIN_GROUP_SIZE"] = 2
     csrf = _login(client)
@@ -260,9 +251,7 @@ def test_thematic_structured_analytics_and_tenant_evaluation(
     assert structured.json["metodo"] == "ESTRUTURADO"
     assert structured.json["tenantScoped"] is True
     assert structured.json["total"] == 3
-    assert structured.json["itens"] == [
-        {"grupo": "Iluminação pública", "valor": 3}
-    ]
+    assert structured.json["itens"] == [{"grupo": "Iluminação pública", "valor": 3}]
 
     today = datetime.now(UTC).date()
     rebuilt = client.post(

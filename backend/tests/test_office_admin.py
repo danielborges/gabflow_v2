@@ -175,9 +175,7 @@ def test_office_admin_updates_profile_users_and_audit(app, client):
 
     assert profile.status_code == 200
     assert profile.json["chefeGabineteId"] == created.json["id"]
-    assert profile.json["dadosInstitucionais"]["nomeGabinete"] == (
-        "Gabinete da Vereadora Teste"
-    )
+    assert profile.json["dadosInstitucionais"]["nomeGabinete"] == ("Gabinete da Vereadora Teste")
     assert profile.json["dadosInstitucionais"]["estado"] == "MG"
     assert profile.json["redesSociais"]["instagram"] == "https://instagram.test/gabinete"
 

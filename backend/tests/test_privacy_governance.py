@@ -62,9 +62,7 @@ def test_consent_history_is_append_only_and_correction_is_audited(app, client):
 
     with app.app_context():
         assert len(db.session.execute(select(ConsentRecord)).scalars().all()) == 3
-        actions = {
-            item.action for item in db.session.execute(select(AuditLog)).scalars()
-        }
+        actions = {item.action for item in db.session.execute(select(AuditLog)).scalars()}
         assert "citizen.consent.recorded" in actions
         assert "citizen.corrected" in actions
 

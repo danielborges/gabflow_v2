@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from flask import current_app
 from sqlalchemy import select
@@ -20,6 +21,19 @@ from app.ai.transcription import (
     execute_audio_transcription,
 )
 from app.communications.email import EmailDeliveryError, send_email
+from app.electoral.insights import (
+    INSIGHT_EVENT,
+    NonRetryableInsightError,
+    execute_insight,
+    fail_insight,
+)
+from app.electoral.mandate_intelligence import ELECTORAL_ALERT_EMAIL_EVENT
+from app.electoral.reports import (
+    REPORT_EVENT,
+    NonRetryableReportError,
+    execute_report,
+    fail_report,
+)
 from app.extensions import db
 from app.legislative.service import (
     LEGISLATIVE_GENERATION_EVENT,
@@ -36,16 +50,36 @@ from app.models import (
     ContactAttemptOutcome,
     DocumentOcr,
     DocumentOcrStatus,
+    ElectoralAlertDelivery,
+    ElectoralInsight,
+    ElectoralReportJob,
     GlobalKnowledgeDocumentVersion,
     OutboxEvent,
     RagDocumentVersion,
+    RagLearningArtifact,
+    RagLearningRun,
+    RagSecurityRescanRun,
     RequestHistory,
+    RlsAuditRun,
     ServiceRequest,
+)
+from app.rag.calibration import (
+    QUALITY_CALIBRATION_EVENT,
+    QUALITY_ROLLOUT_EVENT,
+    execute_quality_calibration,
+    execute_quality_rollout_check,
+    fail_quality_calibration,
+    fail_quality_rollout,
 )
 from app.rag.global_service import (
     GLOBAL_RAG_INGESTION_EVENT,
     execute_global_ingestion,
     fail_global_ingestion,
+)
+from app.rag.learning import (
+    LEARNING_COMPILATION_EVENT,
+    execute_learning_run,
+    fail_learning_run,
 )
 from app.rag.operational_memory import (
     OPERATIONAL_MEMORY_EVENT,
@@ -53,12 +87,19 @@ from app.rag.operational_memory import (
     fail_operational_memory_sync,
 )
 from app.rag.projectors import ProjectorAction
+from app.rag.security_rescan import (
+    SECURITY_RESCAN_EVENT,
+    execute_security_rescan,
+    fail_security_rescan,
+)
 from app.rag.service import (
     RAG_INGESTION_EVENT,
     NonRetryableRagError,
     execute_ingestion,
     fail_ingestion,
 )
+from app.security.rls_audit import RLS_AUDIT_EVENT, execute_rls_audit, fail_rls_audit
+from app.tenant_context import activate_global_knowledge_context
 
 EMAIL_RESPONSE_EVENT = "RespostaEmailSolicitacao"
 
@@ -110,10 +151,7 @@ def handle_event(event: OutboxEvent) -> None:
                 str(event.payload.get("entityType") or ""),
                 _uuid(event.payload, "entityId"),
                 action=ProjectorAction(
-                    str(
-                        event.payload.get("action")
-                        or ProjectorAction.RECONCILE.value
-                    ).upper()
+                    str(event.payload.get("action") or ProjectorAction.RECONCILE.value).upper()
                 ),
                 revision=int(event.payload.get("revision") or 1),
                 source_module=event.payload.get("sourceModule"),
@@ -121,8 +159,44 @@ def handle_event(event: OutboxEvent) -> None:
         except (TypeError, ValueError) as error:
             raise NonRetryableEventError(str(error)) from error
         return
+    if event.event_type == LEARNING_COMPILATION_EVENT:
+        execute_learning_run(_rag_learning_run(event))
+        return
+    if event.event_type == QUALITY_CALIBRATION_EVENT:
+        execute_quality_calibration(_rag_learning_artifact(event))
+        return
+    if event.event_type == QUALITY_ROLLOUT_EVENT:
+        execute_quality_rollout_check(
+            _rag_learning_artifact(event),
+            expected_stage_index=int(event.payload.get("stageIndex", -1)),
+        )
+        return
+    if event.event_type == SECURITY_RESCAN_EVENT:
+        execute_security_rescan(_security_rescan_run(event))
+        return
+    if event.event_type == RLS_AUDIT_EVENT:
+        run = db.session.get(RlsAuditRun, _uuid(event.payload, "runId"))
+        if run is None:
+            raise NonRetryableEventError("Auditoria RLS nao encontrada.")
+        execute_rls_audit(run)
+        return
+    if event.event_type == REPORT_EVENT:
+        try:
+            execute_report(_electoral_report_job(event))
+        except NonRetryableReportError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
+    if event.event_type == INSIGHT_EVENT:
+        try:
+            execute_insight(_electoral_insight(event))
+        except NonRetryableInsightError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
+        return
+    if event.event_type == ELECTORAL_ALERT_EMAIL_EVENT:
+        _send_electoral_alert_email(event)
         return
 
     current_app.logger.info(
@@ -136,6 +210,17 @@ def handle_event(event: OutboxEvent) -> None:
 
 
 def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
+    if event.event_type == REPORT_EVENT:
+        fail_report(_electoral_report_job(event), error_message)
+        return
+    if event.event_type == INSIGHT_EVENT:
+        fail_insight(_electoral_insight(event), error_message)
+        return
+    if event.event_type == RLS_AUDIT_EVENT:
+        run = db.session.get(RlsAuditRun, _uuid(event.payload, "runId"))
+        if run is not None:
+            fail_rls_audit(run, error_message)
+        return
     if event.event_type in {AI_TRIAGE_EVENT, AI_ASSISTANCE_EVENT}:
         execution = _ai_execution(event)
         execution.status = AIExecutionStatus.FALHOU
@@ -168,9 +253,7 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         payload = event.payload
         try:
             action = ProjectorAction(
-                str(
-                    payload.get("action") or ProjectorAction.RECONCILE.value
-                ).upper()
+                str(payload.get("action") or ProjectorAction.RECONCILE.value).upper()
             )
             entity_id = _uuid(payload, "entityId")
             revision = int(payload.get("revision") or 1)
@@ -185,6 +268,30 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
             error_message=error_message,
             attempts=event.attempt_count,
         )
+        return
+    if event.event_type == LEARNING_COMPILATION_EVENT:
+        fail_learning_run(_rag_learning_run(event), error_message)
+        return
+    if event.event_type == QUALITY_CALIBRATION_EVENT:
+        fail_quality_calibration(
+            _rag_learning_artifact(event),
+            error_message,
+        )
+        return
+    if event.event_type == QUALITY_ROLLOUT_EVENT:
+        fail_quality_rollout(
+            _rag_learning_artifact(event),
+            error_message,
+        )
+        return
+    if event.event_type == SECURITY_RESCAN_EVENT:
+        fail_security_rescan(_security_rescan_run(event), error_message)
+        return
+    if event.event_type == ELECTORAL_ALERT_EMAIL_EVENT:
+        delivery = db.session.get(ElectoralAlertDelivery, _uuid(event.payload, "deliveryId"))
+        if delivery is not None and delivery.tenant_id == event.tenant_id:
+            delivery.status = "FAILED"
+            delivery.error = error_message[:1000]
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -280,6 +387,30 @@ def _send_request_email(event: OutboxEvent) -> None:
     event.payload = {**payload, "delivery": details}
 
 
+def _send_electoral_alert_email(event: OutboxEvent) -> None:
+    payload = event.payload
+    delivery = db.session.get(ElectoralAlertDelivery, _uuid(payload, "deliveryId"))
+    if delivery is None or delivery.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Entrega de alerta eleitoral não encontrada.")
+    if delivery.status == "DELIVERED":
+        return
+    try:
+        result = send_email(
+            recipient=str(payload["recipient"]),
+            subject=str(payload["subject"]),
+            text=str(payload["text"]),
+            idempotency_key=str(payload["idempotencyKey"]),
+        )
+    except EmailDeliveryError as error:
+        if not error.retryable:
+            raise NonRetryableEventError(str(error)) from error
+        raise
+    delivery.status = "DELIVERED"
+    delivery.delivered_at = datetime.now(UTC)
+    delivery.provider_message_id = result.message_id
+    delivery.error = None
+
+
 def _record_delivery_result(
     event: OutboxEvent,
     request_id: uuid.UUID,
@@ -353,6 +484,22 @@ def _rag_document_version(event: OutboxEvent) -> RagDocumentVersion:
     return version
 
 
+def _rag_learning_run(event: OutboxEvent) -> RagLearningRun:
+    run_id = _uuid(event.payload, "runId")
+    run = db.session.get(RagLearningRun, run_id)
+    if run is None or run.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Execução de compilação RAG não encontrada.")
+    return run
+
+
+def _rag_learning_artifact(event: OutboxEvent) -> RagLearningArtifact:
+    artifact_id = _uuid(event.payload, "artifactId")
+    artifact = db.session.get(RagLearningArtifact, artifact_id)
+    if artifact is None or artifact.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Perfil candidato da calibração RAG não encontrado.")
+    return artifact
+
+
 def _global_rag_document_version(
     event: OutboxEvent,
 ) -> GlobalKnowledgeDocumentVersion:
@@ -363,3 +510,27 @@ def _global_rag_document_version(
             "Versão do catálogo global não encontrada ou evento com tenant inválido."
         )
     return version
+
+
+def _security_rescan_run(event: OutboxEvent) -> RagSecurityRescanRun:
+    if event.tenant_id is None:
+        activate_global_knowledge_context()
+    run_id = _uuid(event.payload, "runId")
+    run = db.session.get(RagSecurityRescanRun, run_id)
+    if run is None or run.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Execução de revarredura não encontrada.")
+    return run
+
+
+def _electoral_report_job(event: OutboxEvent) -> ElectoralReportJob:
+    job = db.session.get(ElectoralReportJob, _uuid(event.payload, "jobId"))
+    if job is None or job.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Job de exportacao eleitoral nao encontrado.")
+    return job
+
+
+def _electoral_insight(event: OutboxEvent) -> ElectoralInsight:
+    insight = db.session.get(ElectoralInsight, _uuid(event.payload, "insightId"))
+    if insight is None or insight.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Insight eleitoral nao encontrado.")
+    return insight

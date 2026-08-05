@@ -25,6 +25,7 @@ from app.models import (
     Tenant,
     User,
 )
+from app.security.rls_audit import create_rls_audit, execute_rls_audit
 from app.tenant_context import activate_global_knowledge_context, tenant_context
 
 pytestmark = pytest.mark.postgres
@@ -118,20 +119,20 @@ def test_operational_knowledge_sources_are_tenant_isolated(postgres_app):
     with postgres_app.app_context(), db.engine.connect() as connection:
         transaction = connection.begin()
         connection.execute(text(f"SET LOCAL ROLE {RUNTIME_ROLE}"))
-        assert connection.execute(
-            text("SELECT count(*) FROM rag_knowledge_sources")
-        ).scalar_one() == 0
+        assert (
+            connection.execute(text("SELECT count(*) FROM rag_knowledge_sources")).scalar_one() == 0
+        )
         connection.execute(
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(tenant_a)},
         )
-        assert connection.execute(
-            text("SELECT tenant_id FROM rag_knowledge_sources")
-        ).scalar_one() == tenant_a
+        assert (
+            connection.execute(text("SELECT tenant_id FROM rag_knowledge_sources")).scalar_one()
+            == tenant_a
+        )
         hidden = connection.execute(
             text(
-                "UPDATE rag_knowledge_sources SET purpose = 'INVASAO' "
-                "WHERE tenant_id = :tenant_id"
+                "UPDATE rag_knowledge_sources SET purpose = 'INVASAO' WHERE tenant_id = :tenant_id"
             ),
             {"tenant_id": str(tenant_b)},
         )
@@ -179,16 +180,15 @@ def test_feedback_revisions_are_tenant_isolated(postgres_app):
     with postgres_app.app_context(), db.engine.connect() as connection:
         transaction = connection.begin()
         connection.execute(text(f"SET LOCAL ROLE {RUNTIME_ROLE}"))
-        assert connection.execute(
-            text("SELECT count(*) FROM rag_query_feedback")
-        ).scalar_one() == 0
+        assert connection.execute(text("SELECT count(*) FROM rag_query_feedback")).scalar_one() == 0
         connection.execute(
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(tenant_a)},
         )
-        assert connection.execute(
-            text("SELECT tenant_id FROM rag_query_feedback")
-        ).scalar_one() == tenant_a
+        assert (
+            connection.execute(text("SELECT tenant_id FROM rag_query_feedback")).scalar_one()
+            == tenant_a
+        )
         hidden = connection.execute(
             text(
                 "UPDATE rag_query_feedback SET moderation_rule = 'INVASAO' "
@@ -224,6 +224,25 @@ def test_transaction_local_tenant_context_does_not_leak(postgres_app):
                 connection.execute(text("SELECT tenant_id FROM rag_documents")).scalars().all()
             )
             assert tenants == [tenant_b]
+
+
+def test_tenant_context_is_restored_after_commit(postgres_app):
+    tenant_a, _tenant_b, _chunk_a, _version_b = _seed_rag_tenants(postgres_app)
+
+    with postgres_app.app_context(), tenant_context(tenant_a):
+        assert db.session.scalar(text("SELECT current_setting('app.tenant_id', true)")) == str(
+            tenant_a
+        )
+        db.session.commit()
+
+        assert db.session.scalar(text("SELECT current_setting('app.tenant_id', true)")) == str(
+            tenant_a
+        )
+        visible_documents = db.session.scalars(
+            select(RagDocument).where(RagDocument.tenant_id == tenant_a)
+        ).all()
+        assert [item.tenant_id for item in visible_documents] == [tenant_a]
+        db.session.rollback()
 
 
 def test_runtime_role_cannot_bypass_rls(postgres_app):
@@ -278,7 +297,12 @@ def test_runtime_role_cannot_bypass_rls(postgres_app):
                         "rag_feedback_source_judgments",
                         "rag_global_entitlements",
                         "rag_knowledge_sources",
+                        "rag_learning_artifact_feedback",
+                        "rag_learning_artifacts",
+                        "rag_learning_runs",
+                        "rag_output_validation_profiles",
                         "rag_query_feedback",
+                        "rag_security_rescan_runs",
                         "rag_thematic_memories",
                     ]
                 },
@@ -298,10 +322,36 @@ def test_runtime_role_cannot_bypass_rls(postgres_app):
         "rag_feedback_source_judgments",
         "rag_global_entitlements",
         "rag_knowledge_sources",
+        "rag_learning_artifact_feedback",
+        "rag_learning_artifacts",
+        "rag_learning_runs",
+        "rag_output_validation_profiles",
         "rag_query_feedback",
+        "rag_security_rescan_runs",
         "rag_thematic_memories",
     ]
     assert forced == policies
+
+
+def test_automated_rls_audit_reports_runtime_and_table_compliance(postgres_app):
+    with postgres_app.app_context():
+        actor = User(
+            tenant_id=None,
+            name="Auditor da Plataforma",
+            email=f"auditor-{uuid.uuid4().hex[:8]}@postgres.test",
+            password_hash=TEST_PASSWORD_HASH,
+            role=Role.PLATFORM_ADMIN,
+        )
+        db.session.add(actor)
+        db.session.flush()
+        run = create_rls_audit(actor.id)
+
+        execute_rls_audit(run)
+
+        assert run.status == "CONFORME"
+        assert run.expected_tables == run.compliant_tables
+        assert run.expected_tables >= 16
+        assert all(item["compliant"] for item in run.role_checks)
 
 
 def _seed_rag_tenants(postgres_app):
@@ -438,7 +488,10 @@ def _ensure_runtime_role(postgres_app):
                            rag_assistant_queries, rag_global_entitlements,
                            rag_knowledge_sources, rag_evaluation_questions,
                            rag_evaluation_runs, rag_thematic_memories,
-                           rag_query_feedback, rag_feedback_source_judgments
+                           rag_query_feedback, rag_feedback_source_judgments,
+                           rag_learning_runs, rag_learning_artifacts,
+                           rag_learning_artifact_feedback,
+                           rag_security_rescan_runs
                         TO gabflow_rls_test;
                     """
                 )

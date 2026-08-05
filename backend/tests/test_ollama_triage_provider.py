@@ -127,9 +127,7 @@ def test_ollama_provider_rejects_unknown_category(monkeypatch):
     }
     monkeypatch.setattr(
         "urllib.request.urlopen",
-        lambda *_args, **_kwargs: FakeResponse(
-            {"message": {"content": json.dumps(content)}}
-        ),
+        lambda *_args, **_kwargs: FakeResponse({"message": {"content": json.dumps(content)}}),
     )
 
     with pytest.raises(AIProviderInvalidResponse, match="categoria inexistente"):
@@ -178,9 +176,7 @@ def test_ollama_provider_combines_deterministic_content_safety(monkeypatch):
     }
     monkeypatch.setattr(
         "urllib.request.urlopen",
-        lambda *_args, **_kwargs: FakeResponse(
-            {"message": {"content": json.dumps(content)}}
-        ),
+        lambda *_args, **_kwargs: FakeResponse({"message": {"content": json.dumps(content)}}),
     )
     data = triage_input()
     offensive_input = TriageInput(

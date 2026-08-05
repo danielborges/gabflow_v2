@@ -54,8 +54,8 @@
   concluídas são projetadas de forma versionada no RAG Privado.
 - **Entregue:** correção funcional do ranking sem corte por recência, com limiar por
   fonte, compatibilidade de embedding, fallback lexical e sem diversidade forçada.
-- **Próximo incremento de infraestrutura:** PostgreSQL FTS + pgvector com índices
-  por modelo/dimensão e reindexação controlada.
+- **Entregue:** PostgreSQL FTS + `pgvector`, índices GIN/HNSW por dimensão,
+  sincronização automática dos vetores e fusão RRF tenant-safe.
 - **Entregue:** contrato e registry versionado de projetores para solicitações e
   minutas legislativas, com allowlist e políticas de governança.
 - **Entregue:** eventos explícitos V2 de criação, atualização, cancelamento,
@@ -75,8 +75,55 @@
   validação, minimização, quarentena e moderação tenant-scoped.
 - **Entregue:** curadoria explícita para o dataset, expected sources versionadas,
   hard negatives, expectativas de rota/filtros/recusa e invalidação automática.
-- **Próximo incremento:** compilação de artefatos de aprendizado versionados,
-  avaliação contra baseline, ativação tenant-scoped e rollback.
+- **Entregue:** compilação idempotente de sinais aprovados em artefatos candidatos
+  versionados, limitados, reproduzíveis e com proveniência por feedback.
+- **Entregue:** avaliação de candidato contra baseline, gates de regressão,
+  aprovação, ativação tenant-scoped em canário, métricas online e rollback.
+- **Entregue:** captura idempotente de consultas problemáticas em dataset de
+  regressão tenant-scoped, com taxonomia, severidade, fontes esperadas,
+  hard negatives e snapshot minimizado do baseline.
+- **Entregue:** reranking neural listwise sobre o pool híbrido elegível, com
+  contrato estruturado, proteção contra instruções nos documentos, explicabilidade
+  e fallback para a ordem base.
+- **Entregue:** entendimento documental determinístico, filtros temáticos
+  pré-ranking, expansões controladas e fusão multi-query por RRF.
+- **Entregue:** geração substantiva por afirmações, contrato fechado de fontes,
+  validação cruzada das citações e recusa segura em caso de falha.
+- **Entregue:** verificação semântica independente de entailment, calibração
+  tenant-scoped de thresholds, avaliação contra baseline, rollout em canário e
+  rollback por regressão operacional.
+- **Entregue:** rollout automatizado `5% -> 20% -> 50% -> 100%`, baseline real
+  fora do bucket, gates por etapa, promoção/rollback automáticos, lease renovável
+  e acompanhamento administrativo tenant-scoped.
+- **Entregue:** classificador NLI independente do gerador, provider HTTP
+  dedicado, reranking adaptativo, contexto compacto, limites de tokens e
+  telemetria/orçamento de latência por etapa.
+- **Entregue no incremento 5.1:** threat model de conteúdo não confiável, correção
+  do estado dos controles existentes, contrato JSON Schema e dataset adversarial v1
+  com ataques multilíngues/ofuscados e controles benignos.
+- **Entregue no incremento 5.2:** gateway único e fail-closed, contrato fechado de
+  decisão, estado persistente e exposição segura para versões privadas/globais,
+  fontes operacionais, feedback e consultas.
+- **Entregue no incremento 5.3:** enforcement `CLEAN/ALLOW` pré-derivação e
+  pré-publicação, quarentena privada/global, purge imediato, revisão humana
+  vinculada ao checksum e reprocessamento auditável.
+- **Entregue no incremento 5.4:** canonicalização limitada de Unicode, HTML,
+  URL encoding, Base64, hexadecimal, espaçamento e tipoglicemia; classificador dedicado
+  independente do gerador, contrato fechado, fail-closed e regressão adversarial executável.
+- **Entregue no incremento 5.5:** ClamAV com assinaturas atualizáveis, varredura
+  `INSTREAM` fail-closed, validação de MIME real, nova inspeção por checksum antes
+  do parsing e sidecar de parsing sem rede, segredos, escrita ou capabilities.
+- **Entregue no incremento 5.6:** revarredura assíncrona e retomável do acervo
+  privado, global e dos anexos; invalidação fail-closed, reclassificação pela
+  política vigente e purge de chunks, embeddings, OCR, transcrições e memórias
+  operacionais derivadas.
+- **Entregue no incremento 5.7:** validação independente da resposta final, bloqueio
+  fail-closed de vazamento de instruções, segredos e ações não executadas,
+  validação de citações/destinos, métricas tenant-scoped e rollout progressivo com
+  promoção e rollback automáticos.
+- **Entregue no incremento 5.8:** AES-256-GCM em repouso com chave derivada e AAD por
+  tenant, versionamento/rotação pela revarredura do acervo e auditoria assíncrona
+  das políticas RLS, `FORCE RLS` e roles de runtime `NOBYPASSRLS`.
 
 ## Release 5 — Inteligência territorial
 

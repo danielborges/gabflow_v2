@@ -35,15 +35,9 @@ def _create_request(client, csrf, title, theme):
 def test_router_classifies_documental_structured_and_hybrid_intents():
     structured = classify_query("Quantas solicitações existem por tema?")
     documentary = classify_query("Quais argumentos aparecem nos relatos sobre iluminação?")
-    hybrid = classify_query(
-        "Quantas solicitações existem e quais argumentos aparecem nos relatos?"
-    )
-    thematic_hybrid = classify_query(
-        "Quais temas recorrentes podem fundamentar uma indicação?"
-    )
-    overdue = classify_query(
-        "Quantos encaminhamentos com prazos vencidos existem por órgão?"
-    )
+    hybrid = classify_query("Quantas solicitações existem e quais argumentos aparecem nos relatos?")
+    thematic_hybrid = classify_query("Quais temas recorrentes podem fundamentar uma indicação?")
+    overdue = classify_query("Quantos encaminhamentos com prazos vencidos existem por órgão?")
 
     assert structured.method == QueryMethod.ESTRUTURADO
     assert structured.structured_payload == {
@@ -60,9 +54,7 @@ def test_router_classifies_documental_structured_and_hybrid_intents():
     assert overdue.structured_payload["agruparPor"] == "ORGAO"
 
 
-def test_structured_route_skips_document_retrieval_and_persists_decision(
-    app, client, monkeypatch
-):
+def test_structured_route_skips_document_retrieval_and_persists_decision(app, client, monkeypatch):
     csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
     _create_request(client, csrf, "Iluminação da praça", "Iluminação")
     _create_request(client, csrf, "Luminária apagada", "Iluminação")
@@ -80,9 +72,7 @@ def test_structured_route_skips_document_retrieval_and_persists_decision(
     assert response.status_code == 200
     assert response.json["metodo"] == "ESTRUTURADO"
     assert response.json["resultadoEstruturado"]["total"] == 2
-    assert response.json["resultadoEstruturado"]["itens"] == [
-        {"grupo": "Iluminação", "valor": 2}
-    ]
+    assert response.json["resultadoEstruturado"]["itens"] == [{"grupo": "Iluminação", "valor": 2}]
     assert response.json["fontes"] == []
     assert response.json["modeloEmbedding"] == "NAO_APLICAVEL"
     with app.app_context():

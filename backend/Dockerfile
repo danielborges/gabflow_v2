@@ -19,9 +19,10 @@ COPY . .
 RUN mkdir -p /app/data/attachments /app/data/rag /models/whisper \
     && chmod +x /app/docker-entrypoint.sh \
     && chmod +x /app/worker-entrypoint.sh \
+    && chmod +x /app/parser-entrypoint.sh \
     && chown -R gabflow:gabflow /app /models/whisper
 
 EXPOSE 5000
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--access-logfile", "-", "wsgi:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "180", "--graceful-timeout", "30", "--access-logfile", "-", "wsgi:app"]

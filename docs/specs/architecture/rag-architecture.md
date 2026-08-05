@@ -155,6 +155,20 @@ ACL, finalidade, jurisdição, vigência, estado e limiar individual. O ajuste �
 limitado, exige quantidade mínima de sinais ou aprovação explícita e possui janela
 temporal e decaimento. Feedback negativo isolado não despublica fonte.
 
+O reranker neural atua depois desse mesmo corte sobre uma janela limitada do pool
+híbrido. Recebe somente IDs opacos, metadados mínimos e trechos sanitizados; seu
+retorno deve cobrir exatamente os IDs enviados. Ele reordena ou veta por
+irrelevância, mas não recupera, autoriza ou torna elegível uma fonte. Candidatos
+não avaliados não substituem os vetados. Falha de contrato, timeout ou
+indisponibilidade mantém a pontuação e a ordem base.
+
+O entendimento da consulta ocorre antes da candidatura e produz um plano
+auditável com intenção, referências normativas, temas, tipos, período e
+expansões. Os filtros desse plano são sempre adicionais às políticas obrigatórias
+de tenant, ACL, vigência, retenção e publicação. A consulta original e cada
+expansão formam pools FTS + `pgvector` independentes, posteriormente fundidos por
+RRF; somente então são calculados os scores finais e executado o reranker neural.
+
 Cada artefato registra versão, checksum, configuração, baseline, dataset, sinais de
 origem, métricas e aprovação. Apenas uma versão por tipo fica ativa em cada tenant;
 a versão anterior é preservada para rollback. Revogar feedback ou eliminar uma
@@ -269,6 +283,19 @@ continuam apontando para a versão exata que as fundamentou.
 11. Executar testes de qualidade e segurança.
 12. Publicar a versão mediante autorização compatível com o escopo.
 
+O fluxo está implementado até a quarentena uniforme: projeções operacionais, uploads
+diretos e catálogo global passam pelo mesmo gateway; estados não limpos bloqueiam
+derivados, publicação e retrieval. Revisões humanas são vinculadas ao checksum e
+exigem novo processamento. O threat model, as fronteiras de confiança, os invariantes e os gates estão em
+`architecture/rag-content-security-threat-model.md`; a massa inicial está em
+`datasets/prompt-injection-adversarial-v1.json`.
+
+Desde a Release 5.4, a etapa de prompt injection primeiro canonicaliza o conteúdo
+dentro de limites de tamanho e decodifica somente payloads textuais e imprimíveis.
+Em seguida combina sinais determinísticos com um classificador dedicado, cujo modelo
+não pode ser o gerador de respostas. O retorno possui contrato fechado e sua
+indisponibilidade obrigatória resulta em `INDETERMINATE/RETRY`.
+
 ## Recuperação federada e roteamento híbrido
 
 Antes da recuperação, um roteador classifica a intenção:
@@ -300,6 +327,41 @@ o limiar, o assistente deve recusar a conclusão.
 Cada citação informa no mínimo `escopo`, coleção, documento, versão, checksum,
 jurisdição, trecho ou página e pontuação. A interface diferencia “Fonte GabFlow” de
 “Fonte do Gabinete”.
+
+## Geração e validação cruzada
+
+O gerador opera depois da autorização, dos filtros, dos limiares e do reranking.
+Ele recebe somente excertos sanitizados e limitados, identificados por IDs opacos,
+e não possui acesso ao banco, ferramentas ou fontes adicionais. O contrato exige
+uma lista estruturada de afirmações, cada uma vinculada a IDs pertencentes ao
+contexto.
+
+A aplicação é a autoridade final: valida o schema, restringe os IDs, verifica a
+presença de citações e calcula suporte entre cada afirmação e os chunks citados.
+Um verificador semântico independente avalia entailment e contradição depois dos
+controles determinísticos e lexicais; sua indisponibilidade causa recusa quando
+a política fail-closed está ativa. Somente afirmações aprovadas são compostas em texto e recebem marcadores
+numerados. Qualquer falha causa recusa conclusiva; não existe fallback para uma
+resposta substantiva sem validação. Modelo, prompt, checks, citações e fallback
+integram a auditoria tenant-scoped.
+
+Os thresholds de retrieval, reranking e validação são materializados em
+`QUALITY_PROFILE`. Cada candidato é comparado ao perfil efetivo no mesmo dataset
+tenant-scoped. A ativação reutiliza bucket determinístico, canário, métricas
+online e rollback atômico dos demais artefatos de aprendizado.
+Perfis aprovados avançam automaticamente pelas etapas configuradas. Enquanto o
+candidato atende apenas seu bucket, a versão substituída permanece como baseline
+efetivo para o restante do tráfego. Cada etapa exige janela e amostra mínimas e
+avalia taxas de fallback, rejeição semântica, recusa e feedback negativo. A
+aprovação da etapa de 100% promove o perfil; qualquer regressão restaura o
+baseline. Eventos longos renovam o lease do outbox durante o processamento.
+
+O verificador NLI possui ciclo operacional independente do gerador: provider,
+endpoint, modelo, prompt, timeout e limites próprios. A configuração padrão usa
+um modelo menor no runtime local, mas proíbe reutilizar o modelo gerador; o
+adapter HTTP permite substituí-lo por classificador NLI dedicado. O reranker
+neural é condicional para candidato único ou liderança híbrida inequívoca.
+Recuperação, geração, validação lexical, NLI e total possuem telemetria separada.
 
 ## Isolamento transacional
 
@@ -382,15 +444,13 @@ federada global + privada com proveniência explícita. A Release 4.4 adicionou
 memória operacional privada governada para solicitações, interações e minutas
 legislativas. A Release 4.5
 adicionou filas escaláveis, índices de claim, scheduler com lock, reconciliação em
-lotes, logs estruturados, métricas e SLOs. Ainda são alvo arquitetural:
+lotes, logs estruturados, métricas e SLOs. A Release 4.7 adicionou o ciclo
+controlado de feedback, dataset, artefatos candidatos, canário e rollback. A
+Release 4.8 adicionou dataset de regressão, FTS + `pgvector`, reranking neural,
+entendimento e expansão da consulta, geração substantiva e validação cruzada de
+citações. Ainda são alvo arquitetural:
 
 - migração física das tabelas privadas existentes para o schema `rag_private`;
 - fork privado de versões globais;
-- migração da varredura exata em lotes para PostgreSQL FTS + pgvector, preservando
-  o ranking corrigido e usando índices por modelo/dimensão;
-- expansão dos projetores e do ciclo de vida já implementado para os demais
-  módulos elegíveis;
-- ampliação gradual da ingestão para os demais módulos elegíveis;
-- roteamento entre recuperação documental e consultas estruturadas tenant-scoped;
 - conectores globais controlados;
-- uso efetivo do feedback em melhoria de recuperação e resposta.
+- calibração contínua de modelos e limiares com datasets reais por tenant.

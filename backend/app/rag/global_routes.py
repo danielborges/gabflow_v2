@@ -1,3 +1,4 @@
+import io
 import uuid
 from datetime import date
 from urllib.parse import urlsplit
@@ -22,11 +23,25 @@ from app.models import (
     GlobalVersionStatus,
     OutboxEvent,
     RagIngestionStatus,
+    RagSecurityRescanRun,
+    RagSecurityRescanScope,
     Tenant,
     utc_now,
 )
+from app.rag.content_security import (
+    ContentSecurityAction,
+    ContentSecurityReviewDecision,
+    ContentSecurityStatus,
+    content_security_state,
+    record_content_security_review,
+)
 from app.rag.distribution import entitlement_data
 from app.rag.global_service import GLOBAL_RAG_INGESTION_EVENT
+from app.rag.security_rescan import (
+    SecurityRescanConflictError,
+    create_security_rescan,
+    security_rescan_data,
+)
 from app.rag.storage import (
     RagStorageError,
     global_rag_document_path,
@@ -34,6 +49,8 @@ from app.rag.storage import (
     store_global_rag_document,
     verify_global_rag_download_token,
 )
+from app.security.encryption import read_plaintext
+from app.security.malware import malware_scan_state
 from app.tenant_context import activate_global_knowledge_context
 
 global_rag_bp = Blueprint("global_rag", __name__)
@@ -59,6 +76,83 @@ def list_collections():
         statement.order_by(GlobalKnowledgeCollection.updated_at.desc()).limit(300)
     ).scalars()
     return jsonify(content=[collection_data(item, include_documents=False) for item in items])
+
+
+@global_rag_bp.get("/quarentena")
+@global_knowledge_admin_required
+def list_security_quarantine():
+    items = db.session.scalars(
+        select(GlobalKnowledgeDocumentVersion)
+        .where(GlobalKnowledgeDocumentVersion.security_status != ContentSecurityStatus.CLEAN)
+        .order_by(
+            GlobalKnowledgeDocumentVersion.security_quarantined_at.desc(),
+            GlobalKnowledgeDocumentVersion.created_at,
+        )
+        .limit(300)
+    )
+    return jsonify(
+        content=[
+            {
+                **version_data(item, include_download=False),
+                "colecaoId": str(item.document.collection_id),
+                "titulo": item.document.title,
+            }
+            for item in items
+        ]
+    )
+
+
+@global_rag_bp.post("/seguranca/revarreduras")
+@global_knowledge_admin_required
+def create_global_security_rescan():
+    activate_global_knowledge_context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        batch_size = int(payload.get("tamanhoLote", 20))
+        run = create_security_rescan(
+            tenant_id=None,
+            actor_id=_actor_id(),
+            scope=RagSecurityRescanScope.GLOBAL,
+            batch_size=batch_size,
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    except SecurityRescanConflictError as error:
+        return jsonify(error="conflict", message=str(error)), 409
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="conflict", message="Já existe uma revarredura global ativa."), 409
+    return jsonify(security_rescan_data(run)), 202
+
+
+@global_rag_bp.get("/seguranca/revarreduras")
+@global_knowledge_admin_required
+def list_global_security_rescans():
+    activate_global_knowledge_context()
+    runs = db.session.scalars(
+        select(RagSecurityRescanRun)
+        .where(RagSecurityRescanRun.tenant_id.is_(None))
+        .order_by(RagSecurityRescanRun.created_at.desc())
+        .limit(100)
+    )
+    return jsonify(content=[security_rescan_data(run) for run in runs])
+
+
+@global_rag_bp.get("/seguranca/revarreduras/<uuid:run_id>")
+@global_knowledge_admin_required
+def get_global_security_rescan(run_id: uuid.UUID):
+    activate_global_knowledge_context()
+    run = db.session.scalar(
+        select(RagSecurityRescanRun).where(
+            RagSecurityRescanRun.id == run_id,
+            RagSecurityRescanRun.tenant_id.is_(None),
+        )
+    )
+    if run is None:
+        return jsonify(error="resource_not_found", message="Revarredura não encontrada."), 404
+    return jsonify(security_rescan_data(run))
 
 
 @global_rag_bp.post("/colecoes")
@@ -342,6 +436,15 @@ def change_version_status(
             error="conflict",
             message="Somente versões globais indexadas podem ser publicadas.",
         ), 409
+    if target == GlobalVersionStatus.PUBLICADA and (
+        version.security_status != ContentSecurityStatus.CLEAN
+        or version.security_action != ContentSecurityAction.ALLOW
+        or version.malware_scan_status != "CLEAN"
+    ):
+        return jsonify(
+            error="content_security_blocked",
+            message="Somente versões globais CLEAN/ALLOW e sem malware podem ser publicadas.",
+        ), 409
     before = version.publication_status.value
     if target == GlobalVersionStatus.PUBLICADA:
         published = db.session.execute(
@@ -413,11 +516,28 @@ def reprocess_version(
             ),
             409,
         )
-    if version.publication_status != GlobalVersionStatus.RASCUNHO:
+    if version.publication_status != GlobalVersionStatus.RASCUNHO and not (
+        version.publication_status == GlobalVersionStatus.SUSPENSA
+        and version.security_status != ContentSecurityStatus.CLEAN
+    ):
         return (
             jsonify(
                 error="conflict",
                 message="Somente versões globais em rascunho podem ser reprocessadas.",
+            ),
+            409,
+        )
+    if version.security_status in {
+        ContentSecurityStatus.SUSPICIOUS,
+        ContentSecurityStatus.MALICIOUS,
+    } and (
+        version.security_review_decision != ContentSecurityReviewDecision.APPROVED
+        or version.security_review_checksum != version.security_content_checksum
+    ):
+        return (
+            jsonify(
+                error="content_security_review_required",
+                message="A versão global em quarentena precisa de aprovação vinculada ao checksum.",
             ),
             409,
         )
@@ -443,6 +563,67 @@ def reprocess_version(
     )
     db.session.commit()
     return jsonify(version_data(version)), 202
+
+
+@global_rag_bp.patch(
+    "/colecoes/<uuid:collection_id>/documentos/<uuid:document_id>"
+    "/versoes/<uuid:version_id>/seguranca"
+)
+@global_knowledge_admin_required
+def review_version_security(
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    version_id: uuid.UUID,
+):
+    version = _version(collection_id, document_id, version_id)
+    if version is None:
+        return jsonify(error="resource_not_found", message="Versão global não encontrada."), 404
+    if version.security_status not in {
+        ContentSecurityStatus.SUSPICIOUS,
+        ContentSecurityStatus.MALICIOUS,
+    }:
+        return jsonify(
+            error="conflict",
+            message="Somente conteúdo suspeito ou malicioso pode ser revisado.",
+        ), 409
+    payload = request.get_json(silent=True) or {}
+    decisions = {
+        "APROVAR": ContentSecurityReviewDecision.APPROVED,
+        "REJEITAR": ContentSecurityReviewDecision.REJECTED,
+    }
+    decision = decisions.get(str(payload.get("decisao", "")).upper())
+    reason = str(payload.get("justificativa", "")).strip()
+    if decision is None or len(reason) < 10 or len(reason) > 2000:
+        return jsonify(
+            error="validation_error",
+            message="Informe APROVAR ou REJEITAR e justificativa entre 10 e 2000 caracteres.",
+        ), 422
+    before = content_security_state(version)
+    actor_id = _actor_id()
+    record_content_security_review(
+        version,
+        decision,
+        reviewer_id=actor_id,
+        reason=reason,
+    )
+    add_audit(
+        None,
+        actor_id,
+        "rag_global.version_security_reviewed",
+        "rag_global_document_version",
+        version.id,
+        before={
+            "status": before["status"],
+            "reviewDecision": before["review"]["decision"],
+        },
+        after={
+            "status": version.security_status.value,
+            "reviewDecision": decision.value,
+            "contentChecksum": version.security_review_checksum,
+        },
+    )
+    db.session.commit()
+    return jsonify(version_data(version))
 
 
 @global_rag_bp.put("/colecoes/<uuid:collection_id>/concessoes/<uuid:tenant_id>")
@@ -568,12 +749,13 @@ def download_version(
         str(request.args.get("token", "")), document_id, version_id
     ):
         return jsonify(error="invalid_download_token", message="Link inválido ou expirado."), 403
-    return send_file(
-        global_rag_document_path(
+    path = global_rag_document_path(
             version.storage_key,
             document_id=document_id,
             version_id=version_id,
-        ),
+        )
+    return send_file(
+        io.BytesIO(read_plaintext(path, "global")),
         mimetype=version.mime_type,
         download_name=version.original_name,
         as_attachment=True,
@@ -623,8 +805,12 @@ def document_data(item: GlobalKnowledgeDocument, *, include_versions: bool) -> d
     return data
 
 
-def version_data(item: GlobalKnowledgeDocumentVersion) -> dict:
-    return {
+def version_data(
+    item: GlobalKnowledgeDocumentVersion,
+    *,
+    include_download: bool = True,
+) -> dict:
+    data = {
         "id": str(item.id),
         "documentoId": str(item.document_id),
         "numero": item.version_number,
@@ -642,15 +828,19 @@ def version_data(item: GlobalKnowledgeDocumentVersion) -> dict:
         "paginas": item.page_count,
         "fragmentos": item.chunk_count,
         "erro": item.error,
+        "segurancaConteudo": content_security_state(item),
+        "verificacaoMalware": malware_scan_state(item),
         "criadaEm": item.created_at.isoformat(),
         "indexadaEm": item.indexed_at.isoformat() if item.indexed_at else None,
         "publicadaEm": item.published_at.isoformat() if item.published_at else None,
-        "downloadUrl": (
+    }
+    if include_download:
+        data["downloadUrl"] = (
             f"/api/v1/platform/rag-global/colecoes/{item.document.collection_id}"
             f"/documentos/{item.document_id}/versoes/{item.id}/download"
             f"?token={signed_global_rag_download_token(item.document_id, item.id)}"
-        ),
-    }
+        )
+    return data
 
 
 def _collection_values(payload: dict) -> dict:

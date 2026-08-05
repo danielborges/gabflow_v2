@@ -95,7 +95,7 @@ def _request(client, csrf):
 def _upload_audio(client, csrf, request_id):
     return client.post(
         f"/api/v1/solicitacoes/{request_id}/anexos",
-        data={"arquivo": (io.BytesIO(b"audio-original-preservado"), "relato.mp3")},
+        data={"arquivo": (io.BytesIO(b"ID3audio-original-preservado"), "relato.mp3")},
         headers={"X-CSRF-TOKEN": csrf},
         content_type="multipart/form-data",
     )
@@ -144,7 +144,7 @@ def test_audio_is_transcribed_locally_and_reviewed_without_changing_original(
     assert quality.json["cobertura"]["transcricoesRevisadas"] == 1
 
     download = client.get(attachment["downloadUrl"])
-    assert download.data == b"audio-original-preservado"
+    assert download.data == b"ID3audio-original-preservado"
     with app.app_context():
         assert db.session.execute(
             select(AuditLog).where(AuditLog.action == "audio.transcription.editar")

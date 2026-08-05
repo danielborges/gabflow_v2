@@ -2,9 +2,9 @@
 
 ## Status
 
-Em implementação. A captura confiável (`4.7.1`) e a curadoria para o dataset
-(`4.7.2`) foram entregues; compilação de sinais e ativação de artefatos permanecem
-planejadas.
+Concluída. Captura confiável (`4.7.1`), curadoria para o dataset (`4.7.2`),
+compilação de candidatos (`4.7.3`) e avaliação, ativação e rollback (`4.7.4`)
+foram entregues.
 
 ## Estado de partida
 
@@ -39,7 +39,7 @@ consulta e fontes versionadas
   -> monitoramento e rollback
 ```
 
-### Entidades planejadas
+### Entidades
 
 `RagQueryFeedback`
 
@@ -131,23 +131,48 @@ não pode depender somente da aprovação do autor do feedback.
 
 ### 4.7.3 — Compilação de sinais
 
-1. criar job idempotente por tenant e janela;
-2. agregar somente feedback aprovado;
-3. exigir quantidade mínima ou aprovação explícita;
-4. gerar `RERANK_PROFILE`, `ROUTING_EXAMPLES`, `EVALUATION_CASES` e
+1. **Entregue:** job assíncrono e idempotente por tenant, janela e configuração;
+2. **Entregue:** agregação exclusiva de feedback aprovado;
+3. **Entregue:** quantidade mínima configurável ou aprovação explícita da amostra
+   pequena;
+4. **Entregue:** geração de `RERANK_PROFILE`, `ROUTING_EXAMPLES`,
+   `EVALUATION_CASES` e
    `ANSWER_EXEMPLARS`;
-5. limitar boosts/penalidades e aplicar decaimento;
-6. preservar proveniência até cada feedback.
+5. **Entregue:** limite de boosts/penalidades, meia-vida configurável e preservação
+   do limiar mínimo do retrieval;
+6. **Entregue:** proveniência relacional até cada feedback e hash canônico do
+   payload.
+
+Os artefatos desta etapa nascem sempre em `CANDIDATO` e não alteram retrieval,
+roteamento ou geração. Respostas corrigidas aprovadas são novamente verificadas
+contra prompt injection e só podem compor exemplar de avaliação e forma, com
+`evidenciaFactual=false`.
+
+Configurações operacionais: `RAG_LEARNING_MIN_SIGNALS`,
+`RAG_LEARNING_MAX_ADJUSTMENT`, `RAG_LEARNING_DECAY_HALF_LIFE_DAYS` e
+`RAG_LEARNING_MAX_EXAMPLES`.
 
 ### 4.7.4 — Avaliação, ativação e rollback
 
-1. executar baseline e candidato no mesmo dataset e configuração;
-2. impedir ativação com regressão acima da tolerância;
-3. ativar uma versão por tipo e tenant, inicialmente em canário;
-4. registrar no resultado da consulta a versão dos artefatos que influenciaram a
+1. **Entregue:** execução de baseline e candidato no mesmo dataset e `k`;
+2. **Entregue:** bloqueio de aprovação quando a regressão excede a tolerância;
+3. **Entregue:** aprovação explícita e ativação atômica de uma versão por tipo e
+   tenant, inicialmente em canário;
+4. **Entregue:** registro na consulta das versões que efetivamente influenciaram a
    decisão;
-5. monitorar métricas online e executar rollback manual ou automático;
-6. recompilar quando feedback ou fonte de origem for revogado/purgado.
+5. **Entregue:** métricas online e rollback manual ou automático por taxa de
+   avaliações negativas;
+6. **Entregue:** invalidação e recompilação quando feedback de origem for
+   revogado/superado ou fonte operacional for purgada.
+
+O reranking atua somente sobre candidatos previamente autorizados e acima do
+limiar individual. Exemplos de roteamento são aplicados por hash exato da consulta.
+`EVALUATION_CASES` e `ANSWER_EXEMPLARS` não são tratados como evidência de runtime.
+
+Configurações adicionais: `RAG_LEARNING_EVALUATION_K`,
+`RAG_LEARNING_MAX_REGRESSION`, `RAG_LEARNING_CANARY_PERCENT`,
+`RAG_LEARNING_ONLINE_MIN_SAMPLES` e
+`RAG_LEARNING_ONLINE_MAX_NEGATIVE_RATE`.
 
 ## Regras de aplicação
 
@@ -160,7 +185,7 @@ não pode depender somente da aprovação do autor do feedback.
 - conteúdo livre nunca compõe instruções de sistema;
 - aprendizado global exige outro processo, anonimização, autorização e aprovação.
 
-## Contratos planejados
+## Contratos
 
 - `POST /assistente/consultas/{consultaId}/feedback`;
 - `GET /assistente/consultas/{consultaId}/feedback`;
@@ -170,8 +195,12 @@ não pode depender somente da aprovação do autor do feedback.
 - `POST /assistente/aprendizado/execucoes`;
 - `GET /assistente/aprendizado/execucoes`;
 - `GET /assistente/aprendizado/artefatos`;
+- `GET /assistente/aprendizado/artefatos/{artefatoId}`;
+- `POST /assistente/aprendizado/artefatos/{artefatoId}/avaliacao`;
 - `POST /assistente/aprendizado/artefatos/{artefatoId}/ativacao`;
 - `POST /assistente/aprendizado/artefatos/{artefatoId}/rollback`.
+
+Todos os contratos estão implementados.
 
 ## Critérios de conclusão
 

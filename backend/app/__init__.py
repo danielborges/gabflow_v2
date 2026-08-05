@@ -34,6 +34,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.cli import register_commands
     from app.communications.routes import communications_bp
     from app.directory.routes import directory_bp
+    from app.electoral.routes import electoral_bp
     from app.health.routes import health_bp
     from app.legislative.routes import legislative_bp
     from app.notifications.routes import notifications_bp
@@ -57,6 +58,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(communications_bp, url_prefix="/api/v1")
     app.register_blueprint(request_ops_bp, url_prefix="/api/v1")
     app.register_blueprint(directory_bp, url_prefix="/api/v1")
+    app.register_blueprint(electoral_bp, url_prefix="/api/v1")
     app.register_blueprint(admin_bp, url_prefix="/api/v1/admin")
     app.register_blueprint(notifications_bp, url_prefix="/api/v1")
     app.register_blueprint(operations_bp, url_prefix="/api/v1")
@@ -82,6 +84,16 @@ def create_app(config_object: type[Config] = Config) -> Flask:
                 message="Muitas tentativas. Aguarde antes de tentar novamente.",
             ),
             429,
+        )
+
+    @app.errorhandler(500)
+    def internal_server_error(_error):
+        return (
+            jsonify(
+                error="internal_server_error",
+                message="Não foi possível concluir a operação. Tente novamente.",
+            ),
+            500,
         )
 
     return app

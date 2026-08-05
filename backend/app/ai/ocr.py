@@ -1,3 +1,4 @@
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,12 @@ from app.models import (
     RequestHistory,
 )
 from app.notifications.service import notify_user
+from app.security.malware import (
+    MalwareDetectedError,
+    MalwareScannerUnavailable,
+    apply_malware_scan,
+    require_clean_stored_file,
+)
 
 DOCUMENT_OCR_EVENT = "OcrDocumentoSolicitacao"
 OCR_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png"}
@@ -61,17 +68,23 @@ class TesseractOcrProvider:
         language: str,
         maximum_pages: int,
         maximum_pixels: int,
+        native_text_minimum_chars: int = 40,
+        batch_size: int = 8,
     ) -> None:
         self.model = model
         self.language = language
         self.maximum_pages = maximum_pages
         self.maximum_pixels = maximum_pixels
+        self.native_text_minimum_chars = max(1, native_text_minimum_chars)
+        self.batch_size = max(1, batch_size)
 
     def extract(self, path: Path, mime_type: str) -> OcrResult:
         if mime_type == "application/pdf":
             pages = self._extract_pdf(path)
         elif mime_type in {"image/jpeg", "image/png"}:
-            pages = [self._extract_image(path, 1)]
+            page = self._extract_image(path, 1)
+            page["origem"] = "OCR"
+            pages = [page]
         else:
             raise NonRetryableOcrError("Tipo de documento não compatível com OCR.")
 
@@ -114,33 +127,73 @@ class TesseractOcrProvider:
                 raise NonRetryableOcrError("O PDF não possui páginas.")
             if page_count > self.maximum_pages:
                 raise NonRetryableOcrError(
-                    f"O PDF excede o limite de {self.maximum_pages} páginas para OCR."
+                    f"O PDF excede o limite operacional de {self.maximum_pages} páginas."
                 )
-            results = []
+
+            results: list[dict | None] = [None] * page_count
+            fallback_indexes = []
             for index in range(page_count):
                 page = document[index]
                 try:
-                    image = page.render(scale=2).to_pil().convert("RGB")
-                    try:
-                        results.append(self._ocr_page(image, index + 1))
-                    finally:
-                        image.close()
+                    native_text = self._extract_native_text(page)
                 finally:
                     page.close()
-            return results
+                if self._has_useful_native_text(native_text):
+                    results[index] = {
+                        "pagina": index + 1,
+                        "texto": native_text,
+                        "confianca": 1.0,
+                        "origem": "NATIVO",
+                    }
+                else:
+                    fallback_indexes.append(index)
+
+            for batch_start in range(0, len(fallback_indexes), self.batch_size):
+                batch = fallback_indexes[batch_start : batch_start + self.batch_size]
+                for index in batch:
+                    page = document[index]
+                    try:
+                        image = page.render(scale=2).to_pil().convert("RGB")
+                        try:
+                            result = self._ocr_page(image, index + 1)
+                            result["origem"] = "OCR"
+                            results[index] = result
+                        finally:
+                            image.close()
+                    finally:
+                        page.close()
+            return [result for result in results if result is not None]
         except NonRetryableOcrError:
             raise
         except Exception as error:
-            raise OcrError("Falha ao renderizar o PDF para OCR local.") from error
+            raise OcrError("Falha ao extrair texto ou renderizar o PDF.") from error
         finally:
             document.close()
+
+    def _extract_native_text(self, page) -> str:
+        text_page = None
+        try:
+            text_page = page.get_textpage()
+            return self._normalize_native_text(text_page.get_text_bounded())
+        except Exception:
+            return ""
+        finally:
+            if text_page is not None:
+                text_page.close()
+
+    def _has_useful_native_text(self, text: str) -> bool:
+        compact = re.sub(r"\s+", "", text)
+        return len(compact) >= self.native_text_minimum_chars
+
+    @staticmethod
+    def _normalize_native_text(text: str) -> str:
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in str(text).splitlines()]
+        return "\n".join(line for line in lines if line).strip()
 
     def _ocr_page(self, image, page_number: int) -> dict:
         width, height = image.size
         if width * height > self.maximum_pixels:
-            raise NonRetryableOcrError(
-                "A imagem excede o limite de resolução permitido para OCR."
-            )
+            raise NonRetryableOcrError("A imagem excede o limite de resolução permitido para OCR.")
         try:
             import pytesseract
             from pytesseract import Output
@@ -183,7 +236,40 @@ class TesseractOcrProvider:
         }
 
 
+class IsolatedOcrProvider:
+    provider = "ISOLATED_TESSERACT"
+
+    def __init__(self, model: str, language: str) -> None:
+        self.model = model
+        self.language = language
+
+    def extract(self, path: Path, mime_type: str) -> OcrResult:
+        from app.rag.isolated_parser import (
+            IsolatedParserError,
+            NonRetryableIsolatedParserError,
+            parse_document_isolated,
+        )
+
+        try:
+            result = parse_document_isolated(path, mime_type)
+        except NonRetryableIsolatedParserError as error:
+            raise NonRetryableOcrError(str(error)) from error
+        except IsolatedParserError as error:
+            raise OcrError(str(error)) from error
+        return OcrResult(
+            text=result.text,
+            confidence=result.confidence,
+            page_count=result.page_count,
+            pages=result.pages,
+        )
+
+
 def ocr_provider() -> OcrProvider:
+    if current_app.config["DOCUMENT_PARSER_ISOLATION_ENABLED"]:
+        return IsolatedOcrProvider(
+            model=current_app.config["DOCUMENT_OCR_MODEL"],
+            language=current_app.config["DOCUMENT_OCR_LANGUAGE"],
+        )
     provider = current_app.config["DOCUMENT_OCR_PROVIDER"].lower()
     if provider != "tesseract":
         raise RuntimeError(f"Provedor de OCR não suportado: {provider}.")
@@ -192,6 +278,8 @@ def ocr_provider() -> OcrProvider:
         language=current_app.config["DOCUMENT_OCR_LANGUAGE"],
         maximum_pages=current_app.config["DOCUMENT_OCR_MAX_PAGES"],
         maximum_pixels=current_app.config["DOCUMENT_OCR_MAX_PIXELS"],
+        native_text_minimum_chars=current_app.config["DOCUMENT_OCR_NATIVE_MIN_CHARS"],
+        batch_size=current_app.config["DOCUMENT_OCR_BATCH_SIZE"],
     )
 
 
@@ -254,9 +342,32 @@ def execute_document_ocr(ocr: DocumentOcr) -> None:
     ocr.status = DocumentOcrStatus.PROCESSANDO
     ocr.started_at = datetime.now(UTC)
     db.session.flush()
-    result = ocr_provider().extract(
-        attachment_path(attachment.storage_key), attachment.mime_type
-    )
+    path = attachment_path(attachment.storage_key)
+    try:
+        scan = require_clean_stored_file(
+            path,
+            attachment.mime_type,
+            attachment.sha256,
+            encryption_scope=f"tenant:{attachment.tenant_id}",
+        )
+    except MalwareDetectedError as error:
+        attachment.scan_status = AttachmentScanStatus.BLOQUEADO
+        attachment.scan_error_code = "MALWARE_OR_INTEGRITY_DETECTED"
+        attachment.scanned_at = datetime.now(UTC)
+        raise NonRetryableOcrError("Anexo bloqueado pela verificacao antimalware.") from error
+    except MalwareScannerUnavailable as error:
+        attachment.scan_status = AttachmentScanStatus.PENDENTE
+        attachment.scan_error_code = "MALWARE_SCANNER_UNAVAILABLE"
+        attachment.scanned_at = datetime.now(UTC)
+        raise OcrError("Scanner antimalware indisponivel; tente novamente.") from error
+    apply_malware_scan(attachment, scan)
+    attachment.scan_status = AttachmentScanStatus.LIMPO
+    from app.security.encryption import plaintext_file
+
+    with plaintext_file(
+        path, f"tenant:{attachment.tenant_id}", suffix=path.suffix
+    ) as plaintext_path:
+        result = ocr_provider().extract(plaintext_path, attachment.mime_type)
     ocr.extracted_text = result.text
     ocr.confidence = result.confidence
     ocr.page_count = result.page_count

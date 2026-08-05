@@ -19,6 +19,12 @@ from app.models import (
     RequestHistory,
 )
 from app.notifications.service import notify_user
+from app.security.malware import (
+    MalwareDetectedError,
+    MalwareScannerUnavailable,
+    apply_malware_scan,
+    require_clean_stored_file,
+)
 
 AUDIO_TRANSCRIPTION_EVENT = "TranscricaoAudioSolicitacao"
 AUDIO_MIME_TYPES = {
@@ -219,7 +225,36 @@ def execute_audio_transcription(transcription: AudioTranscription) -> None:
     transcription.status = AudioTranscriptionStatus.PROCESSANDO
     transcription.started_at = datetime.now(UTC)
     db.session.flush()
-    result = transcription_provider().transcribe(attachment_path(attachment.storage_key))
+    path = attachment_path(attachment.storage_key)
+    try:
+        scan = require_clean_stored_file(
+            path,
+            attachment.mime_type,
+            attachment.sha256,
+            encryption_scope=f"tenant:{attachment.tenant_id}",
+        )
+    except MalwareDetectedError as error:
+        attachment.scan_status = AttachmentScanStatus.BLOQUEADO
+        attachment.scan_error_code = "MALWARE_OR_INTEGRITY_DETECTED"
+        attachment.scanned_at = datetime.now(UTC)
+        raise NonRetryableTranscriptionError(
+            "Anexo bloqueado pela verificacao antimalware."
+        ) from error
+    except MalwareScannerUnavailable as error:
+        attachment.scan_status = AttachmentScanStatus.PENDENTE
+        attachment.scan_error_code = "MALWARE_SCANNER_UNAVAILABLE"
+        attachment.scanned_at = datetime.now(UTC)
+        raise AudioTranscriptionError(
+            "Scanner antimalware indisponivel; tente novamente."
+        ) from error
+    apply_malware_scan(attachment, scan)
+    attachment.scan_status = AttachmentScanStatus.LIMPO
+    from app.security.encryption import plaintext_file
+
+    with plaintext_file(
+        path, f"tenant:{attachment.tenant_id}", suffix=path.suffix
+    ) as plaintext_path:
+        result = transcription_provider().transcribe(plaintext_path)
     transcription.transcript = result.text
     transcription.language = result.language
     transcription.language_probability = result.language_probability

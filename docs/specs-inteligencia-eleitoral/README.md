@@ -32,6 +32,7 @@ Entregar inteligência eleitoral baseada em dados públicos oficiais, com análi
 | `adr/ADR-002-segregacao-dados.md` | Segregação e privacidade |
 | `adr/ADR-003-ia-explicavel.md` | Uso responsável de IA |
 | `adr/ADR-004-geoespacial.md` | Estratégia geoespacial |
+| `adr/ADR-005-integracao-arquitetura-gabflow.md` | Integração com Flask, outbox e controles existentes |
 
 ## Stack de referência
 

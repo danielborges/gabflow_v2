@@ -223,9 +223,7 @@ def test_email_response_is_queued_and_worker_records_delivery(app, client, monke
         assert event.published_at is not None
 
 
-def test_email_provider_failure_is_retried_and_preserved(
-    app, client, monkeypatch
-):
+def test_email_provider_failure_is_retried_and_preserved(app, client, monkeypatch):
     _, csrf = login(client)
     citizen = client.post(
         "/api/v1/cidadaos",

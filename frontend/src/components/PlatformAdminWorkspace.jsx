@@ -32,6 +32,7 @@ const availableModules = [
   "canais",
   "privacidade",
   "integracoes",
+  "inteligencia_eleitoral",
 ];
 
 const planUserLimits = { starter: 5, professional: 15, premium: 9999 };
@@ -547,7 +548,13 @@ function TenantsPanel({
               </div>
               <div className="inline-fields three-fields">
                 <label>Nome<input required value={editForm.nome} onChange={(event) => setEditForm({ ...editForm, nome: event.target.value })} /></label>
-                <label>Plano<select value={editForm.plano} onChange={(event) => setEditForm({ ...editForm, plano: event.target.value })}>{plans.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label>Plano<select value={editForm.plano} onChange={(event) => {
+                  const plan = event.target.value;
+                  setEditForm({ ...editForm, plano: plan });
+                  if (plan !== "premium") {
+                    setModuleDraft((current) => current.filter((module) => module !== "inteligencia_eleitoral"));
+                  }
+                }}>{plans.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label>Status<select value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}>{tenantStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               </div>
               <div className="tenant-readonly-grid">
@@ -555,7 +562,7 @@ function TenantsPanel({
                 <span><strong>Jurisdição</strong>{jurisdictionLabel(selectedTenant)}</span>
                 <span><strong>Parlamentar</strong>{cleanText(selectedTenant.parlamentar?.nome) || "Não cadastrado"}</span>
               </div>
-              <ModulePicker value={moduleDraft} onChange={setModuleDraft} />
+              <ModulePicker value={moduleDraft} onChange={setModuleDraft} plan={editForm.plano} />
               <label>Observações contratuais<textarea rows={3} value={editForm.observacoesContrato} onChange={(event) => setEditForm({ ...editForm, observacoesContrato: event.target.value })} /></label>
               <button className="primary-button" type="submit"><Save size={18} /> Salvar gabinete</button>
             </form>
@@ -932,7 +939,7 @@ function slugifyClient(value) {
     .slice(0, 80);
 }
 
-function ModulePicker({ value, onChange }) {
+function ModulePicker({ value, onChange, plan }) {
   function toggle(module) {
     onChange(value.includes(module) ? value.filter((item) => item !== module) : [...value, module]);
   }
@@ -941,8 +948,13 @@ function ModulePicker({ value, onChange }) {
       <legend>Modulos habilitados</legend>
       {availableModules.map((module) => (
         <label key={module}>
-          <input type="checkbox" checked={value.includes(module)} onChange={() => toggle(module)} />
-          {module}
+          <input
+            type="checkbox"
+            checked={value.includes(module)}
+            disabled={module === "inteligencia_eleitoral" && plan !== "premium"}
+            onChange={() => toggle(module)}
+          />
+          {module}{module === "inteligencia_eleitoral" ? " (Premium)" : ""}
         </label>
       ))}
     </fieldset>

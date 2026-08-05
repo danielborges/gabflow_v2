@@ -11,6 +11,80 @@ Funcionalidade: Assistente RAG hierárquico
     E deve criar fragmentos com página e gerar embeddings
     E deve registrar o processamento de forma assíncrona e auditável
 
+  Cenário: Avaliar o pipeline com dataset adversarial versionado
+    Dado que existe uma versão imutável do dataset de prompt injection
+    E o dataset contém ataques e controles benignos separados entre regressão e holdout
+    Quando uma versão do detector, classificador, prompt ou pipeline for candidata a release
+    Então todos os casos críticos conhecidos devem ser bloqueados ou colocados em quarentena
+    E recall adversarial e taxa de falsos positivos devem respeitar os gates do threat model
+    E conteúdo do dataset não deve ser indexado como fonte factual nem apresentado como citação
+
+  Esquema do Cenário: Cobrir superfícies adversariais de conteúdo
+    Dado que o caso adversarial usa a superfície "<superficie>"
+    E emprega a técnica "<tecnica>"
+    Quando o gateway de segurança avaliar o caso
+    Então deve produzir uma decisão fechada e reproduzível
+    E uma decisão diferente de CLEAN não deve gerar chunks ou embeddings
+
+    Exemplos:
+      | superficie        | tecnica                |
+      | DOCUMENT_BODY     | INSTRUCTION_OVERRIDE   |
+      | DOCUMENT_METADATA | METADATA_INJECTION     |
+      | OCR_LAYER         | MULTIMODAL_INJECTION   |
+      | CHUNK_SEQUENCE    | MULTI_CHUNK_ATTACK     |
+      | USER_QUERY        | PROMPT_EXTRACTION      |
+      | FEEDBACK          | PERSISTENT_INJECTION   |
+      | CONNECTOR_CONTENT | DATA_EXFILTRATION      |
+
+  Cenário: Preservar conteúdo legítimo que discute segurança
+    Dado que um documento legítimo cita uma frase de ataque para proibi-la ou analisá-la
+    Quando o dataset adversarial classificar esse controle benigno
+    Então a decisão esperada deve ser CLEAN
+    E o caso deve contribuir para a métrica de falsos positivos
+
+  Cenário: Canonicalizar e classificar conteúdo não confiável
+    Dado que uma entrada pode conter Unicode invisível, codificação ou texto ofuscado
+    Quando o gateway aplicar a política de segurança
+    Então deve canonicalizar a entrada dentro dos limites configurados
+    E deve usar um classificador dedicado diferente do gerador de respostas
+    E deve aceitar somente label, score e categorias do contrato fechado
+    E indisponibilidade do classificador obrigatório deve resultar em INDETERMINATE e RETRY
+
+  Cenário: Bloquear malware antes do parsing
+    Dado que um arquivo não confiável foi enviado ao GabFlow
+    Quando o gateway receber o upload
+    Então deve submetê-lo ao ClamAV antes de gravá-lo
+    E deve validar que o conteúdo corresponde ao MIME declarado
+    E falha, timeout, limite excedido ou detecção devem impedir o parsing
+
+  Cenário: Executar parsing em fronteira isolada
+    Dado que o arquivo foi classificado como limpo
+    Quando for necessário extrair texto, DOCX, PDF ou imagem
+    Então checksum e antimalware devem ser revalidados
+    E o parser não deve possuir rede, segredos, escrita nos objetos ou capabilities
+    E deve respeitar limites de arquivo, memória, CPU, processos, saída e timeout
+
+  Cenário: Revarrer o acervo após mudança da política de segurança
+    Dado que existem versões privadas, globais e anexos avaliados por política anterior
+    Quando um administrador iniciar uma revarredura
+    Então o sistema deve congelar um corte do acervo e invalidar os alvos por padrão
+    E deve processar lotes retomáveis registrando política, assinaturas, cursor e progresso
+    E somente itens novamente classificados como CLEAN devem voltar ao retrieval
+
+  Cenário: Purgar derivados de conteúdo reclassificado
+    Dado que uma revarredura detectou malware, adulteração ou conteúdo inseguro
+    Quando a decisão de quarentena for persistida
+    Então chunks, embeddings e texto extraído devem ser eliminados fisicamente
+    E OCR, transcrição e memória operacional derivados do anexo devem ser eliminados
+    E a trilha mínima de auditoria e os contadores do purge devem ser preservados
+
+  Cenário: Falhar de forma fechada antes da indexação
+    Dado que um scanner ou classificador obrigatório está indisponível
+    Quando uma nova versão documental aguardar avaliação de segurança
+    Então a decisão deve ser INDETERMINATE
+    E a versão não deve ser publicada, fragmentada ou vetorizada
+    E o processamento deve poder ser repetido sem aprovação implícita
+
   Cenário: Negar consulta privada sem contexto de tenant
     Dado que uma transação não possui o contexto app.tenant_id
     Quando tentar consultar documentos, versões, chunks ou feedback privado
@@ -100,6 +174,37 @@ Funcionalidade: Assistente RAG hierárquico
     Então devem ser persistidos precision@k, recall@k e groundedness
     E devem ser persistidas precisão das citações, fontes desconexas e acurácia de recusa
     E perguntas, documentos e execuções não devem cruzar tenants
+
+  Cenário: Recuperar candidatos por FTS e pgvector
+    Dado que existem fontes antigas e recentes elegíveis no tenant
+    Quando uma pergunta documental for consultada
+    Então o PostgreSQL deve formar candidatos por busca textual e vetorial
+    E deve fundir as posições dos canais por Reciprocal Rank Fusion
+    E somente embeddings do mesmo modelo e dimensão devem ser comparados
+    E a data de indexação não deve eliminar uma fonte antes da relevância
+    E ACL, vigência, retenção, publicação global e tenant devem ser filtrados no banco
+
+  Cenário: Continuar operando quando o embedding estiver indisponível
+    Dado que o provedor de embeddings não respondeu
+    Quando a consulta documental for executada
+    Então o canal PostgreSQL FTS deve continuar disponível
+    E nenhuma comparação vetorial incompatível deve ser realizada
+    E a resposta deve informar o fallback lexical
+
+  Cenário: Capturar consulta problemática no dataset de regressão
+    Dado que uma consulta do tenant retornou uma fonte desconexa
+    Quando o gestor informar a fonte esperada, a fonte irrelevante e o motivo da falha
+    Então deve ser criado um caso de origem REGRESSAO vinculado à consulta
+    E o baseline deve preservar identificadores, scores, rota, filtros e hashes
+    E o baseline não deve armazenar a resposta nem os trechos recuperados
+    E repetir a captura da mesma consulta deve retornar o mesmo caso
+
+  Cenário: Impedir contaminação e alteração dos sinais de regressão
+    Dado que uma consulta problemática pertence a outro tenant
+    Quando o gestor tentar capturá-la como caso de regressão
+    Então o sistema deve responder como recurso não encontrado
+    E uma fonte irrelevante deve ter participado da consulta original
+    E pergunta, expectativas, motivos e baseline devem permanecer imutáveis
 
   Cenário: Reprocessar evento operacional de forma idempotente
     Dado que a versão canônica de uma entidade já foi projetada e indexada
@@ -365,6 +470,115 @@ Funcionalidade: Assistente RAG hierárquico
     Dado que o tenant A corrigiu uma resposta
     Quando o tenant B fizer uma consulta semelhante
     Então a correção privada do tenant A não deve influenciar a resposta do tenant B
+
+  Cenário: Entender e expandir consulta documental
+    Dado que o usuário pergunta por um decreto sobre transporte
+    Quando o assistente formar o pool documental
+    Então deve preservar a consulta original
+    E pode gerar expansões legislativas e temáticas controladas
+    E deve fundir os pools por RRF antes do reranking neural
+    E deve auditar intenção, referências, expansões e filtros
+
+  Cenário: Filtros inferidos não afrouxam segurança
+    Dado que o entendimento identificou tema, tipo documental e período
+    Quando os filtros forem aplicados
+    Então devem restringir os candidatos antes do ranking
+    Mas não devem alterar tenant, ACL, vigência, retenção ou publicação
+
+  Cenário: Gerar resposta substantiva com citações validadas
+    Dado que o retrieval aprovou chunks autorizados, pertinentes e sanitizados
+    Quando o gerador produzir afirmações estruturadas
+    Então cada afirmação deve citar somente IDs presentes no contexto
+    E a aplicação deve validar o suporte da afirmação nos chunks citados
+    E a resposta deve expor citações rastreáveis até chunk, documento e versão
+
+  Cenário: Recusar resposta cuja citação não seja validada
+    Dado que o gerador citou uma fonte desconhecida ou sem suporte para a afirmação
+    Quando a aplicação validar o retorno estruturado
+    Então a resposta substantiva deve ser descartada integralmente
+    E o assistente deve emitir recusa conclusiva segura
+    E as fontes recuperadas podem permanecer visíveis para inspeção
+
+  Cenário: Tratar instruções dos documentos como dados
+    Dado que um chunk recuperado contém uma instrução maliciosa
+    Quando o contexto for preparado para a geração
+    Então o trecho deve ser sanitizado e limitado
+    E a instrução não deve alterar o contrato, as fontes ou a política do sistema
+
+  Cenário: Colocar upload suspeito em quarentena antes dos derivados
+    Dado que um upload privado ou global recebeu decisão diferente de CLEAN
+    Quando o worker concluir a avaliação de segurança
+    Então nenhum chunk, embedding ou texto extraído deve permanecer
+    E a versão não pode ser publicada nem recuperada
+    E a listagem de quarentena não deve expor payload ou link de download
+
+  Cenário: Reprocessar falso positivo somente após revisão vinculada ao checksum
+    Dado que uma versão suspeita foi aprovada por usuário autorizado com justificativa
+    E a aprovação corresponde ao checksum atual
+    Quando o administrador solicitar o reprocessamento
+    Então o gateway deve preservar a proveniência da revisão
+    E somente uma decisão final CLEAN e ALLOW pode recriar os derivados
+    E a publicação deve continuar sendo uma ação separada e auditada
+
+  Cenário: Invalidar revisão quando o checksum não corresponde
+    Dado que uma versão em quarentena possui aprovação para outro checksum
+    Quando o administrador solicitar o reprocessamento
+    Então o pedido deve ser rejeitado
+    E nenhum derivado deve ser criado
+
+  Cenário: Rejeitar contradição apesar da semelhança lexical
+    Dado que a fonte proíbe uma conduta
+    E a resposta afirma que a mesma conduta é permitida
+    Quando a validação lexical encontrar palavras em comum
+    Então o verificador semântico deve marcar a afirmação como contradita
+    E o assistente deve recusar a resposta substantiva
+
+  Cenário: Exigir verificador NLI independente
+    Dado que o gerador e o verificador NLI estão habilitados
+    Quando ambos forem configurados com o mesmo modelo
+    Então a validação NLI deve ser considerada indisponível
+    E a resposta deve ser recusada pela política fail-closed
+
+  Cenário: Evitar reranking neural desnecessário
+    Dado que o ranking híbrido possui um único candidato ou líder inequívoco
+    Quando o assistente preparar as fontes
+    Então não deve chamar o reranker neural
+    E deve registrar score, margem e motivo do skip adaptativo
+
+  Cenário: Medir orçamento de latência ponta a ponta
+    Dado que uma consulta documental percorreu recuperação, geração e NLI
+    Quando a resposta for registrada
+    Então deve expor a latência de cada etapa e o tempo total
+    E deve indicar se o orçamento foi excedido
+    E o rollout deve usar a taxa de estouro como gate online
+
+  Cenário: Calibrar perfil de qualidade contra baseline
+    Dado que o tenant possui um dataset de avaliação ativo
+    Quando o administrador propuser novos thresholds permitidos
+    Então baseline e candidato devem executar sobre o mesmo dataset
+    E regressões acima da tolerância devem rejeitar o perfil
+    E um perfil aprovado deve iniciar automaticamente o rollout governado
+
+  Cenário: Promover progressivamente um perfil de qualidade
+    Dado que o perfil candidato venceu o baseline offline
+    Quando cada etapa atingir sua janela e amostra mínimas sem regressão
+    Então o tráfego deve avançar por 5%, 20%, 50% e 100%
+    E usuários fora do canário devem continuar no perfil baseline
+    E o perfil deve ser promovido somente após validar a etapa de 100%
+    E métricas e decisões de cada etapa devem permanecer auditáveis
+
+  Cenário: Reverter rollout progressivo por regressão online
+    Dado que um perfil de qualidade está em rollout automatizado
+    Quando fallback, rejeição semântica, recusa ou feedback negativo violar um gate
+    Então o candidato deve ser revogado sem aguardar a próxima expansão
+    E a versão anterior elegível deve ser restaurada atomicamente
+    E o histórico deve registrar métricas e motivos do rollback
+
+  Cenário: Reverter canário por rejeições semânticas
+    Dado que um perfil de qualidade está ativo em canário
+    Quando a taxa de rejeição semântica exceder o gate após a amostra mínima
+    Então o perfil deve ser revogado automaticamente
+    E a versão anterior elegível deve ser restaurada atomicamente
 
   Cenário: Promover conhecimento privado para o catálogo global
     Dado que o tenant autorizou formalmente o compartilhamento

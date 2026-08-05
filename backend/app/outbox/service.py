@@ -10,12 +10,18 @@ from sqlalchemy import or_, select
 from app.extensions import db
 from app.models import OutboxEvent
 from app.outbox.handlers import NonRetryableEventError, handle_event, handle_exhausted_event
+from app.outbox.lease import renewable_event_lease
 from app.tenant_context import clear_tenant_context, tenant_context
 
 RAG_QUEUE_EVENT_TYPES = {
     "IngestaoDocumentoRag",
     "IngestaoDocumentoRagGlobal",
     "SincronizacaoMemoriaOperacional",
+    "CompilacaoSinaisRag",
+    "AvaliacaoPerfilQualidadeRag",
+    "AvaliacaoRolloutPerfilQualidadeRag",
+    "RevarreduraSegurancaRag",
+    "AuditoriaAutomatizadaRls",
 }
 WORKER_QUEUES = {"all", "default", "rag"}
 
@@ -45,20 +51,15 @@ def process_batch(worker_id: str) -> ProcessingResult:
 
 def claim_events(worker_id: str) -> list[uuid.UUID]:
     now = datetime.now(UTC)
-    lock_expired_at = now - timedelta(
-        seconds=current_app.config["WORKER_LOCK_TIMEOUT_SECONDS"]
-    )
-    statement = (
-        select(OutboxEvent)
-        .where(
-            OutboxEvent.published_at.is_(None),
-            OutboxEvent.failed_at.is_(None),
-            OutboxEvent.available_at <= now,
-            or_(
-                OutboxEvent.locked_at.is_(None),
-                OutboxEvent.locked_at < lock_expired_at,
-            ),
-        )
+    lock_expired_at = now - timedelta(seconds=current_app.config["WORKER_LOCK_TIMEOUT_SECONDS"])
+    statement = select(OutboxEvent).where(
+        OutboxEvent.published_at.is_(None),
+        OutboxEvent.failed_at.is_(None),
+        OutboxEvent.available_at <= now,
+        or_(
+            OutboxEvent.locked_at.is_(None),
+            OutboxEvent.locked_at < lock_expired_at,
+        ),
     )
     queue = str(current_app.config.get("WORKER_QUEUE", "all")).lower()
     if queue not in WORKER_QUEUES:
@@ -95,7 +96,8 @@ def process_event(event_id: uuid.UUID, worker_id: str) -> str:
 
     try:
         if event.tenant_id is None:
-            handle_event(event)
+            with renewable_event_lease(event.id, worker_id):
+                handle_event(event)
             event.published_at = datetime.now(UTC)
             event.locked_at = None
             event.locked_by = None
@@ -113,7 +115,8 @@ def process_event(event_id: uuid.UUID, worker_id: str) -> str:
             db.session.commit()
             return "succeeded"
         with tenant_context(event.tenant_id):
-            handle_event(event)
+            with renewable_event_lease(event.id, worker_id):
+                handle_event(event)
             event.published_at = datetime.now(UTC)
             event.locked_at = None
             event.locked_by = None
@@ -136,9 +139,7 @@ def process_event(event_id: uuid.UUID, worker_id: str) -> str:
         return _record_failure(event_id, worker_id, error, started)
 
 
-def _record_failure(
-    event_id: uuid.UUID, worker_id: str, error: Exception, started: float
-) -> str:
+def _record_failure(event_id: uuid.UUID, worker_id: str, error: Exception, started: float) -> str:
     event = db.session.execute(
         select(OutboxEvent)
         .where(OutboxEvent.id == event_id, OutboxEvent.locked_by == worker_id)

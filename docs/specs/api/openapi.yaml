@@ -8,6 +8,47 @@ servers:
 security:
   - cookieAuth: []
 paths:
+  /assistente/seguranca/validacao-saida/rollout:
+    get:
+      summary: Consulta o rollout tenant-scoped da validação de saída
+      responses:
+        "200":
+          description: Estado, gates, métricas e histórico do rollout
+    post:
+      summary: Inicia ou reinicia o rollout da validação de saída
+      responses:
+        "201":
+          description: Rollout iniciado
+  /assistente/seguranca/validacao-saida/rollback:
+    post:
+      summary: Executa rollback manual da validação de saída não crítica
+      responses:
+        "200":
+          description: Rollback registrado e aplicado
+  /platform/seguranca/auditorias-rls:
+    get:
+      summary: Lista auditorias automatizadas de RLS
+      responses:
+        "200":
+          description: Execuções e achados sem conteúdo de tenant
+    post:
+      summary: Solicita auditoria automatizada de RLS
+      responses:
+        "202":
+          description: Auditoria enfileirada
+  /platform/seguranca/auditorias-rls/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Consulta uma auditoria automatizada de RLS
+      responses:
+        "200":
+          description: Resultado da auditoria
   /health/rag:
     get:
       summary: Estado operacional e SLO da fila RAG
@@ -66,6 +107,10 @@ paths:
     get:
       x-status: current
       summary: Lista perguntas reais do dataset de avaliação do tenant
+      parameters:
+        - { in: query, name: origem, schema: { type: string, enum: [MANUAL, FEEDBACK, REGRESSAO] } }
+        - { in: query, name: severidade, schema: { type: string, enum: [BAIXA, MEDIA, ALTA, CRITICA] } }
+        - { in: query, name: ativa, schema: { type: boolean } }
       responses:
         "200":
           description: Perguntas e expectativas tenant-scoped
@@ -88,6 +133,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RagEvaluationQuestion"
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /assistente/avaliacoes/casos-regressao:
+    post:
+      x-status: current
+      summary: Captura uma consulta problemática como caso de regressão tenant-scoped
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagRegressionCaseCreateRequest"
+      responses:
+        "200":
+          description: Caso já existente retornado de forma idempotente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "201":
+          description: Caso de regressão criado com snapshot minimizado do baseline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagEvaluationQuestion"
+        "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationError" }
   /assistente/avaliacoes/perguntas/{id}:
     patch:
@@ -789,7 +859,61 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "202": { description: Reprocessamento enfileirado }
-        "409": { description: Versão já em processamento }
+        "409": { description: Versão já em processamento ou sem revisão de segurança aprovada }
+  /rag/quarentena:
+    get:
+      summary: Lista versões retidas sem expor payload ou link de download
+      responses:
+        "200": { description: Pendências de segurança do tenant }
+  /rag/seguranca/revarreduras:
+    post:
+      summary: Inicia revarredura fail-closed do acervo privado e anexos do tenant
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecurityRescanRequest" }
+      responses:
+        "202":
+          description: Revarredura enfileirada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "409": { description: Já existe uma revarredura ativa no tenant }
+        "422": { description: Tamanho de lote inválido }
+    get:
+      summary: Lista revarreduras de segurança do tenant
+      responses:
+        "200": { description: Execuções tenant-scoped }
+  /rag/seguranca/revarreduras/{id}:
+    get:
+      summary: Consulta progresso e contadores de uma revarredura do tenant
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Estado da revarredura
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "404": { description: Execução inexistente no tenant }
+  /rag/documentos/{id}/versoes/{version_id}/seguranca:
+    patch:
+      summary: Registra revisão humana vinculada ao checksum da versão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: version_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentSecurityReviewRequest" }
+      responses:
+        "200": { description: Revisão registrada e auditada }
+        "409": { description: Versão não está em estado revisável }
+        "422": { description: Decisão ou justificativa inválida }
   /rag/fontes-operacionais:
     get:
       x-status: current
@@ -1484,7 +1608,7 @@ paths:
         "422": { description: Feedback não possui diagnóstico promovível }
   /assistente/aprendizado/execucoes:
     post:
-      x-status: planned
+      x-status: implemented
       summary: Compila sinais aprovados em artefatos candidatos do tenant
       requestBody:
         required: true
@@ -1499,28 +1623,129 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RagLearningRun"
-        "409": { description: Execução idêntica já existe }
+        "200":
+          description: Repetição idempotente; retorna a execução já existente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningRun"
+        "409": { description: Execução idêntica criada simultaneamente }
         "422": { description: Janela ou configuração inválida }
     get:
-      x-status: planned
+      x-status: implemented
       summary: Lista execuções de aprendizado do tenant
+      parameters:
+        - in: query
+          name: estado
+          schema:
+            type: string
+            enum: [PENDENTE, PROCESSANDO, CONCLUIDA, ERRO]
       responses:
-        "200": { description: Histórico de compilações }
+        "200":
+          description: Histórico de compilações
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagLearningRun"
   /assistente/aprendizado/artefatos:
     get:
-      x-status: planned
+      x-status: implemented
       summary: Lista artefatos candidatos e ativos do tenant
+      parameters:
+        - in: query
+          name: tipo
+          schema:
+            type: string
+            enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS, QUALITY_PROFILE]
+        - in: query
+          name: estado
+          schema:
+            type: string
+            enum: [CANDIDATO, EM_AVALIACAO, REJEITADO, APROVADO, ATIVO, SUBSTITUIDO, REVOGADO]
       responses:
-        "200": { description: Artefatos e métricas antes/depois }
-  /assistente/aprendizado/artefatos/{artefatoId}/ativacao:
-    post:
-      x-status: planned
-      summary: Avalia e ativa um artefato candidato
+        "200":
+          description: Artefatos e métricas antes/depois
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagLearningArtifact"
+  /assistente/aprendizado/artefatos/{artefatoId}:
+    get:
+      x-status: implemented
+      summary: Consulta payload e proveniência de um artefato do tenant
       parameters:
         - in: path
           name: artefatoId
           required: true
           schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Artefato candidato com payload e sinais de origem
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "404": { description: Artefato não encontrado no tenant }
+  /assistente/aprendizado/artefatos/{artefatoId}/avaliacao:
+    post:
+      x-status: implemented
+      summary: Compara candidato e baseline e decide sua aprovação
+      parameters:
+        - in: path
+          name: artefatoId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                k: { type: integer, minimum: 1, maximum: 10, default: 5 }
+                justificativaSemMelhora:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "200":
+          description: Candidato aprovado nos gates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "409": { description: Candidato rejeitado ou estado incompatível }
+        "422": { description: Dataset ou parâmetros inválidos }
+  /assistente/aprendizado/artefatos/{artefatoId}/ativacao:
+    post:
+      x-status: implemented
+      summary: Ativa em canário um artefato previamente aprovado
+      parameters:
+        - in: path
+          name: artefatoId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                percentualCanario:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  default: 10
       responses:
         "200":
           description: Artefato ativado atomicamente
@@ -1528,23 +1753,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RagLearningArtifact"
-        "409": { description: Gates de qualidade não atendidos }
+        "409": { description: Artefato não aprovado ou expansão inválida }
+        "422": { description: Percentual inválido }
+  /assistente/calibracoes:
+    get:
+      x-status: implemented
+      summary: Lista calibrações e o rollout ativo do tenant
+      responses:
+        "200":
+          description: Histórico e perfil ativo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content, perfilAtivo]
+                properties:
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RagLearningArtifact"
+                  perfilAtivo:
+                    anyOf:
+                      - $ref: "#/components/schemas/RagLearningArtifact"
+                      - type: "null"
+    post:
+      x-status: implemented
+      summary: Avalia um perfil candidato de qualidade contra o baseline do tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagQualityCalibrationRequest"
+      responses:
+        "202":
+          description: Perfil candidato criado e avaliação enfileirada na fila RAG
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagLearningArtifact"
+        "422": { description: Parâmetros ou dataset inválidos }
   /assistente/aprendizado/artefatos/{artefatoId}/rollback:
     post:
-      x-status: planned
+      x-status: implemented
       summary: Reverte o artefato ativo para a versão anterior
       parameters:
         - in: path
           name: artefatoId
           required: true
           schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [motivo]
+              properties:
+                motivo: { type: string, maxLength: 2000 }
       responses:
         "200":
           description: Versão anterior restaurada atomicamente
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RagLearningArtifact"
+                type: object
+                properties:
+                  artefatoRevogado:
+                    $ref: "#/components/schemas/RagLearningArtifact"
+                  artefatoRestaurado:
+                    $ref: "#/components/schemas/RagLearningArtifact"
         "409": { description: Não existe versão anterior elegível }
   /insights:
     get:
@@ -1889,6 +2168,59 @@ paths:
         "409":
           description: Transição inválida ou versão ainda não indexada
 
+  /platform/rag-global/quarentena:
+    get:
+      summary: Lista versões globais retidas sem payload ou link de download
+      responses:
+        "200": { description: Pendências globais de segurança }
+  /platform/rag-global/seguranca/revarreduras:
+    post:
+      summary: Inicia revarredura fail-closed do catálogo global
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecurityRescanRequest" }
+      responses:
+        "202":
+          description: Revarredura global enfileirada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "409": { description: Já existe uma revarredura global ativa }
+        "422": { description: Tamanho de lote inválido }
+    get:
+      summary: Lista revarreduras do catálogo global
+      responses:
+        "200": { description: Execuções globais }
+  /platform/rag-global/seguranca/revarreduras/{id}:
+    get:
+      summary: Consulta uma revarredura do catálogo global
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Estado da revarredura global
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityRescanRun" }
+        "404": { description: Execução global inexistente }
+  /platform/rag-global/colecoes/{colecaoId}/documentos/{documentoId}/versoes/{versaoId}/seguranca:
+    patch:
+      summary: Registra revisão global vinculada ao checksum
+      parameters:
+        - { in: path, name: colecaoId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: documentoId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: versaoId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentSecurityReviewRequest" }
+      responses:
+        "200": { description: Revisão global registrada e auditada }
+        "409": { description: Versão não está em estado revisável }
+        "422": { description: Decisão ou justificativa inválida }
+
   /rag/catalogo-global:
     get:
       summary: Lista coleções globais disponíveis para o tenant
@@ -2002,6 +2334,115 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    SecurityRescanRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        tamanhoLote: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    SecurityRescanRun:
+      type: object
+      additionalProperties: false
+      required:
+        [id, escopo, estado, fase, versaoPolitica, lote, total, processados,
+         limpos, quarentena, erros, chunksEliminados, ocrsEliminados,
+         transcricoesEliminadas, progressoPercentual, corteEm, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: [string, "null"], format: uuid }
+        escopo: { type: string, enum: [TENANT, GLOBAL] }
+        estado: { type: string, enum: [PENDENTE, PROCESSANDO, CONCLUIDA, ERRO] }
+        fase: { type: string, enum: [PRIVATE, ATTACHMENT, GLOBAL, DONE] }
+        versaoPolitica: { type: string }
+        versaoAssinaturas: { type: [string, "null"] }
+        lote: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        processados: { type: integer, minimum: 0 }
+        limpos: { type: integer, minimum: 0 }
+        quarentena: { type: integer, minimum: 0 }
+        erros: { type: integer, minimum: 0 }
+        chunksEliminados: { type: integer, minimum: 0 }
+        ocrsEliminados: { type: integer, minimum: 0 }
+        transcricoesEliminadas: { type: integer, minimum: 0 }
+        progressoPercentual: { type: number, minimum: 0, maximum: 100 }
+        erro: { type: [string, "null"] }
+        corteEm: { type: string, format: date-time }
+        iniciadaEm: { type: [string, "null"], format: date-time }
+        concluidaEm: { type: [string, "null"], format: date-time }
+        criadaEm: { type: string, format: date-time }
+    ContentSecurityState:
+      type: object
+      additionalProperties: false
+      required: [status, action, score, categories, signals, policyVersion, classifier]
+      properties:
+        status:
+          type: string
+          enum: [CLEAN, SUSPICIOUS, MALICIOUS, INDETERMINATE]
+        action:
+          type: string
+          enum: [ALLOW, QUARANTINE, BLOCK, RETRY]
+        score: { type: number, minimum: 0, maximum: 1 }
+        categories:
+          type: array
+          items: { type: string }
+        signals:
+          type: array
+          description: Identificadores estáveis; nunca contém o payload avaliado.
+          items: { type: string }
+        policyVersion: { type: [string, "null"] }
+        detectorVersion: { type: [string, "null"] }
+        classifier:
+          type: object
+          additionalProperties: false
+          properties:
+            applied: { type: boolean }
+            provider: { type: string }
+            model: { type: string }
+            version: { type: string }
+            label: { type: string, enum: [CLEAN, SUSPICIOUS, MALICIOUS] }
+            score: { type: number, minimum: 0, maximum: 1 }
+            categories:
+              type: array
+              maxItems: 12
+              items: { type: string }
+            errorCode: { type: string }
+            manualReview: { type: object }
+        contentChecksum: { type: [string, "null"], pattern: "^[a-f0-9]{64}$" }
+        scannedAt: { type: [string, "null"], format: date-time }
+        errorCode: { type: [string, "null"] }
+        quarantinedAt: { type: [string, "null"], format: date-time }
+        purgedAt: { type: [string, "null"], format: date-time }
+        review:
+          type: object
+          required: [decision, checksum, reviewedById, reviewedAt, reason]
+          properties:
+            decision:
+              type: [string, "null"]
+              enum: [APPROVED, REJECTED, null]
+            checksum: { type: [string, "null"], pattern: "^[a-f0-9]{64}$" }
+            reviewedById: { type: [string, "null"], format: uuid }
+            reviewedAt: { type: [string, "null"], format: date-time }
+            reason: { type: [string, "null"] }
+    ContentSecurityReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [decisao, justificativa]
+      properties:
+        decisao: { type: string, enum: [APROVAR, REJEITAR] }
+        justificativa: { type: string, minLength: 10, maxLength: 2000 }
+    MalwareScanState:
+      type: object
+      additionalProperties: false
+      required: [status, provider, engineVersion, signatureVersion, threat, errorCode, scannedAt]
+      properties:
+        status:
+          type: [string, "null"]
+          enum: [PENDENTE, LIMPO, BLOQUEADO, CLEAN, INFECTED, INDETERMINATE, null]
+        provider: { type: [string, "null"] }
+        engineVersion: { type: [string, "null"] }
+        signatureVersion: { type: [string, "null"] }
+        threat: { type: [string, "null"] }
+        errorCode: { type: [string, "null"] }
+        scannedAt: { type: [string, "null"], format: date-time }
     EntradaVersaoRag:
       type: object
       required: [arquivo, versao]
@@ -2034,6 +2475,10 @@ components:
         fragmentos: { type: integer }
         modeloEmbedding: { type: string }
         erro: { type: string, nullable: true }
+        segurancaConteudo:
+          $ref: "#/components/schemas/ContentSecurityState"
+        verificacaoMalware:
+          $ref: "#/components/schemas/MalwareScanState"
     DocumentoRag:
       type: object
       properties:
@@ -2087,6 +2532,8 @@ components:
         excluidaEm: { type: [string, "null"], format: date-time }
         purgeConcluidoEm: { type: [string, "null"], format: date-time }
         tombstoneHash: { type: [string, "null"] }
+        segurancaConteudo:
+          $ref: "#/components/schemas/ContentSecurityState"
     CriarSolicitacaoRequest:
       type: object
       required: [origem, descricao]
@@ -2560,6 +3007,9 @@ components:
             tema: { type: string }
             territorioId: { type: string, format: uuid }
             orgaoId: { type: string, format: uuid }
+            tipoDocumento: { type: string, maxLength: 120 }
+            orgao: { type: string, maxLength: 180 }
+            jurisdicao: { type: string, maxLength: 120 }
     RagQueryFeedbackRequest:
       type: object
       required: [avaliacao]
@@ -2631,6 +3081,9 @@ components:
             tema: { type: string }
             territorioId: { type: string, format: uuid }
             orgaoId: { type: string, format: uuid }
+            tipoDocumento: { type: string }
+            orgao: { type: string }
+            jurisdicao: { type: string }
         julgamentosFontes:
           type: array
           maxItems: 20
@@ -2684,23 +3137,85 @@ components:
         criadoEm: { type: string, format: date-time }
         moderadoEm: { type: [string, "null"], format: date-time }
         justificativaModeracao: { type: [string, "null"] }
+        segurancaConteudo:
+          $ref: "#/components/schemas/ContentSecurityState"
     RagEvaluationSourceReference:
       type: object
       additionalProperties: false
-      required: [documentoId, versaoId, escopo, julgamento, motivo]
+      required: [documentoId, versaoId, escopo]
       properties:
         documentoId: { type: string, format: uuid }
         versaoId: { type: string, format: uuid }
         chunkId: { type: [string, "null"], format: uuid }
         escopo: { type: string, enum: [GLOBAL, PRIVADO] }
-        julgamento: { type: string, enum: [RELEVANTE, IRRELEVANTE, AUSENTE] }
-        motivo:
-          $ref: "#/components/schemas/RagFeedbackReason"
+    RagRegressionFailureReason:
+      type: string
+      enum:
+        - DOCUMENTOS_DESCONEXOS
+        - FONTE_RELEVANTE_AUSENTE
+        - RECUSA_INDEVIDA
+        - DEVERIA_RECUSAR
+        - ROTEAMENTO_INCORRETO
+        - FILTROS_INCORRETOS
+        - RESPOSTA_NAO_FUNDAMENTADA
+        - CITACAO_INCORRETA
+    RagRegressionCaseCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [consultaId, motivos]
+      properties:
+        consultaId: { type: string, format: uuid }
+        motivos:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/RagRegressionFailureReason"
+        severidade:
+          type: string
+          enum: [BAIXA, MEDIA, ALTA, CRITICA]
+          default: MEDIA
+        tags:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          items: { type: string, maxLength: 40 }
+        fontesEsperadas:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/RagEvaluationSourceReference"
+        fontesIrrelevantes:
+          type: array
+          maxItems: 20
+          description: Fontes que precisam constar no resultado original.
+          items:
+            $ref: "#/components/schemas/RagEvaluationSourceReference"
+        esperaRecusa: { type: boolean, default: false }
+        metodoEsperado:
+          type: string
+          enum: [DOCUMENTAL, ESTRUTURADO, HIBRIDO]
+        filtrosEsperados:
+          type: object
+          additionalProperties: false
+          properties:
+            dataset: { type: string }
+            metrica: { type: string }
+            agruparPor: { type: string }
+            inicio: { type: string, format: date }
+            fim: { type: string, format: date }
+            status: { type: string }
+            tema: { type: string }
+            territorioId: { type: string, format: uuid }
+            orgaoId: { type: string, format: uuid }
+        observacoes: { type: string, maxLength: 2000 }
     RagEvaluationQuestion:
       type: object
       required:
         [id, pergunta, documentosEsperados, fontesEsperadas, hardNegatives,
-         esperaRecusa, filtrosEsperados, ativa, origem, criadaEm, atualizadaEm]
+         esperaRecusa, filtrosEsperados, ativa, origem, motivosFalha,
+         severidade, tags, baseline, criadaEm, atualizadaEm]
       properties:
         id: { type: string, format: uuid }
         pergunta: { type: string }
@@ -2722,7 +3237,21 @@ components:
         filtrosEsperados: { type: object, additionalProperties: true }
         observacoes: { type: [string, "null"] }
         ativa: { type: boolean }
-        origem: { type: string, enum: [MANUAL, FEEDBACK] }
+        origem: { type: string, enum: [MANUAL, FEEDBACK, REGRESSAO] }
+        motivosFalha:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagRegressionFailureReason"
+        severidade: { type: string, enum: [BAIXA, MEDIA, ALTA, CRITICA] }
+        tags:
+          type: array
+          items: { type: string }
+        baseline:
+          type: object
+          additionalProperties: true
+          description: Snapshot minimizado, sem resposta ou trechos brutos.
+        baselineCapturadoEm: { type: [string, "null"], format: date-time }
+        consultaOrigemId: { type: [string, "null"], format: uuid }
         feedbackOrigemId: { type: [string, "null"], format: uuid }
         curadaPorId: { type: [string, "null"], format: uuid }
         curadaEm: { type: [string, "null"], format: date-time }
@@ -2748,6 +3277,7 @@ components:
         acuraciaRoteamento: { type: number, minimum: 0, maximum: 1 }
         acuraciaFiltros: { type: number, minimum: 0, maximum: 1 }
         taxaHardNegatives: { type: number, minimum: 0, maximum: 1 }
+        latenciaP95Ms: { type: [integer, "null"], minimum: 0 }
         resultados:
           type: array
           items: { type: object, additionalProperties: true }
@@ -2765,6 +3295,10 @@ components:
           items:
             type: string
             enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+        permitirAmostraPequena:
+          type: boolean
+          default: false
+          description: Aprovação explícita do gestor para compilar abaixo do mínimo configurado.
     RagLearningRun:
       type: object
       required: [id, estado, inicio, fim, configuracaoHash, criadoEm]
@@ -2773,30 +3307,94 @@ components:
         estado: { type: string, enum: [PENDENTE, PROCESSANDO, CONCLUIDA, ERRO] }
         inicio: { type: string, format: date-time }
         fim: { type: string, format: date-time }
+        configuracao: { type: object, additionalProperties: true }
         configuracaoHash: { type: string }
+        baseline: { type: object, additionalProperties: true }
+        totalFeedbacks: { type: integer, minimum: 0 }
+        totalAprovados: { type: integer, minimum: 0 }
+        totalQuarentena: { type: integer, minimum: 0 }
+        quantidadeArtefatos: { type: integer, minimum: 0 }
         metricas: { type: object, additionalProperties: true }
+        erro: { type: [string, "null"] }
+        iniciadaPorId: { type: string, format: uuid }
         criadoEm: { type: string, format: date-time }
+        concluidoEm: { type: [string, "null"], format: date-time }
+    RagQualityCalibrationRequest:
+      type: object
+      additionalProperties: false
+      required: [parametros]
+      properties:
+        k: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        justificativaSemMelhora: { type: string, maxLength: 2000 }
+        parametros:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            retrievalScoreThreshold: { type: number, minimum: 0.05, maximum: 0.95 }
+            minEvidenceScore: { type: number, minimum: 0.05, maximum: 0.95 }
+            neuralMinScore: { type: number, minimum: 0, maximum: 1 }
+            citationLexicalThreshold: { type: number, minimum: 0, maximum: 1 }
+            entailmentMinScore: { type: number, minimum: 0, maximum: 1 }
     RagLearningArtifact:
       type: object
       required: [id, tipo, versao, estado, payloadHash, criadoEm]
       properties:
         id: { type: string, format: uuid }
+        execucaoId: { type: string, format: uuid }
         tipo:
           type: string
-          enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS]
+          enum: [RERANK_PROFILE, ROUTING_EXAMPLES, EVALUATION_CASES, ANSWER_EXEMPLARS, QUALITY_PROFILE]
         versao: { type: integer, minimum: 1 }
         estado:
           type: string
           enum: [CANDIDATO, EM_AVALIACAO, REJEITADO, APROVADO, ATIVO, SUBSTITUIDO, REVOGADO]
         payloadHash: { type: string }
+        feedbacksOrigem:
+          type: array
+          items: { type: string, format: uuid }
+        payload:
+          type: object
+          additionalProperties: true
+          description: Presente somente na consulta detalhada.
+        proveniencia:
+          type: array
+          description: Presente somente na consulta detalhada.
+          items:
+            type: object
+            required: [feedbackId, contribuicao]
+            properties:
+              feedbackId: { type: string, format: uuid }
+              contribuicao: { type: object, additionalProperties: true }
         baseline: { type: object, additionalProperties: true }
         metricasAntes: { type: object, additionalProperties: true }
         metricasDepois: { type: object, additionalProperties: true }
+        detalhesAvaliacao: { type: object, additionalProperties: true }
+        aprovadoPorId: { type: [string, "null"], format: uuid }
+        aprovadoEm: { type: [string, "null"], format: date-time }
+        ativadoPorId: { type: [string, "null"], format: uuid }
+        modoAtivacao: { type: [string, "null"], enum: [CANARIO, TOTAL, null] }
+        percentualCanario: { type: integer, minimum: 0, maximum: 100 }
+        rollout:
+          type: object
+          required: [estado, etapaAtual, historico]
+          properties:
+            estado:
+              type: [string, "null"]
+              enum: [MONITORANDO, PROMOVIDO, ROLLBACK, ERRO, null]
+            etapaAtual: { type: integer, minimum: 0 }
+            iniciadoEm: { type: [string, "null"], format: date-time }
+            etapaIniciadaEm: { type: [string, "null"], format: date-time }
+            proximaAvaliacaoEm: { type: [string, "null"], format: date-time }
+            historico:
+              type: array
+              items: { type: object, additionalProperties: true }
+        metricasOnline: { type: object, additionalProperties: true }
         criadoEm: { type: string, format: date-time }
         ativadoEm: { type: [string, "null"], format: date-time }
     RagAnswer:
       type: object
-      required: [id, consulta, resposta, fontes, fundamentada, recusaConclusiva]
+      required: [id, consulta, resposta, fontes, fundamentada, recusaConclusiva, geracao, citacoes]
       properties:
         id:
           type: string
@@ -2814,6 +3412,10 @@ components:
           type: object
           additionalProperties: true
           description: Filtros tenant-scoped e período usados na recuperação ou consulta estruturada.
+        entendimentoConsulta:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Intenção documental, referências, expansões e filtros auditáveis.
         resultadoEstruturado:
           type: [object, "null"]
           additionalProperties: true
@@ -2846,6 +3448,21 @@ components:
             limiarAplicadoPorFonte: { type: boolean }
             diversidadeForcada: { type: boolean }
             compatibilidadeModeloEmbedding: { type: boolean }
+            mecanismoCandidatura:
+              type: string
+              enum: [POSTGRES_FTS_PGVECTOR, LOCAL_SCAN]
+            fusaoRRF:
+              type: boolean
+              description: Indica que ao menos uma fonte participou dos canais FTS e pgvector.
+            expansaoConsultaAplicada: { type: boolean }
+            fusaoMultiConsultaRRF: { type: boolean }
+            quantidadeConsultasBusca: { type: integer, minimum: 1 }
+            rerankingNeural:
+              type: object
+              additionalProperties: true
+            entendimentoConsulta:
+              type: [object, "null"]
+              additionalProperties: true
             modo:
               type: string
               enum: [HIBRIDO, LEXICAL, MISTO, SEM_RESULTADO]
@@ -2853,6 +3470,55 @@ components:
               type: array
               items:
                 type: string
+        geracao:
+          type: object
+          required:
+            [habilitada, aplicada, fallbackUtilizado, afirmacoes, citacoes, validacaoCruzada]
+          properties:
+            habilitada: { type: boolean }
+            aplicada: { type: boolean }
+            modelo: { type: [string, "null"] }
+            versaoPrompt: { type: [string, "null"] }
+            fallbackUtilizado: { type: boolean }
+            erroFallback: { type: [string, "null"] }
+            afirmacoes: { type: integer, minimum: 0 }
+            citacoes: { type: integer, minimum: 0 }
+            validacaoCruzada:
+              type: object
+              additionalProperties: true
+              description: Resultado dos checks por afirmação e fontes citadas.
+            latencia:
+              type: object
+              additionalProperties: true
+        latenciaEtapas:
+          type: object
+          required: [recuperacaoMs, totalMs, orcamentoMs, orcamentoExcedido]
+          properties:
+            recuperacaoMs: { type: integer, minimum: 0 }
+            geracaoMs: { type: integer, minimum: 0 }
+            validacaoMs: { type: integer, minimum: 0 }
+            nliMs: { type: integer, minimum: 0 }
+            totalMs: { type: integer, minimum: 0 }
+            orcamentoMs: { type: integer, minimum: 1000 }
+            orcamentoExcedido: { type: boolean }
+        citacoes:
+          type: array
+          description: Fontes efetivamente citadas na resposta gerada e validada.
+          items:
+            type: object
+            required: [numero, chunkId, documentoId, versaoId, escopo, titulo, afirmacoes]
+            properties:
+              numero: { type: integer, minimum: 1 }
+              chunkId: { type: string, format: uuid }
+              documentoId: { type: string, format: uuid }
+              versaoId: { type: string, format: uuid }
+              escopo: { type: string, enum: [PRIVADO, GLOBAL] }
+              titulo: { type: string }
+              paginaInicio: { type: [integer, "null"] }
+              paginaFim: { type: [integer, "null"] }
+              afirmacoes:
+                type: array
+                items: { type: integer, minimum: 1 }
         avaliacao:
           type: string
           nullable: true
@@ -2863,13 +3529,20 @@ components:
         respostaCorrigida:
           type: string
           nullable: true
-        aprendizado:
-          type: object
-          additionalProperties: false
-          description: Versões tenant-scoped que influenciaram esta consulta.
-          properties:
-            rerankProfileVersion: { type: [integer, "null"] }
-            routingExamplesVersion: { type: [integer, "null"] }
+        artefatosAprendizado:
+          type: array
+          description: Somente versões tenant-scoped que efetivamente influenciaram a consulta.
+          items:
+            type: object
+            required: [id, tipo, versao, percentualCanario]
+            properties:
+              id: { type: string, format: uuid }
+              tipo:
+                type: string
+                enum: [RERANK_PROFILE, ROUTING_EXAMPLES, QUALITY_PROFILE]
+              versao: { type: integer, minimum: 1 }
+              modoAtivacao: { type: string, enum: [CANARIO, TOTAL] }
+              percentualCanario: { type: integer, minimum: 1, maximum: 100 }
         seguranca:
           type: object
           required: [promptInjectionDetectado, fontesComRisco, politica]
@@ -2885,6 +3558,8 @@ components:
                   versaoId: { type: string, format: uuid }
             politica:
               type: string
+            consulta:
+              $ref: "#/components/schemas/ContentSecurityState"
         fontes:
           type: array
           items:
@@ -2992,6 +3667,17 @@ components:
               modoRecuperacao:
                 type: string
                 enum: [HIBRIDO, LEXICAL]
+              canaisCandidatura:
+                type: array
+                items:
+                  type: string
+                  enum: [FTS, PGVECTOR, LOCAL_SCAN]
+              pontuacaoFusao:
+                type: number
+                description: Pontuação RRF usada para formar o pool de candidatos.
+              rankingTextualBanco:
+                type: [number, "null"]
+                description: Ranking PostgreSQL FTS antes do cálculo final de relevância.
               justificativas:
                 type: array
                 items:
@@ -3010,6 +3696,8 @@ components:
                 type: array
                 items:
                   type: string
+              segurancaConteudo:
+                $ref: "#/components/schemas/ContentSecurityState"
     Insight:
       type: object
       properties:

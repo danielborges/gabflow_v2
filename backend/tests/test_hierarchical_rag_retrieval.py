@@ -29,6 +29,7 @@ from app.models import (
     Tenant,
     User,
 )
+from app.rag.content_security import ContentSecurityAction, ContentSecurityStatus
 from app.rag.service import LocalHashEmbeddingProvider
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
@@ -103,7 +104,10 @@ def _global_source(
         embedding_model=LocalHashEmbeddingProvider.model,
         chunk_count=1,
         ingestion_status=RagIngestionStatus.INDEXADO,
+        malware_scan_status="CLEAN",
         publication_status=publication_status,
+        security_status=ContentSecurityStatus.CLEAN,
+        security_action=ContentSecurityAction.ALLOW,
         created_by_id=actor_id,
         published_by_id=actor_id,
     )
@@ -149,6 +153,9 @@ def _private_source(
         version_label="1",
         lifecycle_status=RagDocumentLifecycle.VIGENTE,
         ingestion_status=RagIngestionStatus.INDEXADO,
+        malware_scan_status="CLEAN",
+        security_status=ContentSecurityStatus.CLEAN,
+        security_action=ContentSecurityAction.ALLOW,
         storage_key=f"tenants/{tenant.id}/rag/{document_id}/{version_id}/nota.txt",
         original_name="nota.txt",
         mime_type="text/plain",
@@ -309,7 +316,10 @@ def test_optional_subscription_and_pinned_global_version(app, client):
             embedding_model=LocalHashEmbeddingProvider.model,
             chunk_count=1,
             ingestion_status=RagIngestionStatus.INDEXADO,
+            malware_scan_status="CLEAN",
             publication_status=GlobalVersionStatus.PUBLICADA,
+            security_status=ContentSecurityStatus.CLEAN,
+            security_action=ContentSecurityAction.ALLOW,
             created_by_id=actor_id,
             published_by_id=actor_id,
         )

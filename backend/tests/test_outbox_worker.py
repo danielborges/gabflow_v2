@@ -39,9 +39,7 @@ def test_transient_failure_uses_exponential_backoff(app, monkeypatch):
         stored = db.session.get(OutboxEvent, event_id)
         assert stored.attempt_count == 1
         available_at = stored.available_at.replace(tzinfo=UTC)
-        assert available_at >= before + timedelta(
-            seconds=app.config["WORKER_RETRY_BASE_SECONDS"]
-        )
+        assert available_at >= before + timedelta(seconds=app.config["WORKER_RETRY_BASE_SECONDS"])
         assert stored.locked_at is None
         assert stored.published_at is None
 

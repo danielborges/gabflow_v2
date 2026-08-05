@@ -45,7 +45,12 @@ from app.models import (
     RetentionPolicy,
     ServiceRequest,
 )
-from app.rag.content_security import has_prompt_injection
+from app.rag.content_security import (
+    ContentSecurityStatus,
+    ContentSecuritySurface,
+    apply_content_security_decision,
+    assess_content_security,
+)
 from app.rag.projectors import (
     OperationalMemoryProjector,
     Projection,
@@ -941,15 +946,43 @@ def execute_operational_memory_sync(
         )
         return
 
-    if has_prompt_injection(projection.content):
-        source.status = RagKnowledgeSourceStatus.QUARENTENA
-        source.eligibility_reason = "PROMPT_INJECTION_DETECTED"
-        source.error_code = "CONTENT_SECURITY_REVIEW_REQUIRED"
+    security_decision = assess_content_security(
+        projection.content,
+        surface=ContentSecuritySurface.CONNECTOR_CONTENT,
+        metadata={
+            "sourceModule": source.source_module,
+            "entityType": source.entity_type,
+            "projectorVersion": source.projector_version,
+        },
+    )
+    apply_content_security_decision(source, security_decision)
+    if security_decision.status != ContentSecurityStatus.CLEAN:
+        source.status = (
+            RagKnowledgeSourceStatus.QUARENTENA
+            if security_decision.risky
+            else RagKnowledgeSourceStatus.ERRO
+        )
+        source.eligibility_reason = (
+            "PROMPT_INJECTION_DETECTED"
+            if security_decision.risky
+            else "CONTENT_SECURITY_INDETERMINATE"
+        )
+        source.error_code = (
+            "CONTENT_SECURITY_REVIEW_REQUIRED"
+            if security_decision.risky
+            else "CONTENT_SECURITY_RETRY_REQUIRED"
+        )
         source.error_message = None
-        source.quarantined_at = datetime.now(UTC)
+        source.quarantined_at = (
+            datetime.now(UTC) if security_decision.risky else None
+        )
         _audit_decision(
             source,
-            "rag_operational_memory.quarantined",
+            (
+                "rag_operational_memory.quarantined"
+                if security_decision.risky
+                else "rag_operational_memory.security_indeterminate"
+            ),
             event_action=action,
         )
         return
@@ -1135,6 +1168,16 @@ def _purge_operational_source(
         if document is not None and document.tenant_id == source.tenant_id
         else []
     )
+    if document is not None and versions:
+        from app.rag.learning import invalidate_learning_for_source
+
+        invalidate_learning_for_source(
+            source.tenant_id,
+            document.id,
+            [version.id for version in versions],
+            versions[-1].created_by_id,
+            "FONTE_OPERACIONAL_PURGADA",
+        )
     if document is not None:
         document.active = False
         db.session.flush()
