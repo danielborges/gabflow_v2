@@ -14,7 +14,10 @@ from urllib.request import Request, urlopen
 
 from flask import current_app
 from sqlalchemy import delete, func, insert, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.electoral.coverage import validate_election_cycle
 from app.electoral.text import normalize_search
 from app.extensions import db
 from app.models import (
@@ -32,7 +35,7 @@ from app.models import (
     OutboxEvent,
 )
 
-PARSER_VERSION = "tse-munzona-v2"
+PARSER_VERSION = "tse-munzona-v3"
 OFFICIAL_SOURCE_HOSTS = {"cdn.tse.jus.br", "dadosabertos.tse.jus.br"}
 IMPORTED_EVENT = "electoral.dataset.imported"
 PUBLISHED_EVENT = "electoral.dataset.published"
@@ -102,30 +105,46 @@ def import_dataset_archive(
             ElectoralDatasetVersion.parser_version == PARSER_VERSION,
         )
     ).scalar_one_or_none()
-    if existing is not None:
+    resumable = existing is not None and existing.status in {
+        ElectoralDatasetStatus.DOWNLOADED,
+        ElectoralDatasetStatus.PARSED,
+    }
+    if existing is not None and not resumable:
         return existing, True
 
-    raw_path = _store_raw_archive(path, source_hash)
-    now = datetime.now(UTC)
-    dataset = ElectoralDatasetVersion(
-        source_name="Tribunal Superior Eleitoral - Dados Abertos",
-        source_url=source_url,
-        source_hash=source_hash,
-        source_format="ZIP_CSV",
-        parser_version=PARSER_VERSION,
-        coverage_key=coverage_key,
-        coverage=values,
-        source_metadata={"license": "CC-BY", "official": True},
-        validation_manifest={},
-        raw_storage_path=str(raw_path),
-        status=ElectoralDatasetStatus.DOWNLOADED,
-        downloaded_at=now,
-        **values,
-    )
-    db.session.add(dataset)
-    db.session.commit()
+    if existing is None:
+        raw_path = _store_raw_archive(path, source_hash)
+        now = datetime.now(UTC)
+        dataset = ElectoralDatasetVersion(
+            source_name="Tribunal Superior Eleitoral - Dados Abertos",
+            source_url=source_url,
+            source_hash=source_hash,
+            source_format="ZIP_CSV",
+            parser_version=PARSER_VERSION,
+            coverage_key=coverage_key,
+            coverage=values,
+            source_metadata={"license": "CC-BY", "official": True},
+            validation_manifest={},
+            raw_storage_path=str(raw_path),
+            status=ElectoralDatasetStatus.DOWNLOADED,
+            downloaded_at=now,
+            **values,
+        )
+        db.session.add(dataset)
+        db.session.commit()
+    else:
+        dataset = existing
     try:
-        manifest = _stage_archive(dataset, path, expected_total_votes)
+        if dataset.status == ElectoralDatasetStatus.PARSED:
+            manifest = dataset.validation_manifest
+        else:
+            db.session.execute(
+                delete(ElectoralStagingResult).where(
+                    ElectoralStagingResult.dataset_version_id == dataset.id
+                )
+            )
+            db.session.commit()
+            manifest = _stage_archive(dataset, path, expected_total_votes)
         _promote_staging(dataset)
         dataset.status = ElectoralDatasetStatus.VALIDATED
         dataset.validated_at = datetime.now(UTC)
@@ -178,6 +197,7 @@ def _stage_archive(
     batch_size = current_app.config["ELECTORAL_IMPORT_BATCH_SIZE"]
     batch = []
     matched = invalid = total_votes = 0
+    office_codes = set()
     error_samples = []
     with zipfile.ZipFile(path) as archive:
         infos = [info for info in archive.infolist() if info.filename.lower().endswith(".csv")]
@@ -186,28 +206,39 @@ def _stage_archive(
         state_partition = [
             info for info in infos if info.filename.lower().endswith(f"_{dataset.uf.lower()}.csv")
         ]
+        selected_infos = []
         if state_partition:
-            infos = state_partition
+            selected_infos.extend((info, False) for info in state_partition)
+            national_partition = [
+                info for info in infos if info.filename.lower().endswith("_brasil.csv")
+            ]
+            if dataset.election_scope == "general":
+                selected_infos.extend((info, True) for info in national_partition)
         else:
             national_partition = [
                 info for info in infos if info.filename.lower().endswith("_brasil.csv")
             ]
             if national_partition:
-                infos = national_partition
-        uncompressed = sum(info.file_size for info in infos)
+                selected_infos.extend((info, False) for info in national_partition)
+        if not selected_infos:
+            selected_infos.extend((info, False) for info in infos)
+        uncompressed = sum(info.file_size for info, _ in selected_infos)
         if uncompressed > current_app.config["ELECTORAL_MAX_UNCOMPRESSED_BYTES"]:
             raise ElectoralImportError("Conteudo descompactado excede o limite configurado.")
         row_number = 0
-        for info in infos:
+        for info, president_only in selected_infos:
             with archive.open(info) as raw:
                 reader = csv.DictReader(io.TextIOWrapper(raw, encoding="latin-1"), delimiter=";")
                 for source_row in reader:
                     row_number += 1
-                    if not _matches_coverage(source_row, dataset):
+                    if not _matches_coverage(source_row, dataset) or (
+                        president_only and _clean(source_row.get("CD_CARGO")) != "1"
+                    ):
                         continue
                     matched += 1
                     try:
                         canonical = _canonical_row(source_row, dataset)
+                        office_codes.add(canonical["officeCode"])
                         total_votes += canonical["votes"]
                         validation_error = None
                     except ValueError as error:
@@ -256,7 +287,9 @@ def _stage_archive(
         "errorSamples": error_samples,
         "qualityScore": quality,
         "parserVersion": PARSER_VERSION,
-        "sourceFiles": [info.filename for info in infos],
+        "sourceFiles": [info.filename for info, _ in selected_infos],
+        "officeCodes": sorted(office_codes, key=int),
+        "granularities": ["municipality", "electoral_zone"],
     }
     dataset.validation_manifest = manifest
     db.session.commit()
@@ -270,23 +303,24 @@ def _stage_archive(
 
 
 def _promote_staging(dataset: ElectoralDatasetVersion) -> None:
+    batch_size = current_app.config["ELECTORAL_IMPORT_BATCH_SIZE"]
     offices = {item.code: item for item in db.session.scalars(select(ElectoralOffice))}
     elections = {}
     parties = {}
     candidates = {}
     candidacies = {}
     territories = {}
-    results = {}
-    rows = db.session.execute(
-        select(ElectoralStagingResult)
+    result_batch = {}
+    rows = db.session.scalars(
+        select(ElectoralStagingResult.canonical_data)
         .where(
             ElectoralStagingResult.dataset_version_id == dataset.id,
             ElectoralStagingResult.validation_error.is_(None),
         )
         .order_by(ElectoralStagingResult.row_number)
-    ).scalars()
-    for staged in rows:
-        row = staged.canonical_data
+        .execution_options(yield_per=batch_size)
+    )
+    for row in rows:
         office = offices.get(row["officeCode"])
         if office is None:
             office = ElectoralOffice(code=row["officeCode"], name=row["officeName"])
@@ -364,20 +398,12 @@ def _promote_staging(dataset: ElectoralDatasetVersion) -> None:
             db.session.flush()
             territories[territory_key] = territory
         result_key = (election.id, candidacy.id, territory.id)
-        result = results.get(result_key)
-        if result is None:
-            result = ElectoralResult(
-                dataset_version_id=dataset.id,
-                election_id=election.id,
-                candidacy_id=candidacy.id,
-                territory_id=territory.id,
-                votes=row["votes"],
-                calculation_metadata={"sourceField": "QT_VOTOS_NOMINAIS"},
-            )
-            db.session.add(result)
-            results[result_key] = result
-        else:
-            result.votes += row["votes"]
+        result_batch[result_key] = result_batch.get(result_key, 0) + row["votes"]
+        if len(result_batch) >= batch_size:
+            _upsert_result_batch(dataset.id, result_batch)
+            result_batch.clear()
+    if result_batch:
+        _upsert_result_batch(dataset.id, result_batch)
     db.session.flush()
     promoted_votes = (
         db.session.scalar(
@@ -391,17 +417,55 @@ def _promote_staging(dataset: ElectoralDatasetVersion) -> None:
         raise ElectoralImportError("Total promovido diverge do staging validado.")
 
 
+def _upsert_result_batch(dataset_id, result_batch: dict) -> None:
+    values = [
+        {
+            "id": uuid.uuid4(),
+            "dataset_version_id": dataset_id,
+            "election_id": election_id,
+            "candidacy_id": candidacy_id,
+            "territory_id": territory_id,
+            "votes": votes,
+            "calculation_metadata": {"sourceField": "QT_VOTOS_NOMINAIS"},
+        }
+        for (election_id, candidacy_id, territory_id), votes in result_batch.items()
+    ]
+    dialect = db.session.get_bind().dialect.name
+    insert_factory = sqlite_insert if dialect == "sqlite" else postgresql_insert
+    statement = insert_factory(ElectoralResult).values(values)
+    statement = statement.on_conflict_do_update(
+        index_elements=[
+            ElectoralResult.dataset_version_id,
+            ElectoralResult.election_id,
+            ElectoralResult.candidacy_id,
+            ElectoralResult.territory_id,
+        ],
+        set_={"votes": ElectoralResult.votes + statement.excluded.votes},
+    )
+    db.session.execute(statement)
+
+
 def _publish_dataset(dataset: ElectoralDatasetVersion) -> None:
-    previous = db.session.execute(
-        select(ElectoralDatasetVersion).where(
-            ElectoralDatasetVersion.id != dataset.id,
-            ElectoralDatasetVersion.status == ElectoralDatasetStatus.PUBLISHED,
-            ElectoralDatasetVersion.election_year == dataset.election_year,
-            ElectoralDatasetVersion.election_scope == dataset.election_scope,
-            ElectoralDatasetVersion.uf == dataset.uf,
-            ElectoralDatasetVersion.office_code == dataset.office_code,
+    same_cycle = [
+        ElectoralDatasetVersion.id != dataset.id,
+        ElectoralDatasetVersion.status == ElectoralDatasetStatus.PUBLISHED,
+        ElectoralDatasetVersion.election_year == dataset.election_year,
+        ElectoralDatasetVersion.election_scope == dataset.election_scope,
+        ElectoralDatasetVersion.uf == dataset.uf,
+    ]
+    if dataset.office_code is not None:
+        broad = db.session.scalar(
+            select(ElectoralDatasetVersion).where(
+                *same_cycle,
+                ElectoralDatasetVersion.office_code.is_(None),
+            )
         )
-    ).scalars()
+        if broad is not None:
+            raise ElectoralImportError(
+                "Uma versao completa ja cobre todos os cargos deste ciclo e UF."
+            )
+        same_cycle.append(ElectoralDatasetVersion.office_code == dataset.office_code)
+    previous = db.session.scalars(select(ElectoralDatasetVersion).where(*same_cycle))
     for version in previous:
         version.status = ElectoralDatasetStatus.SUPERSEDED
     dataset.status = ElectoralDatasetStatus.PUBLISHED
@@ -483,8 +547,12 @@ def _coverage_values(year, scope, uf, office_code) -> dict:
     scope = str(scope).strip().lower()
     uf = str(uf).strip().upper()
     office_code = str(office_code).strip() if office_code else None
-    if year < 2012 or scope not in {"municipal", "general"} or len(uf) != 2:
+    if len(uf) != 2:
         raise ElectoralImportError("Cobertura eleitoral invalida.")
+    try:
+        validate_election_cycle(year, scope)
+    except ValueError as error:
+        raise ElectoralImportError(str(error)) from error
     return {
         "election_year": year,
         "election_scope": scope,

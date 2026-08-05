@@ -1,6 +1,7 @@
 import uuid
 
-from sqlalchemy import String, cast, func, literal, or_, select
+from sqlalchemy import String, cast, func, literal, or_, select, tuple_
+from sqlalchemy.orm import aliased
 
 from app.electoral.text import normalize_search
 from app.extensions import db
@@ -16,13 +17,29 @@ from app.models import (
     ElectoralOffice,
     ElectoralParty,
     ElectoralResult,
+    ElectoralSectionResult,
+    ElectoralTerritorialDatasetVersion,
+    ElectoralTerritorialUnit,
     ElectoralTerritory,
     ElectoralTerritoryCrosswalk,
 )
 
-AVAILABLE_LEVELS = ("municipality", "electoral_zone")
+AVAILABLE_LEVELS = (
+    "municipality",
+    "electoral_zone",
+    "neighborhood",
+    "polling_place",
+    "section",
+)
+BASE_LEVELS = ("municipality", "electoral_zone")
 COMPARISON_MIN_CANDIDATES = 2
 COMPARISON_MAX_CANDIDATES = 5
+
+
+class TerritorialLevelUnavailable(ValueError):
+    def __init__(self, available_levels: list[str]):
+        super().__init__("Nivel territorial indisponivel para este dataset.")
+        self.available_levels = available_levels
 
 
 def search_candidates(
@@ -141,17 +158,42 @@ def candidate_results(
         return None
     candidate, candidacy, party, office, election, dataset = context
 
+    territorial_version = db.session.scalar(
+        select(ElectoralTerritorialDatasetVersion)
+        .where(
+            ElectoralTerritorialDatasetVersion.dataset_version_id == dataset.id,
+            ElectoralTerritorialDatasetVersion.status == ElectoralDatasetStatus.PUBLISHED,
+        )
+        .order_by(ElectoralTerritorialDatasetVersion.published_at.desc())
+    )
+    available_levels = list(BASE_LEVELS)
+    if territorial_version is not None:
+        available_levels.extend(("neighborhood", "polling_place", "section"))
+    if level not in available_levels:
+        raise TerritorialLevelUnavailable(available_levels)
+
     if parent_territory_id and not municipality_code:
         municipality_code = _municipality_code_for_id(dataset.id, parent_territory_id)
         if municipality_code is None:
             return None
 
-    aggregated = _territorial_aggregation(
-        dataset.id,
-        election.id,
-        candidacy.office_id,
-        level,
-        municipality_code,
+    aggregated = (
+        _territorial_aggregation(
+            dataset.id,
+            election.id,
+            candidacy.office_id,
+            level,
+            municipality_code,
+        )
+        if level in BASE_LEVELS
+        else _detailed_territorial_aggregation(
+            territorial_version.id,
+            election.id,
+            candidacy.office_id,
+            candidacy.id,
+            level,
+            municipality_code,
+        )
     )
     ranked = select(
         *aggregated.c,
@@ -190,8 +232,14 @@ def candidate_results(
         territory_id = (
             str(row["territory_id"])
             if row["territory_id"]
-            else str(municipality_territory_id(dataset.id, row["territory_key"]))
+            else str(virtual_territory_id(dataset.id, level, row["territory_key"]))
         )
+        mapping_warning = None
+        if row["derived"]:
+            mapping_warning = (
+                "Bairro derivado do cadastro oficial do local de votacao; "
+                "nao representa limite geografico oficial."
+            )
         items.append(
             {
                 "territory_id": territory_id,
@@ -202,7 +250,9 @@ def candidate_results(
                 "share": round(int(row["votes"]) / denominator, 8) if denominator else 0,
                 "rank": int(row["candidate_rank"]),
                 "denominator_value": denominator,
-                "quality_warning": warning,
+                "quality_warning": mapping_warning or warning,
+                "derived": bool(row["derived"]),
+                "mapping_type": row["mapping_type"],
             }
         )
     candidate_total = (
@@ -221,8 +271,18 @@ def candidate_results(
         "source_hash": dataset.source_hash,
         "dataset_version": str(dataset.id),
         "quality_score": dataset.quality_score,
-        "available_levels": list(AVAILABLE_LEVELS),
+        "available_levels": available_levels,
         "level": level,
+        "territorial_source": (
+            {
+                "version": str(territorial_version.id),
+                "section_source": territorial_version.section_source_url,
+                "location_source": territorial_version.location_source_url,
+                "parser_version": territorial_version.parser_version,
+            }
+            if territorial_version is not None
+            else None
+        ),
         "candidate_total_votes": int(candidate_total),
         "denominator": {
             "type": "valid_nominal_votes",
@@ -278,16 +338,19 @@ def compare_candidates(
 
     by_candidate = {}
     for candidate_id in candidate_ids:
-        result = candidate_results(
-            candidate_id,
-            election_id,
-            level,
-            municipality_code=municipality_code,
-            page=1,
-            per_page=100,
-            sort="name",
-            order="asc",
-        )
+        try:
+            result = candidate_results(
+                candidate_id,
+                election_id,
+                level,
+                municipality_code=municipality_code,
+                page=1,
+                per_page=100,
+                sort="name",
+                order="asc",
+            )
+        except TerritorialLevelUnavailable as error:
+            return None, f"{error} Disponiveis: {', '.join(error.available_levels)}."
         if result is None:
             return None, "Nao foi possivel calcular uma das candidaturas."
         by_candidate[str(candidate_id)] = result
@@ -303,6 +366,8 @@ def compare_candidates(
                     "territory_name": item["territory_name"],
                     "level": level,
                     "denominator_value": item["denominator_value"],
+                    "derived": item["derived"],
+                    "mapping_type": item["mapping_type"],
                     "series": [],
                 },
             )
@@ -323,6 +388,7 @@ def compare_candidates(
         ],
         "dataset_version": next(iter(by_candidate.values()))["dataset_version"],
         "source": next(iter(by_candidate.values()))["source"],
+        "source_hash": next(iter(by_candidate.values()))["source_hash"],
         "level": level,
         "denominator": next(iter(by_candidate.values()))["denominator"],
         "comparability": {"compatible": True, "warnings": []},
@@ -636,6 +702,13 @@ def municipality_territory_id(dataset_id: uuid.UUID, municipality_code: str) -> 
     )
 
 
+def virtual_territory_id(dataset_id: uuid.UUID, level: str, territory_key: str) -> uuid.UUID:
+    return uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"gabflow:electoral:{dataset_id}:{level}:{territory_key}",
+    )
+
+
 def _municipality_code_for_id(dataset_id: uuid.UUID, territory_id: uuid.UUID) -> str | None:
     codes = db.session.execute(
         select(ElectoralTerritory.municipality_code)
@@ -687,9 +760,157 @@ def _territorial_aggregation(dataset_id, election_id, office_id, level, municipa
             territory_id.label("territory_id"),
             ElectoralResult.candidacy_id.label("candidacy_id"),
             func.sum(ElectoralResult.votes).label("votes"),
+            literal(False).label("derived"),
+            literal("OFFICIAL").label("mapping_type"),
         )
         .join(ElectoralTerritory, ElectoralTerritory.id == ElectoralResult.territory_id)
         .join(ElectoralCandidacy, ElectoralCandidacy.id == ElectoralResult.candidacy_id)
+        .where(*filters)
+        .group_by(*group_by)
+        .subquery()
+    )
+
+
+def _detailed_territorial_aggregation(
+    territorial_version_id,
+    election_id,
+    office_id,
+    target_candidacy_id,
+    level,
+    municipality_code,
+):
+    filters = [
+        ElectoralSectionResult.territorial_dataset_version_id == territorial_version_id,
+        ElectoralCandidacy.election_id == election_id,
+        ElectoralCandidacy.office_id == office_id,
+    ]
+    if municipality_code:
+        filters.append(ElectoralTerritorialUnit.municipality_code == municipality_code)
+
+    target_unit = aliased(ElectoralTerritorialUnit)
+    target_rows = (
+        select(target_unit)
+        .join(
+            ElectoralSectionResult,
+            ElectoralSectionResult.territory_id == target_unit.id,
+        )
+        .where(
+            ElectoralSectionResult.territorial_dataset_version_id
+            == territorial_version_id,
+            ElectoralSectionResult.candidacy_id == target_candidacy_id,
+        )
+    )
+    if municipality_code:
+        target_rows = target_rows.where(target_unit.municipality_code == municipality_code)
+
+    if level == "neighborhood":
+        neighborhood = func.coalesce(ElectoralTerritorialUnit.neighborhood, "Nao informado")
+        territory_key = (
+            ElectoralTerritorialUnit.municipality_code
+            + literal(":bairro:")
+            + neighborhood
+        )
+        territory_name = (
+            ElectoralTerritorialUnit.municipality_name
+            + literal(" · Bairro ")
+            + neighborhood
+        )
+        territory_id = cast(literal(None), String)
+        derived = literal(True)
+        mapping_type = literal("DERIVED")
+        group_by = [
+            ElectoralTerritorialUnit.municipality_code,
+            ElectoralTerritorialUnit.municipality_name,
+            neighborhood,
+            ElectoralSectionResult.candidacy_id,
+        ]
+        target_keys = target_rows.with_only_columns(
+            target_unit.municipality_code,
+            func.coalesce(target_unit.neighborhood, "Nao informado"),
+        )
+        filters.append(
+            tuple_(
+                ElectoralTerritorialUnit.municipality_code,
+                func.coalesce(ElectoralTerritorialUnit.neighborhood, "Nao informado"),
+            ).in_(target_keys)
+        )
+    elif level == "polling_place":
+        territory_key = (
+            ElectoralTerritorialUnit.municipality_code
+            + literal(":")
+            + cast(ElectoralTerritorialUnit.zone, String)
+            + literal(":")
+            + cast(ElectoralTerritorialUnit.polling_place_number, String)
+        )
+        territory_name = (
+            ElectoralTerritorialUnit.polling_place_name
+            + literal(" · Local ")
+            + cast(ElectoralTerritorialUnit.polling_place_number, String)
+        )
+        territory_id = cast(literal(None), String)
+        derived = literal(False)
+        mapping_type = literal("OFFICIAL")
+        group_by = [
+            ElectoralTerritorialUnit.municipality_code,
+            ElectoralTerritorialUnit.zone,
+            ElectoralTerritorialUnit.polling_place_number,
+            ElectoralTerritorialUnit.polling_place_name,
+            ElectoralSectionResult.candidacy_id,
+        ]
+        target_keys = target_rows.with_only_columns(
+            target_unit.municipality_code,
+            target_unit.zone,
+            target_unit.polling_place_number,
+        )
+        filters.append(
+            tuple_(
+                ElectoralTerritorialUnit.municipality_code,
+                ElectoralTerritorialUnit.zone,
+                ElectoralTerritorialUnit.polling_place_number,
+            ).in_(target_keys)
+        )
+    else:
+        territory_key = (
+            ElectoralTerritorialUnit.municipality_code
+            + literal(":")
+            + cast(ElectoralTerritorialUnit.zone, String)
+            + literal(":")
+            + cast(ElectoralTerritorialUnit.section, String)
+        )
+        territory_name = (
+            ElectoralTerritorialUnit.polling_place_name
+            + literal(" · Seção ")
+            + cast(ElectoralTerritorialUnit.section, String)
+        )
+        territory_id = ElectoralTerritorialUnit.id
+        derived = literal(False)
+        mapping_type = ElectoralTerritorialUnit.mapping_type
+        group_by = [
+            ElectoralTerritorialUnit.id,
+            ElectoralTerritorialUnit.municipality_code,
+            ElectoralTerritorialUnit.zone,
+            ElectoralTerritorialUnit.section,
+            ElectoralTerritorialUnit.polling_place_name,
+            ElectoralTerritorialUnit.mapping_type,
+            ElectoralSectionResult.candidacy_id,
+        ]
+        target_keys = target_rows.with_only_columns(target_unit.id)
+        filters.append(ElectoralTerritorialUnit.id.in_(target_keys))
+    return (
+        select(
+            territory_key.label("territory_key"),
+            territory_name.label("territory_name"),
+            territory_id.label("territory_id"),
+            ElectoralSectionResult.candidacy_id.label("candidacy_id"),
+            func.sum(ElectoralSectionResult.votes).label("votes"),
+            derived.label("derived"),
+            mapping_type.label("mapping_type"),
+        )
+        .join(
+            ElectoralTerritorialUnit,
+            ElectoralTerritorialUnit.id == ElectoralSectionResult.territory_id,
+        )
+        .join(ElectoralCandidacy, ElectoralCandidacy.id == ElectoralSectionResult.candidacy_id)
         .where(*filters)
         .group_by(*group_by)
         .subquery()

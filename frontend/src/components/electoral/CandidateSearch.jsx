@@ -75,7 +75,16 @@ export function CandidateSearch({
       {response?.items?.length > 0 && (
         <>
         <div className="electoral-table-wrap">
-          <table>
+          <table className="candidate-results-table">
+            <colgroup>
+              <col className="candidate-column" />
+              <col className="number-column" />
+              <col className="party-column" />
+              <col className="office-column" />
+              <col className="comparison-column" />
+              <col className="favorite-column" />
+              <col className="action-column" />
+            </colgroup>
             <caption>{response.total} candidatura(s) encontrada(s)</caption>
             <thead>
               <tr>
@@ -91,11 +100,11 @@ export function CandidateSearch({
             <tbody>
               {response.items.map((candidate) => (
                 <tr key={candidate.candidacy_id}>
-                  <td><strong>{candidate.ballot_name}</strong><small>{candidate.full_name}</small></td>
-                  <td>{candidate.number}</td>
-                  <td>{candidate.party.acronym} · {candidate.party.number}</td>
-                  <td>{candidate.office.name}</td>
-                  <td>
+                  <td data-label="Candidatura"><strong>{candidate.ballot_name}</strong><small>{candidate.full_name}</small></td>
+                  <td data-label="Número">{candidate.number}</td>
+                  <td data-label="Partido">{candidate.party.acronym} · {candidate.party.number}</td>
+                  <td data-label="Cargo">{candidate.office.name}</td>
+                  <td data-label="Comparar">
                     <label>
                       <input
                         type="checkbox"
@@ -106,8 +115,8 @@ export function CandidateSearch({
                       Incluir
                     </label>
                   </td>
-                  <td><button type="button" className="secondary-button" aria-label={`${favorites.some((item) => item.target_id === candidate.id) ? "Remover dos" : "Adicionar aos"} favoritos: ${candidate.ballot_name}`} onClick={() => onToggleFavorite(candidate)}>{favorites.some((item) => item.target_id === candidate.id) ? "★" : "☆"}</button></td>
-                  <td>
+                  <td data-label="Favorito"><button type="button" className="secondary-button" aria-label={`${favorites.some((item) => item.target_id === candidate.id) ? "Remover dos" : "Adicionar aos"} favoritos: ${candidate.ballot_name}`} onClick={() => onToggleFavorite(candidate)}>{favorites.some((item) => item.target_id === candidate.id) ? "★" : "☆"}</button></td>
+                  <td data-label="Ação">
                     <button
                       type="button"
                       className={candidate.id === selectedCandidateId ? "secondary-button active" : "secondary-button"}

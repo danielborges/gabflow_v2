@@ -5,11 +5,15 @@ import { Login } from "./components/Login";
 import { PlatformAdminWorkspace } from "./components/PlatformAdminWorkspace";
 import { PublicRequestForm } from "./components/PublicRequestForm";
 import { Workspace } from "./components/Workspace";
+import { SharedScenarioPage } from "./components/electoral/SharedScenarioPage";
 
 export default function App() {
   const publicFormMatch = window.location.pathname.match(/^\/publico\/formularios\/([^/]+)/);
   const landingPath = window.location.pathname === "/landing";
   const loginPath = window.location.pathname === "/login";
+  const sharedScenarioMatch = window.location.pathname.match(
+    /^\/inteligencia-eleitoral\/cenarios\/compartilhado\/([^/]+)$/,
+  );
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -53,6 +57,10 @@ export default function App() {
 
   if (!user) {
     return <LandingPage />;
+  }
+
+  if (sharedScenarioMatch) {
+    return <SharedScenarioPage token={decodeURIComponent(sharedScenarioMatch[1])} />;
   }
 
   return user.role === "platform_admin" ? (

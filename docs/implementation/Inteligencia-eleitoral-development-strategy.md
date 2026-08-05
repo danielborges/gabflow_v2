@@ -348,6 +348,12 @@ Critério de saída do MVP:
 
 ### Incremento 5 — Inteligência integrada do mandato
 
+**Status em 2026-08-05:** concluído funcionalmente pelas releases 7.7, 7.8, 7.9, 8.10 e
+8.11. A 8.10 acrescenta crosswalk operacional revisado, entrega/histórico real de alertas
+e gestão visual do perfil versionado do ICT; a 8.11 fecha preferências analíticas,
+segmentos, briefing pré-visita, recorrência de relatórios e visualizações/rotas agregadas.
+A ativação fora do gabinete-piloto continua condicionada ao gate jurídico e operacional.
+
 - projeções agregadas de demandas, SLA, agenda, ações e entregas;
 - limiar padrão de 10 e generalização de categorias sensíveis;
 - snapshots reproduzíveis por período e configuração;
@@ -356,6 +362,12 @@ Critério de saída do MVP:
 - nenhuma recomendação usa baixa votação para priorizar atendimento público.
 
 ### Incremento 6 — IA explicável
+
+**Status em 2026-08-04:** concluído tecnicamente pelas Releases 8.0, 8.1 e 8.4. A análise
+determinística continua sendo a base quantitativa, enquanto a GabIA Eleitoral usa um LLM
+local para redigir afirmações citadas e perguntas de investigação sobre evidências
+permitidas. A saída generativa passa pelo contrato estruturado, pela validação automática
+e pela decisão humana; indisponibilidade do modelo aciona fallback determinístico explícito.
 
 - políticas de recusa para inferência individual e atributos sensíveis;
 - análise individual/comparativa com fatos, cálculos, hipóteses e limitações;
@@ -369,6 +381,15 @@ O RAG existente deve ser estendido por projeções estruturadas; resultados elei
 massivos não devem ser transformados indiscriminadamente em chunks vetoriais.
 
 ### Incremento 7 — Cenários e expansão
+
+**Status em 2026-08-04:** concluído tecnicamente pelas Releases 8.0, 8.2, 8.2.1, 8.3 e 8.5. O simulador
+territorial preserva o snapshot oficial e oferece cópia imutável com edição prévia,
+links revogáveis em tela dedicada somente leitura, gestão de validade e acessos,
+comparação territorial, sensibilidade parametrizável e intervalos determinísticos de
+premissas. A 8.3 acrescenta portfólios compatíveis, metas totais/territoriais, referência
+não preditiva, histórico e exportação auditável. A 8.5 transforma o motor em uma jornada
+autônoma: seleção interna de base, múltiplas premissas e prévia não persistida antes do
+salvamento. A expansão territorial permanece no backlog.
 
 - cenários imutáveis em relação ao resultado oficial;
 - premissas, autor, baseline, fórmulas, intervalos e disclaimer persistidos;
@@ -505,3 +526,16 @@ Uma história eleitoral só pode ser encerrada quando tiver, conforme aplicável
 - métricas, logs e runbook operacional;
 - fonte, versão, denominador e metodologia visíveis;
 - documentação e revisão de privacidade concluídas.
+## 12. Decisão de produto — contexto eleitoral próprio
+
+Desde a Release 8.9, o catálogo operacional é derivado das candidaturas próprias
+verificadas do parlamentar titular. Resultados, Comparações, GabIA, Simulador e
+Relatórios não usam o catálogo global diretamente. Assessores delegados operam no
+mesmo contexto do titular.
+
+O catálogo publicado completo fica isolado na área **Explorar outras eleições**.
+A identificação primária é automática e determinística: o cadastro oficial de
+candidaturas do TSE é sincronizado, o CPF é transformado em HMAC-SHA256 versionado e
+reconciliado com o CPF cadastrado no GabFlow. Nenhum CPF é exposto na API, logs ou
+auditoria. Confirmação manual é uma contingência auditada para CPF ausente, fonte
+indisponível ou divergência; nenhuma heurística de nome ou partido concede vínculo.

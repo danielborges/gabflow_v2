@@ -11,21 +11,28 @@ from app.extensions import db
 from app.models import (
     AgendaEvent,
     AgendaEventStatus,
+    ElectoralAlertDelivery,
+    ElectoralAlertPreference,
     ElectoralCandidacy,
     ElectoralCandidate,
     ElectoralCoverageProfile,
     ElectoralElection,
     ElectoralMandateSnapshot,
     ElectoralModuleSettings,
+    ElectoralOperationalTerritoryLink,
     ElectoralParty,
+    ElectoralPublicCommitment,
     ElectoralResult,
+    ElectoralTerritory,
     LegislativeDraft,
     LegislativeDraftRequest,
+    OutboxEvent,
     OversightAction,
     OversightActionStatus,
     RequestStatus,
     ServiceRequest,
     Territory,
+    User,
 )
 
 DEFAULT_WEIGHTS = {
@@ -47,6 +54,16 @@ DEFAULT_SENSITIVE_CATEGORIES = [
     "deficiencia",
 ]
 RESOLVED_STATUSES = {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA}
+ALERT_TYPES = {
+    "SLA_DEGRADED",
+    "SLA_OVERDUE",
+    "AGENDA_GAP",
+    "OVERSIGHT_GAP",
+    "COMMITMENT_OVERDUE",
+}
+ALERT_CHANNELS = {"IN_APP", "EMAIL"}
+ALERT_FREQUENCIES = {"IMMEDIATE", "DAILY", "WEEKLY"}
+ELECTORAL_ALERT_EMAIL_EVENT = "EntregaAlertaEleitoralEmail"
 
 
 class MandateIntelligenceError(ValueError):
@@ -54,15 +71,19 @@ class MandateIntelligenceError(ValueError):
 
 
 def active_profile(tenant_id: uuid.UUID, mandate_id: uuid.UUID):
-    return db.session.execute(
-        select(ElectoralCoverageProfile)
-        .where(
-            ElectoralCoverageProfile.tenant_id == tenant_id,
-            ElectoralCoverageProfile.mandate_id == mandate_id,
-            ElectoralCoverageProfile.active.is_(True),
+    return (
+        db.session.execute(
+            select(ElectoralCoverageProfile)
+            .where(
+                ElectoralCoverageProfile.tenant_id == tenant_id,
+                ElectoralCoverageProfile.mandate_id == mandate_id,
+                ElectoralCoverageProfile.active.is_(True),
+            )
+            .order_by(ElectoralCoverageProfile.version.desc())
         )
-        .order_by(ElectoralCoverageProfile.version.desc())
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
 
 def ensure_default_profile(tenant_id, mandate_id, user_id) -> ElectoralCoverageProfile:
@@ -106,12 +127,15 @@ def create_profile(tenant_id, mandate_id, user_id, data: dict) -> ElectoralCover
     current = active_profile(tenant_id, mandate_id)
     if current:
         current.active = False
-    version = db.session.scalar(
-        select(func.max(ElectoralCoverageProfile.version)).where(
-            ElectoralCoverageProfile.tenant_id == tenant_id,
-            ElectoralCoverageProfile.mandate_id == mandate_id,
+    version = (
+        db.session.scalar(
+            select(func.max(ElectoralCoverageProfile.version)).where(
+                ElectoralCoverageProfile.tenant_id == tenant_id,
+                ElectoralCoverageProfile.mandate_id == mandate_id,
+            )
         )
-    ) or 0
+        or 0
+    )
     profile = ElectoralCoverageProfile(
         tenant_id=tenant_id,
         mandate_id=mandate_id,
@@ -152,62 +176,111 @@ def generate_snapshot(
     end_at = datetime.combine(period_end + timedelta(days=1), time.min, tzinfo=UTC)
     metric_cutoff = min(cutoff, end_at - timedelta(microseconds=1))
 
-    requests = list(db.session.execute(
-        select(ServiceRequest).where(
-            ServiceRequest.tenant_id == tenant_id,
-            ServiceRequest.created_at >= start_at,
-            ServiceRequest.created_at < end_at,
-            ServiceRequest.created_at <= cutoff,
-        )
-    ).scalars())
-    agenda = list(db.session.execute(
-        select(AgendaEvent).where(
-            AgendaEvent.tenant_id == tenant_id,
-            AgendaEvent.starts_at >= start_at,
-            AgendaEvent.starts_at < end_at,
-            AgendaEvent.created_at <= cutoff,
-            AgendaEvent.status != AgendaEventStatus.CANCELADO,
-        )
-    ).scalars())
-    actions = list(db.session.execute(
-        select(OversightAction).where(
-            OversightAction.tenant_id == tenant_id,
-            func.coalesce(OversightAction.occurred_at, OversightAction.created_at) >= start_at,
-            func.coalesce(OversightAction.occurred_at, OversightAction.created_at) < end_at,
-            OversightAction.created_at <= cutoff,
-            OversightAction.status != OversightActionStatus.CANCELADA,
-        )
-    ).scalars())
-    draft_rows = list(db.session.execute(
-        select(LegislativeDraft, LegislativeDraftRequest.request_id)
-        .outerjoin(LegislativeDraftRequest, LegislativeDraftRequest.draft_id == LegislativeDraft.id)
-        .where(
-            LegislativeDraft.tenant_id == tenant_id,
-            LegislativeDraft.created_at >= start_at,
-            LegislativeDraft.created_at < end_at,
-            LegislativeDraft.created_at <= cutoff,
-        )
-    ).all())
-    territories = list(db.session.execute(
-        select(Territory).where(Territory.tenant_id == tenant_id, Territory.active.is_(True))
-        .order_by(Territory.name)
-    ).scalars())
+    requests = list(
+        db.session.execute(
+            select(ServiceRequest).where(
+                ServiceRequest.tenant_id == tenant_id,
+                ServiceRequest.created_at >= start_at,
+                ServiceRequest.created_at < end_at,
+                ServiceRequest.created_at <= cutoff,
+            )
+        ).scalars()
+    )
+    agenda = list(
+        db.session.execute(
+            select(AgendaEvent).where(
+                AgendaEvent.tenant_id == tenant_id,
+                AgendaEvent.starts_at >= start_at,
+                AgendaEvent.starts_at < end_at,
+                AgendaEvent.created_at <= cutoff,
+                AgendaEvent.status != AgendaEventStatus.CANCELADO,
+            )
+        ).scalars()
+    )
+    actions = list(
+        db.session.execute(
+            select(OversightAction).where(
+                OversightAction.tenant_id == tenant_id,
+                func.coalesce(OversightAction.occurred_at, OversightAction.created_at) >= start_at,
+                func.coalesce(OversightAction.occurred_at, OversightAction.created_at) < end_at,
+                OversightAction.created_at <= cutoff,
+                OversightAction.status != OversightActionStatus.CANCELADA,
+            )
+        ).scalars()
+    )
+    draft_rows = list(
+        db.session.execute(
+            select(LegislativeDraft, LegislativeDraftRequest.request_id)
+            .outerjoin(
+                LegislativeDraftRequest, LegislativeDraftRequest.draft_id == LegislativeDraft.id
+            )
+            .where(
+                LegislativeDraft.tenant_id == tenant_id,
+                LegislativeDraft.created_at >= start_at,
+                LegislativeDraft.created_at < end_at,
+                LegislativeDraft.created_at <= cutoff,
+            )
+        ).all()
+    )
+    territories = list(
+        db.session.execute(
+            select(Territory)
+            .where(Territory.tenant_id == tenant_id, Territory.active.is_(True))
+            .order_by(Territory.name)
+        ).scalars()
+    )
+    commitments = list(
+        db.session.execute(
+            select(ElectoralPublicCommitment).where(
+                ElectoralPublicCommitment.tenant_id == tenant_id,
+                ElectoralPublicCommitment.mandate_id == mandate_id,
+                ElectoralPublicCommitment.created_at < end_at,
+                ElectoralPublicCommitment.created_at <= cutoff,
+            )
+        ).scalars()
+    )
 
+    context = _electoral_context(election_id, candidate_id)
+    electoral_overlays = _electoral_overlays(
+        tenant_id,
+        mandate_id,
+        context.get("candidacy_id"),
+        context.get("dataset_version_id"),
+    )
     request_by_id = {item.id: item for item in requests}
     rows = [
         _territory_metrics(
-            None, "Mandato inteiro", requests, agenda, actions, draft_rows, request_by_id,
-            threshold, profile, metric_cutoff,
+            None,
+            "Mandato inteiro",
+            requests,
+            agenda,
+            actions,
+            draft_rows,
+            request_by_id,
+            commitments,
+            threshold,
+            profile,
+            metric_cutoff,
+            None,
         )
     ]
     rows.extend(
         _territory_metrics(
-            territory.id, territory.name, requests, agenda, actions, draft_rows, request_by_id,
-            threshold, profile, metric_cutoff,
+            territory.id,
+            territory.name,
+            requests,
+            agenda,
+            actions,
+            draft_rows,
+            request_by_id,
+            commitments,
+            threshold,
+            profile,
+            metric_cutoff,
+            electoral_overlays.get(territory.id),
         )
         for territory in territories
     )
-    context = _electoral_context(election_id, candidate_id)
     config = {
         "formula_code": profile.formula_code,
         "profile_version": profile.version,
@@ -283,9 +356,310 @@ def profile_data(profile: ElectoralCoverageProfile) -> dict:
     }
 
 
+def latest_snapshot(
+    tenant_id: uuid.UUID,
+    mandate_id: uuid.UUID,
+    *,
+    snapshot_id: uuid.UUID | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+) -> ElectoralMandateSnapshot | None:
+    statement = select(ElectoralMandateSnapshot).where(
+        ElectoralMandateSnapshot.tenant_id == tenant_id,
+        ElectoralMandateSnapshot.mandate_id == mandate_id,
+    )
+    if snapshot_id:
+        statement = statement.where(ElectoralMandateSnapshot.id == snapshot_id)
+    if period_start:
+        statement = statement.where(ElectoralMandateSnapshot.period_start == period_start)
+    if period_end:
+        statement = statement.where(ElectoralMandateSnapshot.period_end == period_end)
+    return (
+        db.session.execute(statement.order_by(ElectoralMandateSnapshot.created_at.desc()))
+        .scalars()
+        .first()
+    )
+
+
+def territory_overlay_data(snapshot: ElectoralMandateSnapshot, territory_id: uuid.UUID) -> dict:
+    row = next(
+        (
+            item
+            for item in snapshot.payload.get("territories", [])
+            if item.get("scope") == "territory" and item.get("territory_id") == str(territory_id)
+        ),
+        None,
+    )
+    if row is None:
+        raise MandateIntelligenceError("Território não encontrado no snapshot selecionado.")
+    return {
+        "snapshot": {
+            "id": str(snapshot.id),
+            "period_start": snapshot.period_start.isoformat(),
+            "period_end": snapshot.period_end.isoformat(),
+            "source_cutoff_at": snapshot.source_cutoff_at.isoformat(),
+            "config_hash": snapshot.config_hash,
+        },
+        "territory": row,
+        "formula": snapshot.payload.get("formula", {}),
+        "privacy": snapshot.payload.get("privacy", {}),
+        "electoral_context": snapshot.electoral_context,
+        "linkage": {
+            "level": "operational_territory",
+            "electoral_overlay_available": bool(row.get("electoral_overlay")),
+            "electoral_overlay": row.get("electoral_overlay"),
+            "reason": None if row.get("electoral_overlay") else (
+                "O território operacional não possui crosswalk oficial/revisado com uma "
+                "unidade eleitoral; resultados eleitorais permanecem no contexto jurisdicional."
+            ),
+        },
+    }
+
+
+def territory_briefing_data(snapshot: ElectoralMandateSnapshot, territory_id: uuid.UUID) -> dict:
+    overlay = territory_overlay_data(snapshot, territory_id)
+    row = overlay["territory"]
+    facts = []
+    if not row.get("suppressed"):
+        metrics = row.get("metrics") or {}
+        facts = [
+            {"label": "Demandas agregadas", "value": row.get("demand_count")},
+            {"label": "ICT", "value": (row.get("ict") or {}).get("score")},
+            {"label": "Resolvidas", "value": metrics.get("resolved")},
+            {"label": "SLA cumprido", "value": metrics.get("sla_rate")},
+            {"label": "Agendas realizadas", "value": metrics.get("agenda_realized")},
+            {
+                "label": "Entregas com evidência",
+                "value": metrics.get("deliveries_with_evidence"),
+            },
+        ]
+    return {
+        "draft": True,
+        "review_required": True,
+        "title": f"Briefing territorial — {row['territory_name']}",
+        "period": overlay["snapshot"],
+        "privacy": {
+            **overlay["privacy"],
+            "suppressed": bool(row.get("suppressed")),
+        },
+        "facts": facts,
+        "categories": row.get("categories", []) if not row.get("suppressed") else [],
+        "alerts": row.get("alert_events", []),
+        "public_commitments": row.get("public_commitments", {}),
+        "suggested_questions": [
+            "Quais entregas públicas possuem evidência verificável no período?",
+            "Quais gargalos de SLA exigem investigação operacional?",
+            "Quais compromissos públicos estão próximos do prazo?",
+        ],
+        "methodology_notice": (
+            "Rascunho baseado exclusivamente em dados agregados do mandato. "
+            "Não usa desempenho eleitoral para priorizar atendimento e exige revisão humana."
+        ),
+        "linkage": overlay["linkage"],
+    }
+
+
+def alert_preference(tenant_id, mandate_id, user_id) -> ElectoralAlertPreference | None:
+    return db.session.execute(
+        select(ElectoralAlertPreference).where(
+            ElectoralAlertPreference.tenant_id == tenant_id,
+            ElectoralAlertPreference.mandate_id == mandate_id,
+            ElectoralAlertPreference.user_id == user_id,
+        )
+    ).scalar_one_or_none()
+
+
+def alert_preference_data(item: ElectoralAlertPreference | None) -> dict:
+    return {
+        "enabled": item.enabled if item else True,
+        "channels": item.channels if item else ["IN_APP"],
+        "frequency": item.frequency if item else "DAILY",
+        "alert_types": item.alert_types if item else sorted(ALERT_TYPES),
+        "available_channels": sorted(ALERT_CHANNELS),
+        "available_frequencies": sorted(ALERT_FREQUENCIES),
+        "available_alert_types": sorted(ALERT_TYPES),
+        "updated_at": item.updated_at.isoformat() if item else None,
+    }
+
+
+def upsert_alert_preference(tenant_id, mandate_id, user_id, data: dict) -> ElectoralAlertPreference:
+    enabled = data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise MandateIntelligenceError("enabled deve ser verdadeiro ou falso.")
+    channels = data.get("channels", ["IN_APP"])
+    alert_types = data.get("alert_types", sorted(ALERT_TYPES))
+    frequency = str(data.get("frequency") or "DAILY").upper()
+    if not isinstance(channels, list) or not channels:
+        raise MandateIntelligenceError("Selecione ao menos um canal de alerta.")
+    channels = list(dict.fromkeys(str(item).upper() for item in channels))
+    if set(channels) - ALERT_CHANNELS:
+        raise MandateIntelligenceError("Canal de alerta inválido.")
+    if frequency not in ALERT_FREQUENCIES:
+        raise MandateIntelligenceError("Frequência de alerta inválida.")
+    if not isinstance(alert_types, list) or not alert_types:
+        raise MandateIntelligenceError("Selecione ao menos um tipo de alerta.")
+    alert_types = list(dict.fromkeys(str(item).upper() for item in alert_types))
+    if set(alert_types) - ALERT_TYPES:
+        raise MandateIntelligenceError("Tipo de alerta inválido.")
+    item = alert_preference(tenant_id, mandate_id, user_id)
+    if item is None:
+        item = ElectoralAlertPreference(
+            tenant_id=tenant_id,
+            mandate_id=mandate_id,
+            user_id=user_id,
+        )
+        db.session.add(item)
+    item.enabled = enabled
+    item.channels = channels
+    item.frequency = frequency
+    item.alert_types = alert_types
+    item.updated_at = datetime.now(UTC)
+    db.session.flush()
+    return item
+
+
+def alert_feed_data(
+    snapshot: ElectoralMandateSnapshot | None,
+    preference: ElectoralAlertPreference | None,
+) -> dict:
+    settings = alert_preference_data(preference)
+    if snapshot is None or not settings["enabled"]:
+        return {"preference": settings, "snapshot_id": None, "content": []}
+    allowed = set(settings["alert_types"])
+    content = []
+    for row in snapshot.payload.get("territories", []):
+        if row.get("scope") != "territory":
+            continue
+        for event in row.get("alert_events", []):
+            if event.get("type") in allowed:
+                content.append(
+                    {
+                        **event,
+                        "territory_id": row.get("territory_id"),
+                        "territory_name": row.get("territory_name"),
+                    }
+                )
+    return {
+        "preference": settings,
+        "snapshot_id": str(snapshot.id),
+        "source_cutoff_at": snapshot.source_cutoff_at.isoformat(),
+        "content": content,
+    }
+
+
+def dispatch_alert_deliveries(
+    tenant_id, mandate_id, *, snapshot=None, frequencies=None, now=None
+) -> int:
+    now = now or datetime.now(UTC)
+    snapshot = snapshot or latest_snapshot(tenant_id, mandate_id)
+    if snapshot is None:
+        return 0
+    statement = select(ElectoralAlertPreference).where(
+        ElectoralAlertPreference.tenant_id == tenant_id,
+        ElectoralAlertPreference.mandate_id == mandate_id,
+        ElectoralAlertPreference.enabled.is_(True),
+    )
+    if frequencies:
+        statement = statement.where(ElectoralAlertPreference.frequency.in_(frequencies))
+    created = 0
+    for preference in db.session.execute(statement).scalars():
+        if not _alert_frequency_due(preference.frequency, snapshot.created_at, now):
+            continue
+        feed = alert_feed_data(snapshot, preference)
+        user = db.session.get(User, preference.user_id)
+        for alert in feed["content"]:
+            raw_key = "|".join(
+                str(alert.get(key) or "") for key in ("type", "territory_id", "message")
+            )
+            event_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+            for channel in preference.channels:
+                exists = db.session.execute(
+                    select(ElectoralAlertDelivery.id).where(
+                        ElectoralAlertDelivery.preference_id == preference.id,
+                        ElectoralAlertDelivery.snapshot_id == snapshot.id,
+                        ElectoralAlertDelivery.event_key == event_key,
+                        ElectoralAlertDelivery.channel == channel,
+                    )
+                ).scalar_one_or_none()
+                if exists:
+                    continue
+                delivery = ElectoralAlertDelivery(
+                    tenant_id=tenant_id,
+                    mandate_id=mandate_id,
+                    preference_id=preference.id,
+                    user_id=preference.user_id,
+                    snapshot_id=snapshot.id,
+                    event_key=event_key,
+                    alert_type=alert["type"],
+                    channel=channel,
+                    status="DELIVERED" if channel == "IN_APP" else "PENDING",
+                    payload=alert,
+                    scheduled_for=now,
+                    delivered_at=now if channel == "IN_APP" else None,
+                )
+                db.session.add(delivery)
+                db.session.flush()
+                if channel == "EMAIL" and user:
+                    event = OutboxEvent(
+                        tenant_id=tenant_id,
+                        event_type=ELECTORAL_ALERT_EMAIL_EVENT,
+                        aggregate_type="ElectoralAlertDelivery",
+                        aggregate_id=str(delivery.id),
+                        payload={},
+                    )
+                    event.payload = {
+                        "deliveryId": str(delivery.id),
+                        "recipient": user.email,
+                        "subject": f"GabFlow · {alert['type']}",
+                        "text": (
+                            f"{alert.get('territory_name') or 'Mandato'}\n\n"
+                            f"{alert.get('message')}\n\n"
+                            "Consulte o snapshot territorial no GabFlow."
+                        ),
+                        "idempotencyKey": f"gabflow-electoral-alert-{delivery.id}",
+                    }
+                    db.session.add(event)
+                created += 1
+    return created
+
+
+def alert_delivery_data(item: ElectoralAlertDelivery) -> dict:
+    return {
+        "id": str(item.id),
+        "snapshot_id": str(item.snapshot_id),
+        "alert_type": item.alert_type,
+        "channel": item.channel,
+        "status": item.status,
+        "payload": item.payload,
+        "scheduled_for": item.scheduled_for.isoformat(),
+        "delivered_at": item.delivered_at.isoformat() if item.delivered_at else None,
+        "error": item.error,
+        "created_at": item.created_at.isoformat(),
+    }
+
+
+def _alert_frequency_due(frequency: str, snapshot_created_at: datetime, now: datetime) -> bool:
+    created = _aware(snapshot_created_at)
+    if frequency == "IMMEDIATE":
+        return True
+    if frequency == "DAILY":
+        return now.date() > created.date()
+    return now >= created + timedelta(days=7)
+
+
 def _territory_metrics(
-    territory_id, name, requests, agenda, actions, draft_rows, request_by_id,
-    threshold, profile, cutoff,
+    territory_id,
+    name,
+    requests,
+    agenda,
+    actions,
+    draft_rows,
+    request_by_id,
+    commitments,
+    threshold,
+    profile,
+    cutoff,
+    electoral_overlay,
 ) -> dict:
     scoped_requests = [
         item for item in requests if territory_id is None or item.territory_id == territory_id
@@ -295,16 +669,44 @@ def _territory_metrics(
         item for item in agenda if territory_id is None or item.territory_id == territory_id
     ]
     scoped_actions = [
-        item for item in actions
-        if territory_id is None or (
+        item
+        for item in actions
+        if territory_id is None
+        or (
             item.request_id in request_ids
             and request_by_id.get(item.request_id)
             and request_by_id[item.request_id].territory_id == territory_id
         )
     ]
     scoped_drafts = {
-        draft.id for draft, request_id in draft_rows
+        draft.id
+        for draft, request_id in draft_rows
         if territory_id is None or request_id in request_ids
+    }
+    scoped_commitments = [
+        item for item in commitments if territory_id is None or item.territory_id == territory_id
+    ]
+    completed_commitments = [
+        item
+        for item in scoped_commitments
+        if item.status == "COMPLETED"
+        and item.completed_at is not None
+        and _aware(item.completed_at) <= _aware(cutoff)
+    ]
+    overdue_commitments = [
+        item
+        for item in scoped_commitments
+        if item.status not in {"COMPLETED", "CANCELLED"} and item.due_on < cutoff.date()
+    ]
+    commitment_summary = {
+        "total": len(scoped_commitments),
+        "completed": len(completed_commitments),
+        "overdue": len(overdue_commitments),
+        "average_progress": (
+            round(sum(item.progress for item in scoped_commitments) / len(scoped_commitments), 1)
+            if scoped_commitments
+            else None
+        ),
     }
     demand_count = len(scoped_requests)
     base = {
@@ -314,18 +716,25 @@ def _territory_metrics(
         "demand_count": demand_count if demand_count >= threshold else None,
         "suppressed": demand_count < threshold,
         "suppression_reason": "privacy_threshold" if demand_count < threshold else None,
+        "public_commitments": commitment_summary,
+        "electoral_overlay": electoral_overlay,
     }
     if demand_count < threshold:
+        message = f"Dados do mandato ocultos: grupo com menos de {threshold} demandas."
         return {
             **base,
             "metrics": None,
             "categories": [],
             "ict": None,
-            "alerts": [f"Dados do mandato ocultos: grupo com menos de {threshold} demandas."],
+            "alerts": [message],
+            "alert_events": [
+                {"type": "PRIVACY_SUPPRESSION", "severity": "INFO", "message": message}
+            ],
         }
 
     resolved = [
-        item for item in scoped_requests
+        item
+        for item in scoped_requests
         if item.status in RESOLVED_STATUSES
         and item.closed_at is not None
         and _aware(item.closed_at) <= _aware(cutoff)
@@ -349,21 +758,56 @@ def _territory_metrics(
         float(profile.weights[key]) for key, value in components.items() if value is not None
     )
     score = round(
-        100 * sum(
+        100
+        * sum(
             float(profile.weights[key]) * value
-            for key, value in components.items() if value is not None
-        ) / available_weight,
+            for key, value in components.items()
+            if value is not None
+        )
+        / available_weight,
         1,
     )
-    alerts = []
+    alert_events = []
     if assessed and len(sla_met) / len(assessed) < 0.8:
-        alerts.append("Cumprimento de SLA abaixo de 80% no período.")
+        alert_events.append(
+            {
+                "type": "SLA_DEGRADED",
+                "severity": "WARNING",
+                "message": "Cumprimento de SLA abaixo de 80% no período.",
+            }
+        )
     if overdue:
-        alerts.append(f"{overdue} demandas com SLA vencido no recorte agregado.")
+        alert_events.append(
+            {
+                "type": "SLA_OVERDUE",
+                "severity": "WARNING",
+                "message": f"{overdue} demandas com SLA vencido no recorte agregado.",
+            }
+        )
     if realized_agenda == 0:
-        alerts.append("Nenhuma agenda territorial realizada no período.")
+        alert_events.append(
+            {
+                "type": "AGENDA_GAP",
+                "severity": "INFO",
+                "message": "Nenhuma agenda territorial realizada no período.",
+            }
+        )
     if completed_actions == 0:
-        alerts.append("Nenhuma ação de fiscalização concluída no período.")
+        alert_events.append(
+            {
+                "type": "OVERSIGHT_GAP",
+                "severity": "INFO",
+                "message": "Nenhuma ação de fiscalização concluída no período.",
+            }
+        )
+    if overdue_commitments:
+        alert_events.append(
+            {
+                "type": "COMMITMENT_OVERDUE",
+                "severity": "WARNING",
+                "message": (f"{len(overdue_commitments)} compromissos públicos com prazo vencido."),
+            }
+        )
 
     return {
         **base,
@@ -381,7 +825,8 @@ def _territory_metrics(
         },
         "categories": _safe_categories(scoped_requests, threshold, profile.sensitive_categories),
         "ict": {"score": score, "components": components},
-        "alerts": alerts,
+        "alerts": [item["message"] for item in alert_events],
+        "alert_events": alert_events,
     }
 
 
@@ -428,16 +873,21 @@ def _electoral_context(election_id, candidate_id) -> dict:
     if not row:
         raise MandateIntelligenceError("Candidatura não encontrada para a eleição informada.")
     candidacy, candidate, election, party = row
-    votes = db.session.scalar(
-        select(func.sum(ElectoralResult.votes)).where(
-            ElectoralResult.election_id == election.id,
-            ElectoralResult.candidacy_id == candidacy.id,
+    votes = (
+        db.session.scalar(
+            select(func.sum(ElectoralResult.votes)).where(
+                ElectoralResult.election_id == election.id,
+                ElectoralResult.candidacy_id == candidacy.id,
+            )
         )
-    ) or 0
+        or 0
+    )
     return {
         "available": True,
         "election_id": str(election.id),
         "candidate_id": str(candidate.id),
+        "candidacy_id": str(candidacy.id),
+        "dataset_version_id": str(candidacy.dataset_version_id),
         "candidate_name": candidate.ballot_name,
         "party": party.acronym,
         "year": election.year,
@@ -446,6 +896,204 @@ def _electoral_context(election_id, candidate_id) -> dict:
         "warning": (
             "Contexto eleitoral público; não integra o ICT nem define prioridade de atendimento."
         ),
+    }
+
+
+def _electoral_overlays(tenant_id, mandate_id, candidacy_id, dataset_version_id) -> dict:
+    if not candidacy_id or not dataset_version_id:
+        return {}
+    rows = db.session.execute(
+        select(
+            ElectoralOperationalTerritoryLink.territory_id,
+            ElectoralOperationalTerritoryLink.method,
+            ElectoralOperationalTerritoryLink.reviewed_at,
+            ElectoralTerritory,
+            ElectoralResult.votes,
+        )
+        .join(
+            ElectoralTerritory,
+            ElectoralTerritory.id == ElectoralOperationalTerritoryLink.electoral_territory_id,
+        )
+        .outerjoin(
+            ElectoralResult,
+            (ElectoralResult.territory_id == ElectoralTerritory.id)
+            & (ElectoralResult.candidacy_id == uuid.UUID(str(candidacy_id))),
+        )
+        .where(
+            ElectoralOperationalTerritoryLink.tenant_id == tenant_id,
+            ElectoralOperationalTerritoryLink.mandate_id == mandate_id,
+            ElectoralOperationalTerritoryLink.active.is_(True),
+            ElectoralTerritory.dataset_version_id == uuid.UUID(str(dataset_version_id)),
+        )
+    ).all()
+    grouped = {}
+    for territory_id, method, reviewed_at, electoral, votes in rows:
+        entry = grouped.setdefault(
+            territory_id,
+            {
+                "votes": 0,
+                "units": [],
+                "methods": set(),
+                "reviewed_at": [],
+                "warning": (
+                    "Resultado eleitoral agregado e revisado; não integra o ICT nem define "
+                    "prioridade de atendimento."
+                ),
+            },
+        )
+        entry["votes"] += int(votes or 0)
+        entry["methods"].add(method)
+        entry["reviewed_at"].append(reviewed_at.isoformat())
+        entry["units"].append(
+            {
+                "id": str(electoral.id),
+                "level": electoral.level.value,
+                "municipality": electoral.municipality_name,
+                "zone": electoral.zone,
+                "votes": int(votes or 0),
+            }
+        )
+    for entry in grouped.values():
+        entry["methods"] = sorted(entry["methods"])
+        entry["reviewed_at"] = max(entry["reviewed_at"])
+    return grouped
+
+
+def territory_link_catalog(tenant_id, mandate_id, election_id) -> dict:
+    operational = list(
+        db.session.execute(
+            select(Territory)
+            .where(Territory.tenant_id == tenant_id, Territory.active.is_(True))
+            .order_by(Territory.name)
+        ).scalars()
+    )
+    dataset_ids = (
+        select(ElectoralCandidacy.dataset_version_id)
+        .where(ElectoralCandidacy.election_id == election_id)
+        .distinct()
+    )
+    electoral = list(
+        db.session.execute(
+            select(ElectoralTerritory)
+            .where(ElectoralTerritory.dataset_version_id.in_(dataset_ids))
+            .order_by(
+                ElectoralTerritory.municipality_name,
+                ElectoralTerritory.level,
+                ElectoralTerritory.zone,
+            )
+        ).scalars()
+    )
+    links = list(
+        db.session.execute(
+            select(ElectoralOperationalTerritoryLink)
+            .join(
+                ElectoralTerritory,
+                ElectoralTerritory.id == ElectoralOperationalTerritoryLink.electoral_territory_id,
+            )
+            .where(
+                ElectoralOperationalTerritoryLink.tenant_id == tenant_id,
+                ElectoralOperationalTerritoryLink.mandate_id == mandate_id,
+                ElectoralOperationalTerritoryLink.active.is_(True),
+                ElectoralTerritory.dataset_version_id.in_(dataset_ids),
+            )
+            .order_by(ElectoralOperationalTerritoryLink.created_at)
+        ).scalars()
+    )
+    territory_by_id = {item.id: item for item in operational}
+    electoral_by_id = {item.id: item for item in electoral}
+    return {
+        "operational_territories": [
+            {"id": str(item.id), "name": item.name} for item in operational
+        ],
+        "electoral_territories": [_electoral_territory_data(item) for item in electoral],
+        "content": [
+            territory_link_data(
+                item,
+                territory_by_id.get(item.territory_id),
+                electoral_by_id.get(item.electoral_territory_id),
+            )
+            for item in links
+        ],
+    }
+
+
+def create_territory_link(tenant_id, mandate_id, user_id, data: dict):
+    try:
+        territory_id = uuid.UUID(str(data["territory_id"]))
+        electoral_territory_id = uuid.UUID(str(data["electoral_territory_id"]))
+        election_id = uuid.UUID(str(data["election_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise MandateIntelligenceError("Territórios e eleição devem ser informados.") from exc
+    territory = db.session.execute(
+        select(Territory).where(
+            Territory.id == territory_id,
+            Territory.tenant_id == tenant_id,
+            Territory.active.is_(True),
+        )
+    ).scalar_one_or_none()
+    electoral = db.session.get(ElectoralTerritory, electoral_territory_id)
+    valid_dataset = (
+        electoral
+        and db.session.execute(
+            select(ElectoralCandidacy.id)
+            .where(
+                ElectoralCandidacy.election_id == election_id,
+                ElectoralCandidacy.dataset_version_id == electoral.dataset_version_id,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+    )
+    if territory is None or not valid_dataset:
+        raise MandateIntelligenceError("Território operacional ou eleitoral incompatível.")
+    item = db.session.execute(
+        select(ElectoralOperationalTerritoryLink).where(
+            ElectoralOperationalTerritoryLink.tenant_id == tenant_id,
+            ElectoralOperationalTerritoryLink.mandate_id == mandate_id,
+            ElectoralOperationalTerritoryLink.territory_id == territory_id,
+            ElectoralOperationalTerritoryLink.electoral_territory_id == electoral_territory_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        item = ElectoralOperationalTerritoryLink(
+            tenant_id=tenant_id,
+            mandate_id=mandate_id,
+            territory_id=territory_id,
+            electoral_territory_id=electoral_territory_id,
+            method="HUMAN_REVIEW",
+            reviewed_by_id=user_id,
+        )
+        db.session.add(item)
+    item.active = True
+    item.notes = str(data.get("notes") or "").strip()[:500] or None
+    item.reviewed_by_id = user_id
+    item.reviewed_at = datetime.now(UTC)
+    db.session.flush()
+    return item, territory, electoral
+
+
+def territory_link_data(item, territory=None, electoral=None) -> dict:
+    return {
+        "id": str(item.id),
+        "territory_id": str(item.territory_id),
+        "territory_name": territory.name if territory else None,
+        "electoral_territory_id": str(item.electoral_territory_id),
+        "electoral_territory": _electoral_territory_data(electoral) if electoral else None,
+        "method": item.method,
+        "notes": item.notes,
+        "reviewed_at": item.reviewed_at.isoformat(),
+    }
+
+
+def _electoral_territory_data(item) -> dict:
+    suffix = f"Zona {item.zone}" if item.zone else item.level.value.title()
+    return {
+        "id": str(item.id),
+        "level": item.level.value,
+        "uf": item.uf,
+        "municipality_code": item.municipality_code,
+        "municipality_name": item.municipality_name,
+        "zone": item.zone,
+        "label": f"{item.municipality_name} · {suffix}",
     }
 
 
@@ -467,7 +1115,8 @@ def _aware(value: datetime) -> datetime:
 
 def _normalize(value: str) -> str:
     return "".join(
-        char for char in unicodedata.normalize("NFKD", value.casefold())
+        char
+        for char in unicodedata.normalize("NFKD", value.casefold())
         if not unicodedata.combining(char)
     )
 

@@ -69,12 +69,30 @@ def execute_rls_audit(run: RlsAuditRun) -> None:
                       'electoral_module_settings',
                       'electoral_access_delegations',
                       'electoral_identity_reviews',
+                      'electoral_user_candidacies',
                       'electoral_favorites',
                       'electoral_saved_comparisons',
                       'electoral_report_jobs',
                       'electoral_generated_reports',
                       'electoral_coverage_profiles',
-                      'electoral_mandate_snapshots'
+                      'electoral_mandate_snapshots',
+                      'electoral_public_commitments',
+                      'electoral_commitment_evidence',
+                      'electoral_commitment_history',
+                      'electoral_alert_preferences',
+                      'electoral_alert_deliveries',
+                      'electoral_operational_territory_links',
+                      'electoral_user_preferences',
+                      'electoral_territory_segments',
+                      'electoral_report_schedules',
+                      'electoral_insights',
+                      'electoral_insight_feedback',
+                      'electoral_scenarios',
+                      'electoral_scenario_shares',
+                      'electoral_scenario_analyses',
+                      'electoral_scenario_portfolios',
+                      'electoral_scenario_portfolio_items',
+                      'electoral_scenario_portfolio_events'
                   )
               )
               AND EXISTS (

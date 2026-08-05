@@ -72,3 +72,21 @@ Critério de saída: carga validada de pelo menos duas eleições, consultas P95
 - Confiança: menos de 1% dos insights contestados por erro quantitativo.
 - Segurança: zero vazamento entre tenants.
 - Qualidade: 100% das análises com fonte e versão.
+## Release 8.9 — Contexto próprio e exploração
+
+- Identidade eleitoral vinculada automaticamente por CPF e cadastro oficial sincronizado.
+- Combos operacionais limitados às eleições do parlamentar.
+- Seleção inicial da participação mais recente.
+- Área separada “Explorar outras eleições”.
+- Confirmação manual restrita à contingência e diferenciada visualmente.
+- Estado orientado para CPF ausente, fonte indisponível ou divergência, sem associação por nome.
+
+## Release 8.11 — Fechamento das funcionalidades SHOULD/COULD
+
+- Preferências analíticas individuais por eleição, cargo, recorte e indicadores.
+- Segmentos territoriais manuais compostos apenas por unidades agregadas.
+- Briefing pré-visita editável, ligado à agenda institucional e ao snapshot reproduzível.
+- Relatórios recorrentes diários, semanais ou mensais para usuários internos ativos.
+- Heatmaps e clusters protegidos pelo limiar de privacidade.
+- Rotas cronológicas de agenda sem eventos de cidadãos ou endereços residenciais.
+- Contratos OpenAPI, RLS, auditoria e testes automatizados como critérios de saída.

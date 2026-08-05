@@ -95,6 +95,7 @@ def test_representative_with_active_mandate_accesses_foundation(app, client):
     assert response.json["mandato"]["status"] == "active"
     assert response.json["limiarPrivacidade"] == 10
     assert response.json["funcionalidades"]["catalogo"] is True
+    assert response.json["funcionalidades"]["ia"] is True
     assert "delegar_acesso" in response.json["capacidades"]
     with app.app_context():
         audit = db.session.execute(
@@ -114,6 +115,29 @@ def test_electoral_module_requires_tenant_enablement(app, client):
 
     assert response.status_code == 403
     assert response.json["error"] == "module_disabled"
+
+
+def test_electoral_ai_cannot_be_disabled_by_legacy_tenant_setting(app, client):
+    _prepare_representative(app)
+    with app.app_context():
+        tenant = db.session.execute(
+            select(Tenant).where(Tenant.slug == "gabinete-a")
+        ).scalar_one()
+        db.session.add(
+            ElectoralModuleSettings(
+                tenant_id=tenant.id,
+                feature_flags={"catalogo": True, "ia": False},
+            )
+        )
+        db.session.commit()
+    _login(client, "parlamentar-eleitoral@teste.local")
+
+    availability = client.get("/api/v1/electoral/disponibilidade")
+    insights = client.get("/api/v1/electoral/insights")
+
+    assert availability.status_code == 200
+    assert availability.json["funcionalidades"]["ia"] is True
+    assert insights.status_code == 200
 
 
 def test_electoral_module_requires_plan_entitlement(app, client):

@@ -8,7 +8,16 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Citizen, Mandate, RequestSource, Role, ServiceRequest, Tenant, User
+from app.models import (
+    Citizen,
+    ElectoralModuleSettings,
+    Mandate,
+    RequestSource,
+    Role,
+    ServiceRequest,
+    Tenant,
+    User,
+)
 
 pytestmark = pytest.mark.postgres
 TEST_PASSWORD_HASH = "integration-test-only"  # noqa: S105
@@ -31,7 +40,22 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "citizens",
         "document_ocrs",
         "electoral_access_delegations",
+        "electoral_alert_preferences",
+        "electoral_alert_deliveries",
+        "electoral_user_preferences",
+        "electoral_territory_segments",
+        "electoral_report_schedules",
+        "electoral_insight_feedback",
+        "electoral_insights",
+        "electoral_scenarios",
+        "electoral_scenario_shares",
+        "electoral_scenario_analyses",
+        "electoral_scenario_portfolios",
+        "electoral_scenario_portfolio_items",
+        "electoral_scenario_portfolio_events",
         "electoral_coverage_profiles",
+        "electoral_commitment_evidence",
+        "electoral_commitment_history",
         "electoral_candidates",
         "electoral_candidacies",
         "electoral_dataset_versions",
@@ -41,16 +65,22 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "electoral_geometry_features",
         "electoral_geometry_versions",
         "electoral_identity_reviews",
+        "electoral_user_candidacies",
         "electoral_module_settings",
         "electoral_mandate_snapshots",
+        "electoral_public_commitments",
         "electoral_offices",
         "electoral_parties",
         "electoral_results",
         "electoral_report_jobs",
         "electoral_saved_comparisons",
         "electoral_staging_results",
+        "electoral_section_results",
+        "electoral_territorial_dataset_versions",
+        "electoral_territorial_units",
         "electoral_territory_crosswalks",
         "electoral_territories",
+        "electoral_operational_territory_links",
         "legislative_drafts",
         "legislative_draft_requests",
         "legislative_tramitations",
@@ -539,6 +569,7 @@ def test_migrations_create_native_postgresql_enums(postgres_app):
 def test_electoral_private_rls_and_official_geometry_index(postgres_app):
     private_tables = {
         "electoral_identity_reviews",
+        "electoral_user_candidacies",
         "electoral_favorites",
         "electoral_saved_comparisons",
     }
@@ -559,6 +590,27 @@ def test_electoral_private_rls_and_official_geometry_index(postgres_app):
                     """
                 ),
                 {"tables": list(private_tables)},
+            )
+        }
+        commitment_policy_commands = {
+            row.tablename: set(row.commands)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT tablename, array_agg(cmd ORDER BY cmd) AS commands
+                    FROM pg_policies
+                    WHERE schemaname = 'public'
+                      AND tablename = ANY(:tables)
+                    GROUP BY tablename
+                    """
+                ),
+                {
+                    "tables": [
+                        "electoral_public_commitments",
+                        "electoral_commitment_evidence",
+                        "electoral_commitment_history",
+                    ]
+                },
             )
         }
         geometry_type = connection.execute(
@@ -584,6 +636,11 @@ def test_electoral_private_rls_and_official_geometry_index(postgres_app):
     assert set(policies) == private_tables
     assert all(enabled and forced for enabled, forced, _ in policies.values())
     assert all("app.tenant_id" in expression for _, _, expression in policies.values())
+    assert commitment_policy_commands == {
+        "electoral_public_commitments": {"SELECT", "INSERT", "UPDATE"},
+        "electoral_commitment_evidence": {"SELECT", "INSERT"},
+        "electoral_commitment_history": {"SELECT", "INSERT"},
+    }
     assert all("app.user_id" in expression for _, _, expression in policies.values())
     assert geometry_type == ("MULTIPOLYGON", 4326)
     assert "using gist" in geometry_index.lower()
@@ -595,6 +652,15 @@ def test_electoral_export_tables_use_forced_tenant_rls(postgres_app):
         "electoral_generated_reports",
         "electoral_coverage_profiles",
         "electoral_mandate_snapshots",
+        "electoral_public_commitments",
+        "electoral_commitment_evidence",
+        "electoral_commitment_history",
+        "electoral_alert_preferences",
+        "electoral_alert_deliveries",
+        "electoral_operational_territory_links",
+        "electoral_user_preferences",
+        "electoral_territory_segments",
+        "electoral_report_schedules",
     }
     with postgres_app.app_context(), db.engine.connect() as connection:
         policies = {
@@ -618,6 +684,7 @@ def test_electoral_export_tables_use_forced_tenant_rls(postgres_app):
     assert set(policies) == export_tables
     assert all(enabled and forced for enabled, forced, _ in policies.values())
     assert all("app.tenant_id" in expression for _, _, expression in policies.values())
+    assert "app.user_id" in policies["electoral_alert_preferences"][2]
 
 
 def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
@@ -701,6 +768,33 @@ def test_postgis_generates_request_locations_and_spatial_index(postgres_app):
     assert location["near_reference"] is True
 
 
+def test_electoral_ai_migration_normalizes_legacy_tenant(postgres_app):
+    with postgres_app.app_context():
+        downgrade(revision="t3d1b8f5a7c9", directory="migrations")
+        legacy_tenant = Tenant(name="Legacy AI tenant", slug="legacy-ai-tenant")
+        db.session.add(legacy_tenant)
+        db.session.flush()
+        db.session.add(
+            ElectoralModuleSettings(
+                tenant_id=legacy_tenant.id,
+                feature_flags={"catalogo": True, "ia": False},
+            )
+        )
+        db.session.commit()
+
+        upgrade(revision="u4e2c9f7a1b3", directory="migrations")
+        db.session.expire_all()
+
+        settings = db.session.scalar(
+            select(ElectoralModuleSettings).where(
+                ElectoralModuleSettings.tenant_id == legacy_tenant.id
+            )
+        )
+        assert settings.feature_flags == {"catalogo": True, "ia": True}
+
+        upgrade(directory="migrations")
+
+
 def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
     migrations = ScriptDirectory("migrations")
     expected_head = migrations.get_current_head()
@@ -756,6 +850,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             rolled_back_chunk_columns = {
                 column["name"] for column in inspector.get_columns("rag_chunks")
             }
+            rolled_back_insight_columns = {
+                column["name"] for column in inspector.get_columns("electoral_insights")
+            }
             rls_policies = connection.execute(
                 text(
                     """
@@ -799,8 +896,29 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_security_rescan_runs" in rolled_back_tables
         assert "rag_output_validation_profiles" in rolled_back_tables
         assert "rls_audit_runs" in rolled_back_tables
-        assert "electoral_coverage_profiles" not in rolled_back_tables
-        assert "electoral_mandate_snapshots" not in rolled_back_tables
+        assert "electoral_coverage_profiles" in rolled_back_tables
+        assert "electoral_mandate_snapshots" in rolled_back_tables
+        assert "electoral_public_commitments" in rolled_back_tables
+        assert "electoral_commitment_evidence" in rolled_back_tables
+        assert "electoral_commitment_history" in rolled_back_tables
+        assert "electoral_alert_preferences" in rolled_back_tables
+        assert "electoral_insights" in rolled_back_tables
+        assert "electoral_insight_feedback" in rolled_back_tables
+        assert "electoral_scenarios" in rolled_back_tables
+        assert "electoral_scenario_shares" in rolled_back_tables
+        assert "electoral_scenario_analyses" in rolled_back_tables
+        assert "electoral_scenario_portfolios" in rolled_back_tables
+        assert "electoral_scenario_portfolio_items" in rolled_back_tables
+        assert "electoral_scenario_portfolio_events" in rolled_back_tables
+        assert {
+            "safety_classification",
+            "output_validation",
+            "review_status",
+            "reviewed_by_id",
+            "reviewed_at",
+            "review_notes",
+            "review_revision",
+        }.issubset(rolled_back_insight_columns)
         assert "encryption_key_version" in rolled_back_private_version_columns
         assert "encryption_key_version" in rolled_back_global_version_columns
         assert "encryption_key_version" in rolled_back_attachment_columns
@@ -868,6 +986,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
             reapplied_chunk_columns = {
                 column["name"] for column in inspector.get_columns("rag_chunks")
             }
+            reapplied_insight_columns = {
+                column["name"] for column in inspector.get_columns("electoral_insights")
+            }
             political_parties_count = connection.execute(
                 text("SELECT count(*) FROM political_parties")
             ).scalar_one()
@@ -895,6 +1016,30 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rls_audit_runs" in reapplied_tables
         assert "electoral_coverage_profiles" in reapplied_tables
         assert "electoral_mandate_snapshots" in reapplied_tables
+        assert "electoral_public_commitments" in reapplied_tables
+        assert "electoral_commitment_evidence" in reapplied_tables
+        assert "electoral_commitment_history" in reapplied_tables
+        assert "electoral_alert_preferences" in reapplied_tables
+        assert "electoral_insights" in reapplied_tables
+        assert "electoral_insight_feedback" in reapplied_tables
+        assert "electoral_scenarios" in reapplied_tables
+        assert "electoral_scenario_shares" in reapplied_tables
+        assert "electoral_scenario_analyses" in reapplied_tables
+        assert "electoral_scenario_portfolios" in reapplied_tables
+        assert "electoral_scenario_portfolio_items" in reapplied_tables
+        assert "electoral_scenario_portfolio_events" in reapplied_tables
+        assert "electoral_section_results" in reapplied_tables
+        assert "electoral_territorial_dataset_versions" in reapplied_tables
+        assert "electoral_territorial_units" in reapplied_tables
+        assert {
+            "safety_classification",
+            "output_validation",
+            "review_status",
+            "reviewed_by_id",
+            "reviewed_at",
+            "review_notes",
+            "review_revision",
+        }.issubset(reapplied_insight_columns)
         assert "learning_artifacts" in reapplied_query_columns
         assert "activation_mode" in reapplied_learning_artifact_columns
         assert "security_status" in reapplied_private_version_columns

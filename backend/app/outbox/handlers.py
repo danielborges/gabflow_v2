@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from flask import current_app
 from sqlalchemy import select
@@ -20,6 +21,13 @@ from app.ai.transcription import (
     execute_audio_transcription,
 )
 from app.communications.email import EmailDeliveryError, send_email
+from app.electoral.insights import (
+    INSIGHT_EVENT,
+    NonRetryableInsightError,
+    execute_insight,
+    fail_insight,
+)
+from app.electoral.mandate_intelligence import ELECTORAL_ALERT_EMAIL_EVENT
 from app.electoral.reports import (
     REPORT_EVENT,
     NonRetryableReportError,
@@ -42,6 +50,8 @@ from app.models import (
     ContactAttemptOutcome,
     DocumentOcr,
     DocumentOcrStatus,
+    ElectoralAlertDelivery,
+    ElectoralInsight,
     ElectoralReportJob,
     GlobalKnowledgeDocumentVersion,
     OutboxEvent,
@@ -176,8 +186,17 @@ def handle_event(event: OutboxEvent) -> None:
         except NonRetryableReportError as error:
             raise NonRetryableEventError(str(error)) from error
         return
+    if event.event_type == INSIGHT_EVENT:
+        try:
+            execute_insight(_electoral_insight(event))
+        except NonRetryableInsightError as error:
+            raise NonRetryableEventError(str(error)) from error
+        return
     if event.event_type == EMAIL_RESPONSE_EVENT:
         _send_request_email(event)
+        return
+    if event.event_type == ELECTORAL_ALERT_EMAIL_EVENT:
+        _send_electoral_alert_email(event)
         return
 
     current_app.logger.info(
@@ -193,6 +212,9 @@ def handle_event(event: OutboxEvent) -> None:
 def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
     if event.event_type == REPORT_EVENT:
         fail_report(_electoral_report_job(event), error_message)
+        return
+    if event.event_type == INSIGHT_EVENT:
+        fail_insight(_electoral_insight(event), error_message)
         return
     if event.event_type == RLS_AUDIT_EVENT:
         run = db.session.get(RlsAuditRun, _uuid(event.payload, "runId"))
@@ -264,6 +286,12 @@ def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
         return
     if event.event_type == SECURITY_RESCAN_EVENT:
         fail_security_rescan(_security_rescan_run(event), error_message)
+        return
+    if event.event_type == ELECTORAL_ALERT_EMAIL_EVENT:
+        delivery = db.session.get(ElectoralAlertDelivery, _uuid(event.payload, "deliveryId"))
+        if delivery is not None and delivery.tenant_id == event.tenant_id:
+            delivery.status = "FAILED"
+            delivery.error = error_message[:1000]
         return
     if event.event_type != EMAIL_RESPONSE_EVENT:
         return
@@ -357,6 +385,30 @@ def _send_request_email(event: OutboxEvent) -> None:
         details,
     )
     event.payload = {**payload, "delivery": details}
+
+
+def _send_electoral_alert_email(event: OutboxEvent) -> None:
+    payload = event.payload
+    delivery = db.session.get(ElectoralAlertDelivery, _uuid(payload, "deliveryId"))
+    if delivery is None or delivery.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Entrega de alerta eleitoral não encontrada.")
+    if delivery.status == "DELIVERED":
+        return
+    try:
+        result = send_email(
+            recipient=str(payload["recipient"]),
+            subject=str(payload["subject"]),
+            text=str(payload["text"]),
+            idempotency_key=str(payload["idempotencyKey"]),
+        )
+    except EmailDeliveryError as error:
+        if not error.retryable:
+            raise NonRetryableEventError(str(error)) from error
+        raise
+    delivery.status = "DELIVERED"
+    delivery.delivered_at = datetime.now(UTC)
+    delivery.provider_message_id = result.message_id
+    delivery.error = None
 
 
 def _record_delivery_result(
@@ -475,3 +527,10 @@ def _electoral_report_job(event: OutboxEvent) -> ElectoralReportJob:
     if job is None or job.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Job de exportacao eleitoral nao encontrado.")
     return job
+
+
+def _electoral_insight(event: OutboxEvent) -> ElectoralInsight:
+    insight = db.session.get(ElectoralInsight, _uuid(event.payload, "insightId"))
+    if insight is None or insight.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Insight eleitoral nao encontrado.")
+    return insight

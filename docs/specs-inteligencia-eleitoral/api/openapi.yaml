@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GabFlow Electoral Intelligence API
-  version: 0.1.0
+  version: 8.9.1
   description: API inicial do módulo Inteligência Eleitoral e Territorial.
 servers:
   - url: /api/v1
@@ -43,6 +43,86 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ElectionPage'
+  /electoral/elections/explore:
+    get:
+      tags: [Elections]
+      operationId: exploreElections
+      summary: Lista o catálogo público completo fora do contexto operacional do mandato.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Eleições publicadas disponíveis para pesquisa exploratória.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectionPage' }
+  /electoral/identity:
+    get:
+      tags: [Access]
+      operationId: getElectoralIdentity
+      summary: Reconcilia e retorna as participações do parlamentar titular.
+      responses:
+        '200':
+          description: Contexto eleitoral próprio, compartilhado com assessores delegados.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralIdentity' }
+  /electoral/identity/reconcile:
+    post:
+      tags: [Access]
+      operationId: reconcileElectoralIdentity
+      summary: Reexecuta a vinculação automática pelo CPF protegido e pelo cadastro oficial sincronizado.
+      responses:
+        '200':
+          description: Estado da reconciliação sem exposição do CPF.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralIdentityReconciliation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /electoral/identity/candidacies:
+    post:
+      tags: [Access]
+      operationId: confirmElectoralCandidacy
+      summary: Confirma manualmente uma candidatura somente como contingência.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidacy_id]
+              properties:
+                candidacy_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: A candidatura já estava elegível e foi reconciliada automaticamente.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralIdentityCandidacy' }
+        '201':
+          description: Participação confirmada manualmente por CPF ausente, fonte indisponível ou divergência.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralIdentityCandidacy' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A candidatura já foi vinculada automaticamente pelo CPF oficial. }
+        '404': { description: Candidatura publicada não encontrada. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/identity/candidacies/{candidacy_id}:
+    delete:
+      tags: [Access]
+      operationId: removeElectoralCandidacy
+      summary: Remove uma confirmação manual; vínculos automáticos exigem correção ou revisão.
+      parameters:
+        - name: candidacy_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Participação removida. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Vínculo automático não pode ser removido manualmente. }
+        '404': { description: Participação confirmada não encontrada. }
   /electoral/offices:
     get:
       tags: [Elections]
@@ -61,9 +141,17 @@ paths:
     get:
       tags: [Elections]
       operationId: getElectoralCoverage
+      parameters:
+        - name: uf
+          in: query
+          schema: { type: string, pattern: '^[A-Za-z]{2}$' }
       responses:
         '200':
-          description: Recortes de ano, UF e cargo atualmente publicados.
+          description: Matriz histórica 2012–2024, distinguindo ciclos completos, parciais e ausentes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralCoverage' }
+        '422': { $ref: '#/components/responses/ValidationError' }
   /electoral/quality:
     get:
       tags: [Elections]
@@ -98,6 +186,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CoverageProfile' }
         '422': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /electoral/mandate-snapshots:
     get:
       tags: [Mandate Intelligence]
@@ -127,6 +216,45 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MandateSnapshot' }
         '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/territory-links:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: listElectoralTerritoryLinks
+      summary: Lista o crosswalk revisado e as unidades disponíveis para uma eleição.
+      parameters:
+        - name: election_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Territórios operacionais, unidades eleitorais e vínculos ativos. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Mandate Intelligence]
+      operationId: createElectoralTerritoryLink
+      summary: Registra ou reativa um vínculo territorial sujeito a revisão humana.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ElectoralTerritoryLinkInput' }
+      responses:
+        '201': { description: Vínculo revisado registrado. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/territory-links/{link_id}:
+    delete:
+      tags: [Mandate Intelligence]
+      operationId: deactivateElectoralTerritoryLink
+      parameters:
+        - name: link_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Vínculo desativado sem alterar snapshots históricos. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Vínculo não encontrado. }
   /electoral/mandate-snapshots/{snapshot_id}:
     get:
       tags: [Mandate Intelligence]
@@ -143,6 +271,80 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MandateSnapshot' }
         '404': { description: Snapshot não encontrado no escopo autorizado. }
+  /electoral/public-commitments:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: listPublicCommitments
+      summary: Lista compromissos públicos do mandato por território e estado efetivo.
+      responses:
+        '200': { description: Compromissos, territórios e responsáveis elegíveis. }
+    post:
+      tags: [Mandate Intelligence]
+      operationId: createPublicCommitment
+      summary: Cadastra compromisso; operação exclusiva do parlamentar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicCommitmentInput' }
+      responses:
+        '201':
+          description: Compromisso criado com evento imutável de histórico.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCommitment' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/public-commitments/{commitment_id}:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getPublicCommitment
+      parameters:
+        - $ref: '#/components/parameters/CommitmentId'
+      responses:
+        '200':
+          description: Compromisso com evidências e histórico.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCommitment' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Mandate Intelligence]
+      operationId: updatePublicCommitment
+      parameters:
+        - $ref: '#/components/parameters/CommitmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicCommitmentUpdateInput' }
+      responses:
+        '200': { description: Compromisso atualizado e nova versão registrada no histórico. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/public-commitments/{commitment_id}/evidence:
+    post:
+      tags: [Mandate Intelligence]
+      operationId: addPublicCommitmentEvidence
+      parameters:
+        - $ref: '#/components/parameters/CommitmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicCommitmentEvidenceInput' }
+      responses:
+        '201': { description: Evidência pública adicionada sem alterar eventos anteriores. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/operational-map:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getElectoralOperationalMap
+      summary: Retorna limite oficial da jurisdição e pontos públicos dos compromissos.
+      responses:
+        '200':
+          description: Camada operacional; não cria polígonos para territórios sem malha oficial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationalMap' }
   /electoral/candidates:
     get:
       tags: [Candidates]
@@ -162,6 +364,10 @@ paths:
         - name: office
           in: query
           schema: { type: string }
+        - name: explore
+          in: query
+          description: Permite busca somente leitura no catálogo público fora do contexto operacional.
+          schema: { type: boolean, default: false }
         - $ref: '#/components/parameters/Page'
       responses:
         '200':
@@ -199,6 +405,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ResultSet'
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/candidates/{candidate_id}/history:
     get:
       tags: [Analytics]
@@ -216,6 +423,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CandidateHistory'
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/candidates/{candidate_id}/map:
     get:
       tags: [Analytics]
@@ -233,6 +441,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ElectoralMap' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/candidates/{candidate_id}/identity-review:
     put:
       tags: [Analytics]
@@ -281,6 +490,7 @@ paths:
             schema: { $ref: '#/components/schemas/FavoriteInput' }
       responses:
         '201': { description: Favorito salvo. }
+        '200': { description: Favorito existente atualizado de forma idempotente. }
   /electoral/favorites/{favorite_id}:
     delete:
       tags: [Analytics]
@@ -337,6 +547,10 @@ paths:
         - name: to
           in: query
           schema: { type: string, format: date }
+        - name: snapshot_id
+          in: query
+          description: Seleciona explicitamente um snapshot reproduzível.
+          schema: { type: string, format: uuid }
       responses:
         '200':
           description: Indicadores agregados do mandato.
@@ -344,7 +558,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MandateOverlay'
+        '404': { description: Snapshot ou território não encontrado no tenant. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/territories/{territory_id}/briefing:
+    get:
+      tags: [Analytics]
+      operationId: getTerritoryBriefing
+      parameters:
+        - name: territory_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: snapshot_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Briefing agregado, marcado como rascunho para revisão humana.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TerritoryBriefing' }
+        '404': { description: Snapshot ou território não encontrado no tenant. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/alert-preferences:
+    get:
+      tags: [Analytics]
+      operationId: getElectoralAlertPreferences
+      responses:
+        '200':
+          description: Preferências individuais de alertas territoriais.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralAlertPreference' }
+    put:
+      tags: [Analytics]
+      operationId: updateElectoralAlertPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ElectoralAlertPreferenceInput' }
+      responses:
+        '200':
+          description: Preferências atualizadas e auditadas.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralAlertPreference' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/alerts:
+    get:
+      tags: [Analytics]
+      operationId: listElectoralAlerts
+      responses:
+        '200':
+          description: Alertas estruturados do snapshot mais recente, filtrados pelo usuário.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralAlertFeed' }
+  /electoral/alert-deliveries:
+    get:
+      tags: [Analytics]
+      operationId: listElectoralAlertDeliveries
+      summary: Histórico individual de alertas efetivamente entregues ou enfileirados.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
+      responses:
+        '200': { description: Entregas no GabFlow e por e-mail, com estado auditável. }
   /electoral/insights:
+    get:
+      tags: [Analytics]
+      operationId: listInsights
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - in: query
+          name: perPage
+          schema: { type: integer, minimum: 5, maximum: 25, default: 10 }
+        - in: query
+          name: type
+          schema: { type: string, enum: [candidate, comparison, question] }
+        - in: query
+          name: status
+          schema: { type: string, enum: [QUEUED, PROCESSING, COMPLETED, FAILED, REFUSED, HIDDEN] }
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: Historico paginado de insights visiveis ao ator autorizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralInsightPage' }
     post:
       tags: [Analytics]
       operationId: requestInsight
@@ -355,13 +660,85 @@ paths:
             schema:
               $ref: '#/components/schemas/InsightRequest'
       responses:
+        '200':
+          description: Pergunta recusada imediatamente pela política eleitoral, sem enfileiramento.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralInsight' }
         '202':
           description: Insight em processamento.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/JobAccepted' }
+              schema: { $ref: '#/components/schemas/ElectoralInsight' }
         '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/insights/review-queue:
+    get:
+      tags: [Analytics]
+      operationId: listInsightReviewQueue
+      responses:
+        '200': { description: Insights pendentes de decisão do parlamentar. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /electoral/insights/{insightId}:
+    parameters:
+      - in: path
+        name: insightId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Analytics]
+      operationId: getInsight
+      responses:
+        '200':
+          description: Insight estruturado e auditÃ¡vel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralInsight' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/insights/{insightId}/feedback:
+    parameters:
+      - in: path
+        name: insightId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Analytics]
+      operationId: createInsightFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightFeedbackInput' }
+      responses:
+        '201': { description: Feedback registrado com a versÃ£o do modelo. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/insights/{insightId}/review:
+    parameters:
+      - in: path
+        name: insightId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Analytics]
+      operationId: reviewElectoralInsight
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightReviewInput' }
+      responses:
+        '200':
+          description: Decisão humana registrada com hash dos fatos e versão do modelo.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElectoralInsight' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/scenarios:
+    get:
+      tags: [Scenarios]
+      operationId: listScenarios
+      responses:
+        '200': { description: CenÃ¡rios visÃ­veis ao ator autorizado. }
     post:
       tags: [Scenarios]
       operationId: createScenario
@@ -376,6 +753,372 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Scenario' }
+  /electoral/scenarios/preview:
+    post:
+      tags: [Scenarios]
+      operationId: previewScenario
+      summary: Calcula uma simulação auditada sem persistir um cenário.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioPreviewInput' }
+      responses:
+        '200':
+          description: Prévia calculada pelo mesmo motor dos cenários persistidos.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioPreview' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/scenarios/{scenarioId}:
+    parameters:
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Scenarios]
+      operationId: getScenario
+      responses:
+        '200':
+          description: CenÃ¡rio e baseline oficial preservado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scenario' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/compare:
+    post:
+      tags: [Scenarios]
+      operationId: compareScenarios
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioComparisonInput' }
+      responses:
+        '201':
+          description: Comparação compatível persistida.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioAnalysis' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/{scenarioId}/copy:
+    parameters:
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Scenarios]
+      operationId: copyScenario
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioCopyInput' }
+      responses:
+        '201':
+          description: Nova cópia imutável criada sobre o snapshot original.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scenario' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/{scenarioId}/share:
+    parameters:
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Scenarios]
+      operationId: shareScenarioReadOnly
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioShareInput' }
+      responses:
+        '201':
+          description: Link autenticado, revogável e somente leitura.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioShare' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/shared/{token}:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string, minLength: 32 }
+    get:
+      tags: [Scenarios]
+      operationId: getSharedScenario
+      responses:
+        '200':
+          description: Cenário marcado como somente leitura.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scenario' }
+        '410': { description: Link revogado ou expirado. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/{scenarioId}/shares:
+    parameters:
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Scenarios]
+      operationId: listScenarioShares
+      responses:
+        '200':
+          description: Metadados dos links emitidos, sem exposição dos tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content]
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScenarioShareMetadata' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/{scenarioId}/shares/{shareId}:
+    parameters:
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: shareId
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Scenarios]
+      operationId: revokeScenarioShare
+      responses:
+        '204': { description: Compartilhamento revogado. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenarios/{scenarioId}/sensitivity:
+    parameters:
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Scenarios]
+      operationId: analyzeScenarioSensitivity
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioSensitivityInput' }
+      responses:
+        '201':
+          description: Grade determinística de sensibilidade persistida.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioAnalysis' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-analyses/{analysisId}:
+    parameters:
+      - in: path
+        name: analysisId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Scenarios]
+      operationId: getScenarioAnalysis
+      responses:
+        '200':
+          description: Comparação ou sensibilidade auditável.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioAnalysis' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios:
+    get:
+      tags: [Scenarios]
+      operationId: listScenarioPortfolios
+      responses:
+        '200': { description: Portfólios visíveis ao ator autorizado. }
+    post:
+      tags: [Scenarios]
+      operationId: createScenarioPortfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioPortfolioInput' }
+      responses:
+        '201':
+          description: Portfólio criado com cenários compatíveis.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioPortfolio' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Scenarios]
+      operationId: getScenarioPortfolio
+      responses:
+        '200':
+          description: Portfólio, cenários, metas e avaliação.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioPortfolio' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Scenarios]
+      operationId: updateScenarioPortfolio
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 160 }
+                description: { type: string, maxLength: 1000 }
+                status: { type: string, enum: [ACTIVE, ARCHIVED] }
+      responses:
+        '200': { description: Metadados ou estado atualizados. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/scenarios:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Scenarios]
+      operationId: addScenarioToPortfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scenario_id]
+              properties:
+                scenario_id: { type: string, format: uuid }
+                label: { type: string, maxLength: 160 }
+      responses:
+        '201': { description: Cenário compatível associado ao portfólio. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/scenarios/{scenarioId}:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: scenarioId
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Scenarios]
+      operationId: removeScenarioFromPortfolio
+      responses:
+        '204': { description: Associação encerrada logicamente e registrada no histórico. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/goals:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Scenarios]
+      operationId: replaceScenarioPortfolioGoals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goals]
+              properties:
+                goals:
+                  type: array
+                  maxItems: 100
+                  items: { $ref: '#/components/schemas/ScenarioPortfolioGoal' }
+      responses:
+        '200': { description: Metas substituídas e avaliação recalculada. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/reference:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Scenarios]
+      operationId: setScenarioPortfolioReference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scenario_id]
+              properties:
+                scenario_id: { type: string, format: uuid }
+      responses:
+        '200': { description: Referência comparativa, não preditiva, atualizada. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/evaluation:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Scenarios]
+      operationId: evaluateScenarioPortfolio
+      responses:
+        '200': { description: Atingimento das metas por cenário. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/history:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Scenarios]
+      operationId: getScenarioPortfolioHistory
+      responses:
+        '200': { description: Histórico append-only do portfólio. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/scenario-portfolios/{portfolioId}/export:
+    parameters:
+      - in: path
+        name: portfolioId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Scenarios]
+      operationId: exportScenarioPortfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose]
+              properties:
+                purpose: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        '200':
+          description: CSV auditável com cenários, faixas, metas e disclaimer.
+          content:
+            text/csv: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/report-jobs:
     get:
       tags: [Reports]
@@ -413,6 +1156,7 @@ paths:
         - { name: job_id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '204': { description: Exportação revogada imediatamente. }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/report-jobs/{job_id}/retry:
     post:
       tags: [Reports]
@@ -422,6 +1166,7 @@ paths:
       responses:
         '202': { description: Exportação com falha reenfileirada. }
         '422': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/report-jobs/{job_id}/share:
     post:
       tags: [Reports]
@@ -430,6 +1175,7 @@ paths:
         - { name: job_id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: Link interno assinado, temporário e revogável. }
+        '404': { $ref: '#/components/responses/NotFound' }
   /electoral/reports/{report_id}/download:
     get:
       tags: [Reports]
@@ -466,6 +1212,150 @@ paths:
         - { name: delegation_id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '204': { description: Delegação revogada imediatamente. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/preferences:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getElectoralUserPreferences
+      responses:
+        '200': { description: Preferências individuais do usuário autenticado. }
+    put:
+      tags: [Mandate Intelligence]
+      operationId: updateElectoralUserPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                election_id: { type: string, format: uuid, nullable: true }
+                office_id: { type: string, format: uuid, nullable: true }
+                territory_level: { type: string }
+                indicators:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200': { description: Preferências atualizadas. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/territory-segments:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: listElectoralTerritorySegments
+      parameters:
+        - { name: election_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Segmentos individuais e unidades territoriais disponíveis. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Mandate Intelligence]
+      operationId: createElectoralTerritorySegment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, election_id, territory_ids]
+              properties:
+                name: { type: string, minLength: 3, maxLength: 120 }
+                description: { type: string, maxLength: 500 }
+                election_id: { type: string, format: uuid }
+                territory_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string, format: uuid }
+      responses:
+        '201': { description: Segmento criado para o usuário autenticado. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/territory-segments/{segment_id}:
+    parameters:
+      - { name: segment_id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Mandate Intelligence]
+      operationId: updateElectoralTerritorySegment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Segmento atualizado. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Mandate Intelligence]
+      operationId: deleteElectoralTerritorySegment
+      responses:
+        '204': { description: Segmento removido. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /electoral/agenda-events/{event_id}/pre-visit-briefing:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getElectoralPreVisitBriefing
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: snapshot_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Briefing agregado, editável e sujeito a revisão humana. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/mandate-map-layers:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getElectoralMandateMapLayers
+      parameters:
+        - { name: snapshot_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Heatmap e clusters agregados sem endereços residenciais. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/agenda-routes:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getElectoralAgendaRoutes
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Rota cronológica baseada somente em referências públicas confirmadas. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/report-schedules:
+    get:
+      tags: [Reports]
+      operationId: listElectoralReportSchedules
+      responses:
+        '200': { description: Agendamentos visíveis ao ator e destinatários internos elegíveis. }
+    post:
+      tags: [Reports]
+      operationId: createElectoralReportSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, frequency, template_report_job_id, recipient_ids, next_run_at]
+              properties:
+                name: { type: string, minLength: 3, maxLength: 160 }
+                frequency: { type: string, enum: [DAILY, WEEKLY, MONTHLY] }
+                template_report_job_id: { type: string, format: uuid }
+                recipient_ids:
+                  type: array
+                  minItems: 1
+                  items: { type: string, format: uuid }
+                next_run_at: { type: string, format: date-time }
+      responses:
+        '201': { description: Relatório recorrente agendado. }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/report-schedules/{schedule_id}:
+    delete:
+      tags: [Reports]
+      operationId: deactivateElectoralReportSchedule
+      parameters:
+        - { name: schedule_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Agendamento desativado. }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     cookieAuth:
@@ -494,6 +1384,11 @@ components:
       schema:
         type: string
         enum: [state, municipality, electoral_zone, neighborhood, polling_place, section]
+    CommitmentId:
+      name: commitment_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   responses:
     Unauthorized:
       description: Sessão ausente, expirada ou invalidada.
@@ -505,12 +1400,83 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Recurso inexistente ou fora do escopo autorizado.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
     ValidationError:
       description: Parâmetros ou regra de negócio inválidos.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
   schemas:
+    PublicCommitmentInput:
+      type: object
+      required: [title, description, territory_id, responsible_user_id, due_on]
+      properties:
+        title: { type: string, maxLength: 180 }
+        description: { type: string, maxLength: 5000 }
+        territory_id: { type: string, format: uuid }
+        responsible_user_id: { type: string, format: uuid }
+        due_on: { type: string, format: date }
+        public_location_name: { type: string, maxLength: 180 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        location_is_public:
+          type: boolean
+          description: Deve ser true quando coordenadas forem informadas.
+    PublicCommitmentUpdateInput:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 180 }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        territory_id: { type: string, format: uuid }
+        responsible_user_id: { type: string, format: uuid }
+        due_on: { type: string, format: date }
+        status: { type: string, enum: [PLANNED, IN_PROGRESS, COMPLETED, CANCELLED] }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        public_location_name: { type: [string, 'null'], maxLength: 180 }
+        latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+        longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        location_is_public: { type: boolean }
+    PublicCommitmentEvidenceInput:
+      type: object
+      required: [title, public_url]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 180 }
+        description: { type: string, maxLength: 500 }
+        public_url: { type: string, format: uri, maxLength: 2000, pattern: '^https?://' }
+        evidence_date: { type: string, format: date }
+    PublicCommitment:
+      allOf:
+        - $ref: '#/components/schemas/PublicCommitmentInput'
+        - type: object
+          required: [id, status, effective_status, status_source, progress, evidence, history]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [PLANNED, IN_PROGRESS, COMPLETED, CANCELLED] }
+            effective_status: { type: string, enum: [PLANNED, IN_PROGRESS, COMPLETED, CANCELLED, OVERDUE] }
+            status_source: { type: string, enum: [manual, derived_deadline] }
+            progress: { type: integer, minimum: 0, maximum: 100 }
+            evidence: { type: array, items: { type: object } }
+            history: { type: array, items: { type: object } }
+    OperationalMap:
+      type: object
+      required: [geometry_available, boundary, geometry_kind, source, features, unmapped_commitments, warnings]
+      properties:
+        geometry_available: { type: boolean }
+        boundary: { type: [object, 'null'] }
+        geometry_kind: { type: string, const: official_jurisdiction_boundary }
+        source: { type: object }
+        features:
+          type: array
+          items:
+            type: object
+            description: GeoJSON Feature Point de local público confirmado.
+        unmapped_commitments: { type: integer, minimum: 0 }
+        warnings: { type: array, items: { type: string } }
     CoverageProfileInput:
       type: object
       required: [weights, targets, explanation]
@@ -534,6 +1500,14 @@ components:
             formula_code: { type: string, enum: [ICT-1.0] }
             active: { type: boolean }
             created_at: { type: string, format: date-time }
+    ElectoralTerritoryLinkInput:
+      type: object
+      required: [election_id, territory_id, electoral_territory_id]
+      properties:
+        election_id: { type: string, format: uuid }
+        territory_id: { type: string, format: uuid }
+        electoral_territory_id: { type: string, format: uuid }
+        notes: { type: string, maxLength: 500 }
     MandateSnapshot:
       type: object
       required: [id, period_start, period_end, privacy_threshold, config_hash, source_cutoff_at, electoral_context, payload, created_at]
@@ -567,6 +1541,7 @@ components:
         - capacidades
         - limiarPrivacidade
         - funcionalidades
+        - iaEleitoral
       properties:
         disponivel: { type: boolean, const: true }
         modulo: { type: string, const: inteligencia_eleitoral }
@@ -599,9 +1574,112 @@ components:
             catalogo: { type: boolean }
             exportacoes: { type: boolean }
             camadasMandato: { type: boolean }
-            ia: { type: boolean }
+            ia: { type: boolean, const: true }
             cenarios: { type: boolean }
             delegacao: { type: boolean }
+        iaEleitoral:
+          type: object
+          required: [enabled, mode, provider, model, promptVersion, keepAlive, webResearch, fallbackEnabled]
+          properties:
+            enabled: { type: boolean, const: true }
+            mode: { type: string, enum: [GENERATIVE, DETERMINISTIC] }
+            provider: { type: string }
+            model: { type: string }
+            promptVersion: { type: string }
+            keepAlive: { type: string }
+            webResearch:
+              type: object
+              required: [enabled, provider]
+              properties:
+                enabled: { type: boolean }
+                provider: { type: string, enum: [SEARXNG] }
+            fallbackEnabled: { type: boolean }
+    ElectoralCoverageCycle:
+      type: object
+      required:
+        - ano
+        - escopo
+        - status
+        - cargosEsperados
+        - cargosDisponiveis
+        - cargosAusentes
+        - granularidades
+        - datasetVersionIds
+        - fonteOficial
+      properties:
+        ano: { type: integer, enum: [2012, 2014, 2016, 2018, 2020, 2022, 2024] }
+        escopo: { type: string, enum: [municipal, general] }
+        status: { type: string, enum: [COMPLETE, PARTIAL, MISSING] }
+        cargosEsperados: { type: array, items: { type: string } }
+        cargosDisponiveis: { type: array, items: { type: string } }
+        cargosAusentes: { type: array, items: { type: string } }
+        granularidades:
+          type: array
+          items: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
+        datasetVersionIds: { type: array, items: { type: string, format: uuid } }
+        fonteOficial: { type: string, format: uri }
+    ElectoralCoverageJurisdiction:
+      type: object
+      required:
+        - uf
+        - status
+        - ciclosCompletos
+        - ciclosParciais
+        - ciclosAusentes
+        - percentualCompleto
+        - ciclos
+      properties:
+        uf: { type: string, pattern: '^[A-Z]{2}$' }
+        status: { type: string, enum: [COMPLETE, INCOMPLETE] }
+        ciclosCompletos: { type: integer, minimum: 0, maximum: 7 }
+        ciclosParciais: { type: integer, minimum: 0, maximum: 7 }
+        ciclosAusentes: { type: integer, minimum: 0, maximum: 7 }
+        percentualCompleto: { type: number, minimum: 0, maximum: 1 }
+        ciclos:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items: { $ref: '#/components/schemas/ElectoralCoverageCycle' }
+    ElectoralCoverage:
+      type: object
+      required: [content, total, resumo]
+      properties:
+        content:
+          type: array
+          items:
+            type: object
+            required:
+              - ano
+              - escopo
+              - uf
+              - cargos
+              - granularidades
+              - linhas
+              - votos
+              - qualidade
+              - datasetVersionId
+            properties:
+              ano: { type: integer }
+              escopo: { type: string, enum: [municipal, general] }
+              uf: { type: string }
+              cargoCodigo: { type: [string, 'null'] }
+              cargos: { type: array, items: { type: string } }
+              granularidades: { type: array, items: { type: string } }
+              linhas: { type: integer, minimum: 0 }
+              votos: { type: integer, minimum: 0 }
+              qualidade: { type: [number, 'null'], minimum: 0, maximum: 1 }
+              datasetVersionId: { type: string, format: uuid }
+        total: { type: integer, minimum: 0 }
+        resumo:
+          type: object
+          required: [primeiroAno, ultimoAno, ciclosEsperados, jurisdicoes]
+          properties:
+            primeiroAno: { type: integer, const: 2012 }
+            ultimoAno: { type: integer, const: 2024 }
+            ciclosEsperados: { type: integer, const: 7 }
+            jurisdicoes:
+              type: array
+              items: { $ref: '#/components/schemas/ElectoralCoverageJurisdiction' }
     Election:
       type: object
       required: [id, year, scope, rounds, dataset_version]
@@ -623,6 +1701,44 @@ components:
         page: { type: integer }
         perPage: { type: integer }
         total: { type: integer }
+    ElectoralIdentity:
+      type: object
+      required: [configured, ownerUserId, canManage, cpfConfigured, identityStatus, manualFallbackAllowed, candidacies]
+      properties:
+        configured: { type: boolean }
+        ownerUserId: { type: string, format: uuid }
+        canManage: { type: boolean }
+        cpfConfigured: { type: boolean }
+        identityStatus:
+          type: string
+          enum: [verified, cpf_missing, official_data_unavailable, not_found]
+        lastOfficialSyncAt: { type: [string, 'null'], format: date-time }
+        manualFallbackAllowed: { type: boolean }
+        candidacies:
+          type: array
+          items: { $ref: '#/components/schemas/ElectoralIdentityCandidacy' }
+    ElectoralIdentityCandidacy:
+      type: object
+      required: [id, candidacy_id, candidate, election, method, confirmed_at]
+      properties:
+        id: { type: string, format: uuid }
+        candidacy_id: { type: string, format: uuid }
+        candidate: { $ref: '#/components/schemas/Candidate' }
+        election: { $ref: '#/components/schemas/Election' }
+        method: { type: string, enum: [official_cpf, manual_fallback, human_confirmation] }
+        automatic: { type: boolean }
+        confirmed_at: { type: string, format: date-time }
+    ElectoralIdentityReconciliation:
+      type: object
+      required: [status, matchedCandidacies, createdOrUpdated, manualFallbackAllowed]
+      properties:
+        status:
+          type: string
+          enum: [verified, cpf_missing, official_data_unavailable, not_found]
+        matchedCandidacies: { type: integer, minimum: 0 }
+        createdOrUpdated: { type: integer, minimum: 0 }
+        lastOfficialSyncAt: { type: [string, 'null'], format: date-time }
+        manualFallbackAllowed: { type: boolean }
     Candidate:
       type: object
       required: [id, candidacy_id, full_name, ballot_name, number, office, party, election, dataset_version]
@@ -665,12 +1781,18 @@ components:
         territory_id: { type: string, format: uuid }
         territory_name: { type: string }
         territory_code: { type: string }
-        level: { type: string, enum: [municipality, electoral_zone] }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
         votes: { type: integer, minimum: 0 }
         share: { type: number, minimum: 0, maximum: 1 }
         rank: { type: integer, minimum: 1 }
         denominator_value: { type: integer, minimum: 0 }
         quality_warning: { type: string }
+        derived:
+          type: boolean
+          description: Indica agregação derivada, como bairro obtido do cadastro do local.
+        mapping_type:
+          type: string
+          enum: [OFFICIAL, OFFICIAL_SECTION_ONLY, DERIVED]
     ResultSet:
       type: object
       required: [candidate, source, dataset_version, denominator, available_levels, level, candidate_total_votes, items, page, perPage, total]
@@ -682,8 +1804,16 @@ components:
         quality_score: { type: number, minimum: 0, maximum: 1 }
         available_levels:
           type: array
-          items: { type: string, enum: [municipality, electoral_zone] }
-        level: { type: string, enum: [municipality, electoral_zone] }
+          items: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
+        territorial_source:
+          nullable: true
+          type: object
+          properties:
+            version: { type: string, format: uuid }
+            section_source: { type: string, format: uri }
+            location_source: { type: string, format: uri }
+            parser_version: { type: string }
         candidate_total_votes: { type: integer, minimum: 0 }
         denominator:
           type: object
@@ -711,7 +1841,7 @@ components:
           items: { type: string, format: uuid }
         level:
           type: string
-          enum: [municipality, electoral_zone]
+          enum: [municipality, electoral_zone, neighborhood, polling_place, section]
         municipalityCode: { type: string }
     Comparison:
       type: object
@@ -720,7 +1850,7 @@ components:
         candidates: { type: array, items: { $ref: '#/components/schemas/Candidate' } }
         dataset_version: { type: string, format: uuid }
         source: { type: string, format: uri }
-        level: { type: string, enum: [municipality, electoral_zone] }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
         denominator: { type: object }
         comparability: { type: object }
         items:
@@ -787,7 +1917,7 @@ components:
       required: [geometry_available, level, type, features]
       properties:
         geometry_available: { type: boolean }
-        level: { type: string, enum: [municipality, electoral_zone] }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
         geometry_version: { type: string, format: uuid }
         reference_year: { type: integer }
         source: { type: string, format: uri }
@@ -809,21 +1939,89 @@ components:
                 required: [territory_code, votes, share, rank, geometry_official]
     MandateOverlay:
       type: object
-      required: [territory_id, privacy_threshold, metrics]
+      required: [snapshot, territory, formula, privacy, electoral_context, linkage]
       properties:
-        territory_id: { type: string, format: uuid }
-        privacy_threshold: { type: integer }
-        metrics:
+        snapshot:
           type: object
-          additionalProperties: { type: number }
-        suppressed_metrics:
+          required: [id, period_start, period_end, source_cutoff_at, config_hash]
+        territory:
+          type: object
+          description: Indicadores agregados; metrics e ict são nulos quando suppressed=true.
+        formula: { type: object }
+        privacy: { type: object }
+        electoral_context:
+          type: object
+          description: Contexto jurisdicional que não integra o ICT.
+        linkage:
+          type: object
+          description: Explicita a ausência de crosswalk em vez de inventar geometrias.
+    TerritoryBriefing:
+      type: object
+      required: [draft, review_required, title, period, privacy, facts, alerts, methodology_notice]
+      properties:
+        draft: { type: boolean, const: true }
+        review_required: { type: boolean, const: true }
+        title: { type: string }
+        period: { type: object }
+        privacy: { type: object }
+        facts: { type: array, items: { type: object } }
+        categories: { type: array, items: { type: object } }
+        alerts: { type: array, items: { $ref: '#/components/schemas/ElectoralAlert' } }
+        public_commitments: { type: object }
+        suggested_questions: { type: array, items: { type: string } }
+        methodology_notice: { type: string }
+        linkage: { type: object }
+    ElectoralAlertPreferenceInput:
+      type: object
+      required: [enabled, channels, frequency, alert_types]
+      properties:
+        enabled: { type: boolean }
+        channels:
           type: array
-          items: { type: string }
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [IN_APP, EMAIL] }
+        frequency: { type: string, enum: [IMMEDIATE, DAILY, WEEKLY] }
+        alert_types:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [SLA_DEGRADED, SLA_OVERDUE, AGENDA_GAP, OVERSIGHT_GAP, COMMITMENT_OVERDUE]
+    ElectoralAlertPreference:
+      allOf:
+        - $ref: '#/components/schemas/ElectoralAlertPreferenceInput'
+        - type: object
+          properties:
+            available_channels: { type: array, items: { type: string } }
+            available_frequencies: { type: array, items: { type: string } }
+            available_alert_types: { type: array, items: { type: string } }
+            updated_at: { type: [string, 'null'], format: date-time }
+    ElectoralAlert:
+      type: object
+      required: [type, severity, message]
+      properties:
+        type: { type: string }
+        severity: { type: string, enum: [INFO, WARNING] }
+        message: { type: string }
+        territory_id: { type: string, format: uuid }
+        territory_name: { type: string }
+    ElectoralAlertFeed:
+      type: object
+      required: [preference, snapshot_id, content]
+      properties:
+        preference: { $ref: '#/components/schemas/ElectoralAlertPreference' }
+        snapshot_id: { type: [string, 'null'], format: uuid }
+        source_cutoff_at: { type: string, format: date-time }
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/ElectoralAlert' }
     InsightRequest:
       type: object
       required: [type, election_id]
       properties:
-        type: { type: string, enum: [candidate, comparison, territory, briefing] }
+        type: { type: string, enum: [candidate, comparison, question] }
         election_id: { type: string, format: uuid }
         candidate_ids:
           type: array
@@ -832,32 +2030,256 @@ components:
         territory_ids:
           type: array
           items: { type: string, format: uuid }
-        question: { type: string, maxLength: 1000 }
+        question: { type: string, minLength: 10, maxLength: 1000 }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section], default: municipality }
+        municipality_code: { type: string }
+    ElectoralInsight:
+      type: object
+      required: [id, analysis_type, status, facts, calculations, hypotheses, limitations, citations, model, generation, draft]
+      properties:
+        id: { type: string, format: uuid }
+        analysis_type: { type: string, enum: [candidate, comparison, question] }
+        status: { type: string, enum: [QUEUED, PROCESSING, COMPLETED, FAILED, REFUSED, HIDDEN] }
+        input_snapshot: { type: object, additionalProperties: true }
+        facts: { type: array, items: { type: object, additionalProperties: true } }
+        calculations: { type: array, items: { type: object, additionalProperties: true } }
+        hypotheses: { type: array, items: { type: object, additionalProperties: true } }
+        limitations: { type: array, items: { type: string } }
+        citations: { type: array, items: { type: object, additionalProperties: true } }
+        model: { type: object, additionalProperties: true }
+        generation:
+          type: object
+          description: Informa se a camada generativa foi aplicada ou se houve fallback deterministico.
+          properties:
+            enabled: { type: boolean }
+            mode: { type: string, enum: [GENERATIVE, DETERMINISTIC] }
+            provider: { type: string }
+            model: { type: string }
+            promptVersion: { type: string }
+            applied: { type: boolean }
+            fallbackUsed: { type: boolean }
+            fallbackReason: { type: string }
+        draft: { type: boolean, const: true }
+        review_required: { type: boolean, const: true }
+        safety:
+          type: object
+          description: Classificação sem o texto bruto de prompts recusados.
+          additionalProperties: true
+        validation:
+          type: object
+          description: Resultado da validação de citações, números, fórmulas e causalidade.
+          additionalProperties: true
+        review:
+          type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [PENDING, APPROVED, REJECTED, NOT_REQUIRED] }
+            reviewed_by_id: { type: [string, 'null'], format: uuid }
+            reviewed_at: { type: [string, 'null'], format: date-time }
+            notes: { type: [string, 'null'], maxLength: 1000 }
+            revision: { type: object, additionalProperties: true }
+    ElectoralInsightPage:
+      type: object
+      required: [content, page, perPage, total, totalPages]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/ElectoralInsight' }
+        page: { type: integer, minimum: 1 }
+        perPage: { type: integer, minimum: 5, maximum: 25 }
+        total: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 1 }
+    InsightFeedbackInput:
+      type: object
+      required: [rating]
+      properties:
+        rating: { type: string, enum: [ACCEPTED, DISCARDED, CONTESTED] }
+        reason: { type: string, maxLength: 160 }
+        comment: { type: string, maxLength: 1000 }
+    InsightReviewInput:
+      type: object
+      required: [decision, notes]
+      properties:
+        decision: { type: string, enum: [APPROVE, REJECT, RESTORE] }
+        notes: { type: string, minLength: 5, maxLength: 1000 }
     ScenarioInput:
       type: object
-      required: [name, baseline_election_id, assumptions]
+      required: [name, baseline_election_id, candidate_id, assumptions]
       properties:
         name: { type: string, maxLength: 120 }
         baseline_election_id: { type: string, format: uuid }
+        candidate_id: { type: string, format: uuid }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section], default: municipality }
         assumptions:
           type: array
           minItems: 1
           items:
             type: object
-            required: [territory_id, metric, value]
+            required: [territory_id]
             properties:
               territory_id: { type: string, format: uuid }
-              metric: { type: string }
-              value: { type: number }
+              candidate_share_delta: { type: number, minimum: -1, maximum: 1 }
+              denominator_delta: { type: number, minimum: -1, maximum: 1 }
+              candidate_share_uncertainty: { type: number, minimum: 0, maximum: 1, default: 0 }
+              denominator_uncertainty: { type: number, minimum: 0, maximum: 1, default: 0 }
+              rationale: { type: string, maxLength: 500 }
     Scenario:
       allOf:
         - $ref: '#/components/schemas/ScenarioInput'
         - type: object
-          required: [id, created_at, disclaimer]
+          required: [id, created_at, disclaimer, baseline_snapshot, result, methodology_version]
           properties:
             id: { type: string, format: uuid }
             created_at: { type: string, format: date-time }
             disclaimer: { type: string }
+            baseline_snapshot: { type: object, additionalProperties: true }
+            result: { type: object, additionalProperties: true }
+            methodology_version: { type: string }
+            source_scenario_id: { type: [string, 'null'], format: uuid }
+            read_only: { type: boolean, default: false }
+    ScenarioPreview:
+      type: object
+      required: [simulation, persisted, candidate, baseline, assumptions, result, methodology_version, disclaimer]
+      properties:
+        simulation: { type: boolean, const: true }
+        persisted: { type: boolean, const: false }
+        candidate: { type: object, additionalProperties: true }
+        baseline: { type: object, additionalProperties: true }
+        assumptions:
+          type: array
+          items: { type: object, additionalProperties: true }
+        result: { type: object, additionalProperties: true }
+        methodology_version: { type: string }
+        disclaimer: { type: string }
+    ScenarioPreviewInput:
+      type: object
+      required: [baseline_election_id, candidate_id, assumptions]
+      properties:
+        baseline_election_id: { type: string, format: uuid }
+        candidate_id: { type: string, format: uuid }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section], default: municipality }
+        municipality_code: { type: string }
+        assumptions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [territory_id, rationale]
+            properties:
+              territory_id: { type: string, format: uuid }
+              candidate_share_delta: { type: number, minimum: -1, maximum: 1 }
+              denominator_delta: { type: number, minimum: -1, maximum: 1 }
+              candidate_share_uncertainty: { type: number, minimum: 0, maximum: 1 }
+              denominator_uncertainty: { type: number, minimum: 0, maximum: 1 }
+              rationale: { type: string, minLength: 1, maxLength: 500 }
+    ScenarioCopyInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 160 }
+        assumptions:
+          $ref: '#/components/schemas/ScenarioInput/properties/assumptions'
+    ScenarioComparisonInput:
+      type: object
+      required: [scenario_ids]
+      properties:
+        scenario_ids:
+          type: array
+          minItems: 2
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ScenarioSensitivityInput:
+      type: object
+      properties:
+        candidate_share_range_pp: { type: number, minimum: 0, maximum: 100, default: 5 }
+        denominator_range_percent: { type: number, minimum: 0, maximum: 100, default: 5 }
+        steps: { type: integer, minimum: 3, maximum: 11, default: 5 }
+    ScenarioShareInput:
+      type: object
+      properties:
+        expires_in_days: { type: integer, minimum: 1, maximum: 30, default: 7 }
+    ScenarioShare:
+      type: object
+      required: [id, scenario_id, read_only, expires_at, url]
+      properties:
+        id: { type: string, format: uuid }
+        scenario_id: { type: string, format: uuid }
+        read_only: { type: boolean, const: true }
+        expires_at: { type: string, format: date-time }
+        url: { type: string, format: uri }
+    ScenarioShareMetadata:
+      type: object
+      required: [id, scenario_id, created_by_id, status, read_only, expires_at, access_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        scenario_id: { type: string, format: uuid }
+        created_by_id: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE, EXPIRED, REVOKED] }
+        read_only: { type: boolean, const: true }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        access_count: { type: integer, minimum: 0 }
+        last_accessed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    ScenarioAnalysis:
+      type: object
+      required: [id, analysis_type, anchor_scenario_id, scenario_ids, parameters, result, methodology_version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        analysis_type: { type: string, enum: [COMPARISON, SENSITIVITY] }
+        anchor_scenario_id: { type: string, format: uuid }
+        scenario_ids:
+          type: array
+          items: { type: string, format: uuid }
+        parameters: { type: object, additionalProperties: true }
+        result: { type: object, additionalProperties: true }
+        methodology_version: { type: string }
+        created_by_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    ScenarioPortfolioInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 160 }
+        description: { type: string, maxLength: 1000 }
+        scenario_ids:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ScenarioPortfolioGoal:
+      type: object
+      required: [scope, metric, target_value]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [TOTAL, TERRITORY] }
+        territory_id: { type: [string, 'null'], format: uuid }
+        metric: { type: string, enum: [VOTES, SHARE] }
+        target_value: { type: number, minimum: 0 }
+        rationale: { type: string, maxLength: 500 }
+    ScenarioPortfolio:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioPortfolioInput'
+        - type: object
+          required: [id, status, goals, scenarios, simulation, disclaimer, methodology_version, created_at, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [ACTIVE, ARCHIVED] }
+            reference_scenario_id: { type: [string, 'null'], format: uuid }
+            goals:
+              type: array
+              items: { $ref: '#/components/schemas/ScenarioPortfolioGoal' }
+            scenarios:
+              type: array
+              items: { type: object, additionalProperties: true }
+            evaluation: { type: object, additionalProperties: true }
+            simulation: { type: boolean, const: true }
+            disclaimer: { type: string }
+            methodology_version: { type: string }
+            created_by_id: { type: string, format: uuid }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
     ReportRequest:
       type: object
       required: [report_type, format, purpose, election_id, candidate_ids, level]
@@ -872,7 +2294,7 @@ components:
           maxItems: 5
           uniqueItems: true
           items: { type: string, format: uuid }
-        level: { type: string, enum: [municipality, electoral_zone] }
+        level: { type: string, enum: [municipality, electoral_zone, neighborhood, polling_place, section] }
         municipality_code: { type: string }
     ReportJob:
       type: object

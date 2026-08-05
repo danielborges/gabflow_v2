@@ -2,6 +2,14 @@ function percentage(value) {
   return new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 2 }).format(value);
 }
 
+const levelLabels = {
+  municipality: "Município",
+  electoral_zone: "Zona eleitoral",
+  neighborhood: "Bairro (derivado)",
+  polling_place: "Local de votação",
+  section: "Seção eleitoral",
+};
+
 export function CandidateResults({ response, loading, level, onLevelChange, onSort, onPageChange, selectedTerritoryCode, onTerritorySelect }) {
   if (loading) return <p aria-live="polite">Calculando resultado territorial...</p>;
   if (!response) return null;
@@ -17,8 +25,9 @@ export function CandidateResults({ response, loading, level, onLevelChange, onSo
         <label>
           Nível territorial
           <select value={level} onChange={(event) => onLevelChange(event.target.value)}>
-            <option value="municipality">Município</option>
-            <option value="electoral_zone">Zona eleitoral</option>
+            {(response.available_levels || ["municipality", "electoral_zone"]).map((value) => (
+              <option key={value} value={value}>{levelLabels[value] || value}</option>
+            ))}
           </select>
         </label>
       </header>
@@ -36,7 +45,14 @@ export function CandidateResults({ response, loading, level, onLevelChange, onSo
         <p className="electoral-empty" role="status">Não há resultado nesse nível territorial.</p>
       ) : (
         <div className="electoral-table-wrap">
-          <table>
+          <table className="candidate-territory-results-table">
+            <colgroup>
+              <col className="territory-column" />
+              <col className="votes-column" />
+              <col className="share-column" />
+              <col className="rank-column" />
+              <col className="denominator-column" />
+            </colgroup>
             <caption>Desempenho territorial de {candidate.ballot_name}</caption>
             <thead>
               <tr>
@@ -50,7 +66,7 @@ export function CandidateResults({ response, loading, level, onLevelChange, onSo
             <tbody>
               {response.items.map((item) => (
                 <tr key={item.territory_id} className={selectedTerritoryCode === item.territory_code ? "selected" : ""}>
-                  <td><button type="button" className="electoral-territory-link" onClick={() => onTerritorySelect(item.territory_code)}>{item.territory_name}</button>{item.quality_warning && <small>{item.quality_warning}</small>}</td>
+                  <td><button type="button" className="electoral-territory-link" onClick={() => onTerritorySelect(item.territory_code)}>{item.territory_name}</button>{item.derived && <small>Mapeamento derivado</small>}{item.quality_warning && <small>{item.quality_warning}</small>}</td>
                   <td>{item.votes.toLocaleString("pt-BR")}</td>
                   <td>{percentage(item.share)}</td>
                   <td>{item.rank}º</td>

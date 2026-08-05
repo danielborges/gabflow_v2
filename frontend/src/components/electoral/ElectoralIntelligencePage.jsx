@@ -1,18 +1,26 @@
 import { Database, Landmark, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../api";
-import { CandidateResults } from "./CandidateResults";
-import { CandidateSearch } from "./CandidateSearch";
 import { CandidateComparison } from "./CandidateComparison";
 import { CandidateHistory } from "./CandidateHistory";
 import { CandidateMap } from "./CandidateMap";
+import { CandidateResults } from "./CandidateResults";
+import { CandidateSearch } from "./CandidateSearch";
 import { DelegationPanel } from "./DelegationPanel";
-import { ReportJobs } from "./ReportJobs";
+import { ElectionExplorer } from "./ElectionExplorer";
 import { MandateIntelligencePanel } from "./MandateIntelligencePanel";
+import { ExplainableInsightsPanel } from "./ExplainableInsightsPanel";
+import { PublicCommitmentsPanel } from "./PublicCommitmentsPanel";
+import { ReportJobs } from "./ReportJobs";
+import { ScenarioPanel } from "./ScenarioPanel";
+import { electoralSectionDefinitions } from "./electoralNavigation";
 
-const initialParams = new URLSearchParams(window.location.search);
-
-export function ElectoralIntelligencePage() {
+export function ElectoralIntelligencePage({
+  activeSection = "overview",
+  onSectionChange,
+  onSectionsChange,
+}) {
+  const [initialParams] = useState(() => new URLSearchParams(window.location.search));
   const [data, setData] = useState(null);
   const [filters, setFilters] = useState({
     electionId: initialParams.get("eleicao") || "",
@@ -38,27 +46,48 @@ export function ElectoralIntelligencePage() {
   const [loadingResults, setLoadingResults] = useState(false);
   const [loadingComparison, setLoadingComparison] = useState(false);
   const [error, setError] = useState("");
+  const [analysisView, setAnalysisView] = useState(
+    initialParams.get("detalhe") || "results",
+  );
 
   useEffect(() => {
-    Promise.all([
+    apiRequest("/api/v1/electoral/identity/reconcile", { method: "POST" })
+      .catch(() => null)
+      .then(() => Promise.all([
       apiRequest("/api/v1/electoral/disponibilidade"),
       apiRequest("/api/v1/electoral/elections"),
+      apiRequest("/api/v1/electoral/identity"),
       apiRequest("/api/v1/electoral/coverage"),
       apiRequest("/api/v1/electoral/quality"),
       apiRequest("/api/v1/electoral/favorites"),
       apiRequest("/api/v1/electoral/saved-comparisons"),
-    ])
-      .then(([availability, elections, coverage, quality, favoriteResponse, savedResponse]) => {
-        setData({ availability, elections, coverage, quality });
+      ]))
+      .then(([availability, elections, identity, coverage, quality, favoriteResponse, savedResponse]) => {
+        setData({ availability, elections, identity, coverage, quality });
         setFavorites(favoriteResponse.content || []);
         setSavedComparisons(savedResponse.content || []);
-        setFilters((current) => ({
-          ...current,
-          electionId: current.electionId || elections.items?.[0]?.id || "",
-        }));
+        setFilters((current) => {
+          const ownElectionIds = new Set((elections.items || []).map((item) => item.id));
+          return {
+            ...current,
+            electionId: ownElectionIds.has(current.electionId)
+              ? current.electionId
+              : elections.items?.[0]?.id || "",
+          };
+        });
       })
       .catch((requestError) => setError(requestError.message));
   }, []);
+
+  useEffect(() => {
+    function restoreNavigation() {
+      const params = new URLSearchParams(window.location.search);
+      onSectionChange?.(params.get("secao") || "overview");
+      setAnalysisView(params.get("detalhe") || "results");
+    }
+    window.addEventListener("popstate", restoreNavigation);
+    return () => window.removeEventListener("popstate", restoreNavigation);
+  }, [onSectionChange]);
 
   function persistUrl(nextFilters, nextCandidate = selectedCandidate, nextLevel = level) {
     const params = new URLSearchParams(window.location.search);
@@ -70,7 +99,24 @@ export function ElectoralIntelligencePage() {
       candidato: nextCandidate?.id,
       nivel: nextLevel,
     };
-    Object.entries(values).forEach(([key, value]) => value ? params.set(key, value) : params.delete(key));
+    Object.entries(values).forEach(([key, value]) => (
+      value ? params.set(key, value) : params.delete(key)
+    ));
+    window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+  }
+
+  function navigateSection(sectionId) {
+    onSectionChange?.(sectionId);
+    setError("");
+    const params = new URLSearchParams(window.location.search);
+    params.set("secao", sectionId);
+    window.history.pushState({}, "", `${window.location.pathname}?${params}`);
+  }
+
+  function navigateAnalysis(view) {
+    setAnalysisView(view);
+    const params = new URLSearchParams(window.location.search);
+    params.set("detalhe", view);
     window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
   }
 
@@ -100,9 +146,16 @@ export function ElectoralIntelligencePage() {
     }
   }
 
-  async function loadResults(candidate, nextLevel = level, nextSort = sort, nextOrder = order, page = 1) {
+  async function loadResults(
+    candidate,
+    nextLevel = level,
+    nextSort = sort,
+    nextOrder = order,
+    page = 1,
+  ) {
     setSelectedCandidate(candidate);
     setLevel(nextLevel);
+    setAnalysisView("results");
     setLoadingResults(true);
     setError("");
     persistUrl(filters, candidate, nextLevel);
@@ -143,9 +196,11 @@ export function ElectoralIntelligencePage() {
   function toggleComparison(candidate) {
     if (!candidate) return;
     setComparison(null);
-    setComparisonCandidates((current) => current.some((item) => item.id === candidate.id)
-      ? current.filter((item) => item.id !== candidate.id)
-      : current.length < 5 ? [...current, candidate] : current);
+    setComparisonCandidates((current) => (
+      current.some((item) => item.id === candidate.id)
+        ? current.filter((item) => item.id !== candidate.id)
+        : current.length < 5 ? [...current, candidate] : current
+    ));
   }
 
   async function runComparison() {
@@ -169,11 +224,19 @@ export function ElectoralIntelligencePage() {
 
   async function reviewIdentity(linkedCandidateIds) {
     try {
-      await apiRequest(`/api/v1/electoral/candidates/${selectedCandidate.id}/identity-review`, {
-        method: "PUT",
-        body: JSON.stringify({ linked_candidate_ids: linkedCandidateIds, decision: "CONFIRMED" }),
-      });
-      setHistory(await apiRequest(`/api/v1/electoral/candidates/${selectedCandidate.id}/history`));
+      await apiRequest(
+        `/api/v1/electoral/candidates/${selectedCandidate.id}/identity-review`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            linked_candidate_ids: linkedCandidateIds,
+            decision: "CONFIRMED",
+          }),
+        },
+      );
+      setHistory(await apiRequest(
+        `/api/v1/electoral/candidates/${selectedCandidate.id}/history`,
+      ));
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -188,7 +251,12 @@ export function ElectoralIntelligencePage() {
       } else {
         const created = await apiRequest("/api/v1/electoral/favorites", {
           method: "POST",
-          body: JSON.stringify({ target_type: "candidate", target_id: candidate.id, label: candidate.ballot_name, snapshot: { number: candidate.number, party: candidate.party.acronym } }),
+          body: JSON.stringify({
+            target_type: "candidate",
+            target_id: candidate.id,
+            label: candidate.ballot_name,
+            snapshot: { number: candidate.number, party: candidate.party.acronym },
+          }),
         });
         setFavorites((current) => [created, ...current]);
       }
@@ -201,7 +269,12 @@ export function ElectoralIntelligencePage() {
     try {
       const created = await apiRequest("/api/v1/electoral/saved-comparisons", {
         method: "POST",
-        body: JSON.stringify({ name, election_id: filters.electionId, candidate_ids: comparisonCandidates.map((candidate) => candidate.id), level }),
+        body: JSON.stringify({
+          name,
+          election_id: filters.electionId,
+          candidate_ids: comparisonCandidates.map((candidate) => candidate.id),
+          level,
+        }),
       });
       setSavedComparisons((current) => [created, ...current]);
     } catch (requestError) {
@@ -211,7 +284,9 @@ export function ElectoralIntelligencePage() {
 
   async function deleteSavedComparison(comparisonId) {
     try {
-      await apiRequest(`/api/v1/electoral/saved-comparisons/${comparisonId}`, { method: "DELETE" });
+      await apiRequest(`/api/v1/electoral/saved-comparisons/${comparisonId}`, {
+        method: "DELETE",
+      });
       setSavedComparisons((current) => current.filter((item) => item.id !== comparisonId));
     } catch (requestError) {
       setError(requestError.message);
@@ -223,7 +298,12 @@ export function ElectoralIntelligencePage() {
     try {
       const loaded = await apiRequest("/api/v1/electoral/comparisons", {
         method: "POST",
-        body: JSON.stringify({ election_id: item.election_id, candidate_ids: item.candidate_ids, level: item.level, municipalityCode: item.municipalityCode }),
+        body: JSON.stringify({
+          election_id: item.election_id,
+          candidate_ids: item.candidate_ids,
+          level: item.level,
+          municipalityCode: item.municipalityCode,
+        }),
       });
       setFilters((current) => ({ ...current, electionId: item.election_id }));
       setLevel(item.level);
@@ -236,6 +316,27 @@ export function ElectoralIntelligencePage() {
     }
   }
 
+  async function refreshElectoralIdentity() {
+    const [identity, elections] = await Promise.all([
+      apiRequest("/api/v1/electoral/identity"),
+      apiRequest("/api/v1/electoral/elections"),
+    ]);
+    setData((current) => ({ ...current, identity, elections }));
+    const ownElectionIds = new Set((elections.items || []).map((item) => item.id));
+    setFilters((current) => ({
+      ...current,
+      electionId: ownElectionIds.has(current.electionId)
+        ? current.electionId
+        : elections.items?.[0]?.id || "",
+    }));
+    setSelectedCandidate(null);
+    setComparisonCandidates([]);
+    setComparison(null);
+    setResults(null);
+    setHistory(null);
+    setMapResponse(null);
+  }
+
   function changeSort(nextSort) {
     const nextOrder = sort === nextSort && order === "desc" ? "asc" : "desc";
     setSort(nextSort);
@@ -243,50 +344,268 @@ export function ElectoralIntelligencePage() {
     loadResults(selectedCandidate, level, nextSort, nextOrder);
   }
 
+  const hasMandateLayers = data?.availability.funcionalidades?.camadasMandato
+    && data.availability.capacidades?.includes("ver_camadas_mandato");
+  const hasReports = data?.availability.funcionalidades?.exportacoes
+    && data.availability.capacidades?.includes("exportar");
+  const hasDelegation = data?.availability.funcionalidades?.delegacao
+    && data.availability.capacidades?.includes("delegar_acesso");
+  const hasInsights = data?.availability.funcionalidades?.ia
+    && data.availability.capacidades?.includes("usar_ia");
+  const hasScenarios = data?.availability.funcionalidades?.cenarios
+    && data.availability.capacidades?.includes("criar_cenario");
+  const canCompare = data?.availability.capacidades?.includes("comparar_candidatos");
+  const enabledSectionIds = new Set([
+    "overview",
+    "explore",
+    "results",
+    ...(canCompare ? ["comparisons"] : []),
+    ...(hasMandateLayers ? ["mandate", "commitments"] : []),
+    ...(hasInsights ? ["insights"] : []),
+    ...(hasScenarios ? ["scenarios"] : []),
+    ...(hasReports ? ["reports"] : []),
+    ...(hasDelegation ? ["access"] : []),
+  ]);
+  const sections = electoralSectionDefinitions.filter((section) => (
+    enabledSectionIds.has(section.id)
+  ));
+  const sectionIdsKey = sections.map((section) => section.id).join(",");
+  useEffect(() => {
+    if (data) onSectionsChange?.(sectionIdsKey.split(",").filter(Boolean));
+  }, [data, onSectionsChange, sectionIdsKey]);
+  const currentSection = sections.find((section) => section.id === activeSection)
+    || sections[0];
+  const coverageSummary = data?.coverage?.resumo?.jurisdicoes?.[0];
+  const incompleteCycles = coverageSummary?.ciclos?.filter(
+    (cycle) => cycle.status !== "COMPLETE",
+  ) || [];
+  const operationalBlocked = !data?.identity?.configured && [
+    "results",
+    "comparisons",
+    "insights",
+    "scenarios",
+    "reports",
+  ].includes(currentSection.id);
+
   return (
     <section className="page-section electoral-foundation-page">
-      <header className="page-header">
-        <div><p className="eyebrow">Módulo exclusivo do Parlamentar</p><h1>Inteligência Eleitoral</h1><p>Pesquisa e resultado territorial com fonte, versão e metodologia.</p></div>
-        <Landmark size={30} aria-hidden="true" />
+      <header className="page-header electoral-page-header">
+        <div>
+          <p className="eyebrow">Módulo de insights eleitorais</p>
+          <h1><Landmark className="electoral-title-icon" size={30} aria-hidden="true" />Inteligência Eleitoral</h1>
+          <p>Dados eleitorais e gestão territorial organizados por área de trabalho.</p>
+        </div>
       </header>
       {error && <p className="form-error" role="alert">{error}</p>}
       {!data && !error && <p aria-live="polite">Carregando catálogo eleitoral...</p>}
-      {data && (
-        <>
-          <div className="electoral-overview-grid">
-            <div className="electoral-foundation-card"><ShieldCheck size={28} aria-hidden="true" /><div><h2>Catálogo consultável</h2><dl><div><dt>Mandato</dt><dd>{data.availability.mandato.jurisdicao}</dd></div><div><dt>Eleições</dt><dd>{data.elections.total}</dd></div></dl></div></div>
-            <div className="electoral-foundation-card"><Database size={28} aria-hidden="true" /><div><h2>Cobertura oficial</h2><dl><div><dt>Recortes</dt><dd>{data.coverage.total}</dd></div><div><dt>Qualidade média</dt><dd>{data.quality.qualidadeMedia ?? "Sem carga"}</dd></div></dl></div></div>
-          </div>
-          <CandidateSearch
+
+      {data && <div className="electoral-workspace-shell">
+        <div className="electoral-workspace-content" aria-labelledby={currentSection.id === "insights" ? "insights-title" : "electoral-section-title"}>
+          {!(["insights", "comparisons", "explore"].includes(currentSection.id)) && <header className="electoral-section-heading">
+            <p className="eyebrow">Área de trabalho</p>
+            <h2 id="electoral-section-title">{currentSection.label}</h2>
+            <p>{currentSection.description}</p>
+          </header>}
+
+          {currentSection.id === "overview" && <>
+            <div className="electoral-overview-grid">
+              <div className="electoral-foundation-card">
+                <ShieldCheck size={28} aria-hidden="true" />
+                <div>
+                  <h3>Catálogo consultável</h3>
+                  <dl>
+                    <div><dt>Mandato</dt><dd>{data.availability.mandato.jurisdicao}</dd></div>
+                    <div><dt>Eleições</dt><dd>{data.elections.total}</dd></div>
+                  </dl>
+                </div>
+              </div>
+              <div className="electoral-foundation-card">
+                <Database size={28} aria-hidden="true" />
+                <div>
+                  <h3>Cobertura oficial</h3>
+                  <dl>
+                    <div>
+                      <dt>Ciclos completos</dt>
+                      <dd>{coverageSummary
+                        ? `${coverageSummary.ciclosCompletos}/${data.coverage.resumo.ciclosEsperados}`
+                        : data.coverage.total}</dd>
+                    </div>
+                    <div>
+                      <dt>Cobertura histórica</dt>
+                      <dd>{coverageSummary
+                        ? `${Math.round(coverageSummary.percentualCompleto * 100)}%`
+                        : "Não aferida"}</dd>
+                    </div>
+                    <div>
+                      <dt>Qualidade média</dt>
+                      <dd>{data.quality.qualidadeMedia ?? "Sem carga"}</dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            </div>
+            {coverageSummary && <section
+              className={`electoral-coverage-status ${coverageSummary.status.toLowerCase()}`}
+              aria-labelledby="electoral-coverage-title"
+            >
+              <div>
+                <h3 id="electoral-coverage-title">
+                  {coverageSummary.status === "COMPLETE"
+                    ? `Série histórica completa para ${coverageSummary.uf}`
+                    : `Cobertura histórica incompleta para ${coverageSummary.uf}`}
+                </h3>
+                <p>
+                  Matriz oficial de {data.coverage.resumo.primeiroAno} a {data.coverage.resumo.ultimoAno}.
+                  Ciclos parciais ou ausentes ficam explícitos e não são tratados como cobertura válida.
+                </p>
+              </div>
+              {incompleteCycles.length > 0 && <ul aria-label="Ciclos eleitorais pendentes">
+                {incompleteCycles.map((cycle) => <li key={`${cycle.ano}-${cycle.escopo}`}>
+                  <strong>{cycle.ano}</strong>
+                  <span>{cycle.escopo === "municipal" ? "Municipal" : "Geral"}</span>
+                  <small>{cycle.status === "PARTIAL" ? "Parcial" : "Ausente"}</small>
+                </li>)}
+              </ul>}
+            </section>}
+            <div className="electoral-quick-actions" aria-label="Atalhos da Inteligência Eleitoral">
+              {sections.filter((section) => section.id !== "overview").map((section) => {
+                const Icon = section.icon;
+                return <button
+                  type="button"
+                  key={section.id}
+                  onClick={() => navigateSection(section.id)}
+                >
+                  <Icon size={22} aria-hidden="true" />
+                  <span><strong>{section.label}</strong><small>{section.description}</small></span>
+                  <span aria-hidden="true">→</span>
+                </button>;
+              })}
+            </div>
+          </>}
+
+          {currentSection.id === "explore" && <ElectionExplorer
+            identity={data.identity}
+            onIdentityChanged={refreshElectoralIdentity}
+            onError={setError}
+          />}
+
+          {operationalBlocked && <section className="electoral-analysis-card electoral-identity-required" aria-labelledby="electoral-identity-required-title">
+            <div>
+              <p className="eyebrow">Configuração necessária</p>
+              <h2 id="electoral-identity-required-title">Verifique sua identidade eleitoral</h2>
+              <p>O GabFlow vincula automaticamente as participações encontradas pelo CPF do parlamentar nos dados oficiais sincronizados do TSE. Se a verificação não for possível, a confirmação manual ficará disponível como contingência.</p>
+            </div>
+            <button type="button" className="primary-button" onClick={() => navigateSection("explore")}>Verificar identidade ou explorar eleições</button>
+          </section>}
+
+          {!operationalBlocked && currentSection.id === "results" && <>
+            <CandidateSearch
+              elections={data.elections.items || []}
+              filters={filters}
+              onFiltersChange={updateFilters}
+              onSubmit={submitSearch}
+              loading={loadingSearch}
+              response={candidates}
+              selectedCandidateId={selectedCandidate?.id}
+              onSelect={(candidate) => loadResults(candidate)}
+              onPageChange={runSearch}
+              comparisonCandidates={comparisonCandidates}
+              onToggleComparison={toggleComparison}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+            />
+            {(selectedCandidate || loadingResults) && <nav
+              className="electoral-detail-tabs"
+              aria-label="Detalhes da candidatura"
+            >
+              {[
+                ["results", "Resultado"],
+                ["map", "Mapa"],
+                ["history", "Histórico"],
+              ].map(([id, label]) => <button
+                type="button"
+                key={id}
+                className={analysisView === id ? "active" : ""}
+                aria-pressed={analysisView === id}
+                onClick={() => navigateAnalysis(id)}
+              >{label}</button>)}
+            </nav>}
+            {analysisView === "results" && <CandidateResults
+              response={results}
+              loading={loadingResults}
+              level={level}
+              onLevelChange={(nextLevel) => loadResults(selectedCandidate, nextLevel)}
+              onSort={changeSort}
+              onPageChange={(page) => loadResults(selectedCandidate, level, sort, order, page)}
+              selectedTerritoryCode={selectedTerritoryCode}
+              onTerritorySelect={setSelectedTerritoryCode}
+            />}
+            {analysisView === "map" && <CandidateMap
+              response={mapResponse}
+              metric={mapMetric}
+              onMetricChange={setMapMetric}
+              selectedCode={selectedTerritoryCode}
+              onSelect={setSelectedTerritoryCode}
+            />}
+            {analysisView === "history" && <CandidateHistory
+              response={history}
+              loading={loadingResults}
+              selectedCandidateId={selectedCandidate?.id}
+              onReview={reviewIdentity}
+            />}
+          </>}
+
+          {!operationalBlocked && currentSection.id === "comparisons" && <CandidateComparison
             elections={data.elections.items || []}
-            filters={filters}
-            onFiltersChange={updateFilters}
-            onSubmit={submitSearch}
-            loading={loadingSearch}
-            response={candidates}
-            selectedCandidateId={selectedCandidate?.id}
-            onSelect={(candidate) => loadResults(candidate)}
-            onPageChange={runSearch}
+            electionId={filters.electionId}
+            onElectionChange={(electionId) => updateFilters({ electionId })}
+            selected={comparisonCandidates}
+            response={comparison}
+            loading={loadingComparison}
+            onCompare={runComparison}
+            onToggle={toggleComparison}
+            onRemove={(candidateId) => toggleComparison(
+              comparisonCandidates.find((item) => item.id === candidateId),
+            )}
+            onSave={saveComparison}
+            saved={savedComparisons}
+            onLoadSaved={loadSavedComparison}
+            onDeleteSaved={deleteSavedComparison}
+            onError={setError}
+          />}
+          {currentSection.id === "mandate" && <MandateIntelligencePanel
+            electionId={filters.electionId}
+            selectedCandidate={selectedCandidate}
+            onError={setError}
+          />}
+          {!operationalBlocked && currentSection.id === "insights" && <ExplainableInsightsPanel
+            elections={data.elections.items || []}
+            electionId={filters.electionId}
+            selectedCandidate={selectedCandidate}
             comparisonCandidates={comparisonCandidates}
-            onToggleComparison={toggleComparison}
-            favorites={favorites}
-            onToggleFavorite={toggleFavorite}
-          />
-          <CandidateResults response={results} loading={loadingResults} level={level} onLevelChange={(nextLevel) => loadResults(selectedCandidate, nextLevel)} onSort={changeSort} onPageChange={(page) => loadResults(selectedCandidate, level, sort, order, page)} selectedTerritoryCode={selectedTerritoryCode} onTerritorySelect={setSelectedTerritoryCode} />
-          <CandidateMap response={mapResponse} metric={mapMetric} onMetricChange={setMapMetric} selectedCode={selectedTerritoryCode} onSelect={setSelectedTerritoryCode} />
-          <CandidateHistory response={history} loading={loadingResults} selectedCandidateId={selectedCandidate?.id} onReview={reviewIdentity} />
-          <CandidateComparison selected={comparisonCandidates} response={comparison} loading={loadingComparison} onCompare={runComparison} onRemove={(candidateId) => toggleComparison(comparisonCandidates.find((item) => item.id === candidateId))} onSave={saveComparison} saved={savedComparisons} onLoadSaved={loadSavedComparison} onDeleteSaved={deleteSavedComparison} />
-          {data.availability.funcionalidades?.camadasMandato && data.availability.capacidades?.includes("ver_camadas_mandato") && (
-            <MandateIntelligencePanel electionId={filters.electionId} selectedCandidate={selectedCandidate} onError={setError} />
-          )}
-          {data.availability.funcionalidades?.exportacoes && data.availability.capacidades?.includes("exportar") && (
-            <ReportJobs electionId={filters.electionId} selectedCandidate={selectedCandidate} comparisonCandidates={comparisonCandidates} level={level} onError={setError} />
-          )}
-          {data.availability.funcionalidades?.delegacao && data.availability.capacidades?.includes("delegar_acesso") && (
-            <DelegationPanel onError={setError} />
-          )}
-        </>
-      )}
+            level={level}
+            aiRuntime={data.availability.iaEleitoral}
+            onError={setError}
+          />}
+          {!operationalBlocked && currentSection.id === "scenarios" && <ScenarioPanel
+            elections={data.elections.items || []}
+            electionId={filters.electionId}
+            selectedCandidate={selectedCandidate}
+            results={results}
+            level={level}
+            onError={setError}
+          />}
+          {currentSection.id === "commitments" && <PublicCommitmentsPanel onError={setError} />}
+          {!operationalBlocked && currentSection.id === "reports" && <ReportJobs
+            electionId={filters.electionId}
+            selectedCandidate={selectedCandidate}
+            comparisonCandidates={comparisonCandidates}
+            level={level}
+            onError={setError}
+          />}
+          {currentSection.id === "access" && <DelegationPanel onError={setError} />}
+        </div>
+      </div>}
     </section>
   );
 }
