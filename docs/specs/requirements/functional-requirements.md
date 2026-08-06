@@ -15,6 +15,25 @@
 - **RF-013** Exibir histórico consolidado de solicitações e interações.
 - **RF-014** Registrar preferências de contato e consentimentos. **Implementado no P1.**
 - **RF-015** Permitir pseudonimização e anonimização conforme política de retenção. **Implementado no P1.**
+- **RF-CID-001** Disponibilizar cadastro e edição de cidadão em uma área persistente da tela, sem modal, preservando o contexto da agenda e da pessoa selecionada.
+- **RF-CID-002** Registrar, no cadastro inicial, foto, nome, nome social, telefone, e-mail, endereço, profissão, data de nascimento, CPF, título de eleitor, canal preferencial, base legal e autorizações independentes de contato e divulgação pública; somente o nome exige entrada do usuário, sem prejuízo de validações condicionais dos valores informados e da resolução da base legal pela política do tenant.
+- **RF-CID-003** Permitir obter a foto pela câmera do dispositivo, mediante ação e permissão explícitas, com alternativa de escolher arquivo, reenquadrar, substituir e remover antes de salvar.
+- **RF-CID-004** Consultar cidadãos em diretório com aparência de agenda telefônica, pesquisa por nome, nome social, CPF ou contato, agrupamento e navegação alfabética, paginação incremental e estados de carregamento, vazio e erro.
+- **RF-CID-005** Alertar sobre homônimos antes da criação e permitir abrir e reutilizar um cadastro existente ou continuar com um novo cadastro após confirmação explícita.
+- **RF-CID-006** Impedir CPF duplicado no mesmo tenant e identificar, na resposta de conflito, o cidadão já vinculado ao documento para que o usuário possa abrir o cadastro existente.
+- **RF-CID-007** Resolver automaticamente bairro e território a partir do endereço validado, exibi-los como dados derivados somente para consulta e permitir nova tentativa quando a resolução falhar.
+- **RF-CID-017** Permitir que administradores mantenham aliases e importem geometrias GeoJSON Polygon/MultiPolygon para territórios, resolvendo o endereço primeiro por ponto-em-polígono e depois por nome ou alias normalizado. **Implementado.**
+- **RF-CID-018** Paginar agenda, solicitações e histórico por cursores opacos assinados. **Implementado.**
+- **RF-CID-019** Exibir histórico funcional autorizado sem valores pessoais, identificando ação, usuário, horário e nomes dos campos alterados. **Implementado.**
+- **RF-CID-020** Impedir sobrescrita silenciosa com ETag/If-Match e orientar releitura quando a versão estiver desatualizada. **Implementado.**
+- **RF-CID-021** Registrar métricas do fluxo sem termos de busca nem conteúdo pessoal. **Implementado.**
+- **RF-CID-008** Permitir relacionar um cidadão como responsável por uma ou mais organizações por meio de Search-Select acessível.
+- **RF-CID-009** Exibir, ao selecionar um cidadão, suas solicitações em ordem decrescente de abertura e permitir abrir uma solicitação na tela de atendimento sem perder o vínculo com o cidadão.
+- **RF-CID-010** Permitir iniciar uma nova solicitação a partir de cidadão recém-cadastrado ou selecionado, pré-preenchendo o vínculo e os dados reutilizáveis.
+- **RF-CID-011** Exibir como somente leitura a data de cadastro, o último contato e o usuário responsável pelo atendimento mais recente, com estado explícito quando não houver informação.
+- **RF-CID-012** Registrar o usuário e o instante da criação e manter histórico auditável de alterações, com ator, instante e campos alterados, sem expor valores pessoais em logs técnicos.
+- **RF-CID-013** Permitir marcar e desmarcar cidadão como VIP, representado por estrela com rótulo acessível e alteração auditada.
+- **RF-CID-014** Preparar ingestão de mensagens de WhatsApp e e-mail para sugerir criação ou associação de cidadão, exigindo revisão humana antes de persistir novo cadastro ou substituir dados existentes.
 
 ## Solicitações
 
@@ -135,3 +154,16 @@
 - **RF-138** Registrar para cada avaliação de conteúdo a decisão, ação, score, categorias, sinais e versões da política, detector e classificador. **Implementado no incremento 5.2 para versões privadas e globais, fontes operacionais e feedback.**
 - **RF-139** Listar conteúdo em quarentena sem expor o payload malicioso, permitir revisão autorizada e reprocessar somente após decisão auditável. **Implementado no incremento 5.3 para bases privadas e catálogo global.**
 - **RF-140** Revarrer o acervo por versão da política, despublicar imediatamente conteúdo reclassificado e purgar chunks, embeddings e outros derivados. **Implementado no incremento 5.6 para acervo privado, global e anexos, com progresso consultável e execução retomável.**
+- **RF-141** Normalizar mensagens de WhatsApp e e-mail em envelope canônico idempotente por tenant, canal e identificador externo. **Implementado no incremento 9.5.**
+- **RF-142** Resolver candidatos a cidadão por contato normalizado exclusivamente dentro do tenant, sem usar nome ou conteúdo livre como prova de identidade. **Implementado no incremento 9.5.**
+- **RF-143** Disponibilizar fila autenticada para vincular cidadão existente ou descartar sugestão, registrando usuário, instante e decisão. **Implementado no incremento 9.5.**
+- **RF-144** Impedir criação, mesclagem ou sobrescrita automática de cidadão a partir de canais externos. **Implementado no incremento 9.5.**
+- **RF-145** Preparar cadastro de cidadão a partir de revisão pendente, preenchendo somente dados mínimos do envelope e exigindo confirmação humana de nome, contato e base legal. **Implementado no incremento 9.6.**
+- **RF-146** Concluir o cadastro e vincular atomicamente cidadão, mensagem e revisão, preservando a validação de CPF, o alerta de homônimo e a proveniência minimizada. **Implementado no incremento 9.6.**
+- **RF-147** Operar a fila por responsável, canal, estado e vencimento, com SLA, contadores, métricas e reabertura justificada. **Implementado no incremento 9.6.**
+- **RF-148** Configurar base legal padrão, SLA e retenção por tenant e minimizar, sob ação autorizada e auditada, os envelopes concluídos vencidos. **Implementado no incremento 9.6.**
+- **RF-149** Visualizar em mapa a jurisdição e os polígonos territoriais do tenant, diferenciando seleção e estado ativo. **Implementado no incremento 9.7.**
+- **RF-150** Desenhar, editar e remover vértices ou partes de polígonos territoriais no mapa, mantendo importação e edição textual de GeoJSON como alternativas. **Implementado no incremento 9.7.**
+- **RF-151** Editar aliases de resolução junto ao mapa e sincronizar a seleção cartográfica com a lista administrativa. **Implementado no incremento 9.7.**
+- **RF-152** Exibir barra alfabética A–Z no diretório, habilitando somente iniciais com cidadãos ativos no tenant e filtrando os cartões pela inicial selecionada. **Implementado no aprimoramento da agenda v2.**
+- **RF-153** Apresentar no cartão do cidadão nome de exibição, telefone, e-mail, localidade, profissão, canal preferencial e marcador VIP quando disponíveis. **Implementado no aprimoramento da agenda v2.**

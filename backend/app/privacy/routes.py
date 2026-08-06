@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.audit import add_audit
 from app.auth.permissions import roles_required
+from app.directory.history import add_citizen_history
 from app.extensions import db
 from app.models import (
     AuditLog,
@@ -266,6 +267,17 @@ def create_consent(citizen_id: uuid.UUID):
         citizen.contact_consent = granted
     else:
         citizen.publication_consent = granted
+    citizen.version += 1
+    add_citizen_history(
+        tenant_id,
+        citizen.id,
+        user_id,
+        "CONSENTIMENTO_ATUALIZADO",
+        changed_fields=[
+            "consentimentoContato" if purpose == "CONTATO" else "consentimentoDivulgacao"
+        ],
+        metadata={"finalidade": purpose, "concedido": granted, "versao": citizen.version},
+    )
     db.session.flush()
     add_audit(
         tenant_id,
@@ -312,9 +324,7 @@ def save_retention_policy():
     ).scalar_one_or_none()
     before = retention_policy_data(item) if item else None
     if item is None:
-        item = RetentionPolicy(
-            tenant_id=tenant_id, data_type=data_type, updated_by_id=user_id
-        )
+        item = RetentionPolicy(tenant_id=tenant_id, data_type=data_type, updated_by_id=user_id)
         db.session.add(item)
     item.retention_days = days
     item.action = action

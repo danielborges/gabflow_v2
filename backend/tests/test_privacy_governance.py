@@ -56,7 +56,7 @@ def test_consent_history_is_append_only_and_correction_is_audited(app, client):
     corrected = client.patch(
         f"/api/v1/cidadaos/{citizen['id']}",
         json={"nome": "Ana Souza Lima"},
-        headers={"X-CSRF-TOKEN": csrf},
+        headers={"X-CSRF-TOKEN": csrf, "If-Match": '"2"'},
     )
     assert corrected.status_code == 200
 

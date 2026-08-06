@@ -1,55 +1,148 @@
-import { Building2, Plus, Save, Search, UserRound, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { apiRequest } from "../api";
-import { formatBrazilianPhone, isValidBrazilianPhone, isValidEmail } from "../contactValidation";
+import { Building2, Camera, CircleSlash2, Clock3, Plus, RefreshCw, Save, Search, ShieldCheck, Star, Trash2, Upload, UserRound, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiDownload, apiRequest } from "../api";
+import {
+  formatBrazilianCpf,
+  formatBrazilianPhone,
+  isValidBrazilianCpf,
+  isValidBrazilianPhone,
+  isValidEmail,
+} from "../contactValidation";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
-export function DirectoryPage() {
+const CITIZEN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed, onCreateRequest, onOpenRequest }) {
   const [tab, setTab] = useState("citizens");
   const [citizens, setCitizens] = useState([]);
   const [organizations, setOrganizations] = useState([]);
   const [jurisdiction, setJurisdiction] = useState(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get("buscaCidadao") || "");
+  const [selectedLetter, setSelectedLetter] = useState(() => new URLSearchParams(window.location.search).get("letraCidadao") || "");
+  const [availableLetters, setAvailableLetters] = useState([]);
   const [modal, setModal] = useState(null);
   const [selectedCitizen, setSelectedCitizen] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [assistedReview, setAssistedReview] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const initialCitizenHandled = useRef(false);
+  const lastEmptySearch = useRef("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [citizenData, organizationData, jurisdictionData] = await Promise.all([
-        apiRequest(`/api/v1/cidadaos?q=${encodeURIComponent(query)}`),
+        apiRequest(citizenAgendaUrl(query, selectedLetter)),
         apiRequest("/api/v1/organizacoes"),
         apiRequest("/api/v1/admin/jurisdicao"),
       ]);
       setCitizens(citizenData.content);
+      setAvailableLetters(citizenData.letrasDisponiveis || []);
+      setNextCursor(citizenData.proximoCursor || null);
       setOrganizations(organizationData.content);
       setJurisdiction(jurisdictionData);
+      if (query && citizenData.content.length === 0 && lastEmptySearch.current !== query) {
+        lastEmptySearch.current = query;
+        apiRequest("/api/v1/cidadaos/metricas-fluxo", {
+          method: "POST", body: JSON.stringify({ evento: "PESQUISA_SEM_RESULTADO" }),
+        }).catch(() => {});
+      }
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [query, selectedLetter]);
 
   useEffect(() => {
     const timer = setTimeout(load, 250);
     return () => clearTimeout(timer);
   }, [load]);
 
+  useEffect(() => {
+    if (initialCitizenHandled.current) return;
+    const citizenId = new URLSearchParams(window.location.search).get("cidadao");
+    if (!citizenId) return;
+    initialCitizenHandled.current = true;
+    editCitizen({ id: citizenId });
+  }, []);
+
+  useEffect(() => {
+    if (!assistedReviewId) return;
+    setDetailLoading(true);
+    apiRequest(`/api/v1/canais/revisoes-identidade/${assistedReviewId}/preparar-cadastro`, {
+      method: "POST",
+    })
+      .then((preparation) => {
+        setTab("citizens");
+        setSelectedCitizen(null);
+        setAssistedReview(preparation);
+        setModal("citizens");
+      })
+      .finally(() => setDetailLoading(false));
+  }, [assistedReviewId]);
+
+  async function loadMoreCitizens() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await apiRequest(citizenAgendaUrl(query, selectedLetter, nextCursor));
+      setCitizens((current) => [...current, ...data.content]);
+      setNextCursor(data.proximoCursor || null);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   const items = tab === "citizens" ? citizens : organizations;
 
   function closeModal() {
     setModal(null);
     setSelectedCitizen(null);
+    setAssistedReview(null);
+    onAssistedRegistrationConsumed?.();
+    const params = new URLSearchParams(window.location.search);
+    params.delete("cidadao");
+    window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
   }
 
   function createEntity() {
     setSelectedCitizen(null);
+    setAssistedReview(null);
     setModal(tab);
   }
 
-  function editCitizen(citizen) {
-    setSelectedCitizen(citizen);
+  function changeQuery(value) {
+    setQuery(value);
+    const params = new URLSearchParams(window.location.search);
+    if (value) params.set("buscaCidadao", value);
+    else params.delete("buscaCidadao");
+    window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+  }
+
+  function changeLetter(letter) {
+    if (!availableLetters.includes(letter)) return;
+    const nextLetter = selectedLetter === letter ? "" : letter;
+    setSelectedLetter(nextLetter);
+    const params = new URLSearchParams(window.location.search);
+    if (nextLetter) params.set("letraCidadao", nextLetter);
+    else params.delete("letraCidadao");
+    window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+  }
+
+  async function editCitizen(citizen) {
     setModal("citizens");
+    setDetailLoading(true);
+    try {
+      const detail = await apiRequest(`/api/v1/cidadaos/${citizen.id}`);
+      setSelectedCitizen(detail);
+      const params = new URLSearchParams(window.location.search);
+      params.set("tela", "cidadaos");
+      params.set("cidadao", citizen.id);
+      window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+    } finally {
+      setDetailLoading(false);
+    }
   }
 
   return (
@@ -73,59 +166,145 @@ export function DirectoryPage() {
         {tab === "citizens" && (
           <label className="toolbar-search">
             <Search size={18} />
-            <input aria-label="Buscar cidadãos" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nome ou nome social" />
+            <input aria-label="Buscar cidadãos" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Nome ou nome social" />
           </label>
         )}
       </section>
 
-      <section className="directory-list">
-        {loading ? <div className="table-message">Carregando cadastros...</div> : items.length === 0 ? (
-          <div className="empty-state request-empty"><div className="empty-icon">{tab === "citizens" ? <UserRound size={27} /> : <Building2 size={27} />}</div><h2>Nenhum cadastro encontrado</h2><p>Use o botão acima para iniciar o diretório do gabinete.</p></div>
-        ) : (
-          <div className="entity-grid">
-            {items.map((item) => (
-              <article
-                key={item.id}
-                className={tab === "citizens" ? "interactive" : undefined}
-                role={tab === "citizens" ? "button" : undefined}
-                tabIndex={tab === "citizens" ? 0 : undefined}
-                onClick={tab === "citizens" ? () => editCitizen(item) : undefined}
-                onKeyDown={tab === "citizens" ? (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    editCitizen(item);
-                  }
-                } : undefined}
-                aria-label={tab === "citizens" ? `Editar cidadão ${item.nome}` : undefined}
-              >
-                <span className="entity-icon">{tab === "citizens" ? <UserRound size={20} /> : <Building2 size={20} />}</span>
-                <div><strong>{item.nome}</strong><small>{tab === "citizens" ? item.canalPreferencial || "Sem canal preferencial" : item.tipo}</small></div>
-                <span className={tab === "citizens" && item.consentimentoContato ? "consent yes" : "consent"}>
-                  {tab === "citizens" ? (item.consentimentoContato ? "Contato autorizado" : "Sem consentimento") : item.territorio || "Sem território"}
-                </span>
-              </article>
-            ))}
+      {tab === "citizens" ? (
+        <section className="directory-list citizen-directory-layout">
+          <div className="citizen-agenda" aria-label="Agenda de cidadãos">
+            <nav className="citizen-alphabet-bar" aria-label="Filtrar cidadãos pela letra inicial">
+              <button
+                type="button"
+                className="clear-letter-filter"
+                disabled={!selectedLetter}
+                aria-label="Limpar filtro por letra"
+                title="Mostrar todas as letras"
+                onClick={() => changeLetter(selectedLetter)}
+              ><CircleSlash2 size={15} aria-hidden="true" /></button>
+              {CITIZEN_ALPHABET.map((letter) => {
+                const enabled = availableLetters.includes(letter);
+                return <button
+                  type="button"
+                  key={letter}
+                  disabled={!enabled}
+                  className={selectedLetter === letter ? "active" : ""}
+                  aria-pressed={selectedLetter === letter}
+                  aria-label={enabled ? `Filtrar pela letra ${letter}` : `Letra ${letter} sem cadastros`}
+                  title={enabled ? `Mostrar cidadãos com inicial ${letter}` : `Nenhum cidadão com inicial ${letter}`}
+                  onClick={() => changeLetter(letter)}
+                >{letter}</button>;
+              })}
+            </nav>
+            <div className="citizen-agenda-content">
+              {loading ? <div className="table-message">Carregando cadastros...</div> : items.length === 0 ? (
+                <div className="empty-state request-empty"><div className="empty-icon"><UserRound size={27} /></div><h2>Nenhum cadastro encontrado</h2><p>{selectedLetter ? `Não há resultados para a letra ${selectedLetter} com os filtros atuais.` : "Use “Novo cidadão” para iniciar o diretório."}</p></div>
+              ) : groupCitizens(items).map(([letter, citizensInGroup]) => (
+                <section className="citizen-letter-group" key={letter} aria-labelledby={`letter-${letter}`}>
+                  <h2 id={`letter-${letter}`}>{letter}</h2>
+                  {citizensInGroup.map((item) => {
+                    const summary = citizenCardSummary(item);
+                    return <article
+                      key={item.id}
+                      className={`citizen-agenda-item ${selectedCitizen?.id === item.id ? "selected" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => editCitizen(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          editCitizen(item);
+                        }
+                      }}
+                      aria-label={`Editar cidadão ${item.nome}`}
+                    >
+                      <div className="citizen-card-primary">
+                        <strong>{item.nomeSocial || item.nome}</strong>
+                        {item.nomeSocial && item.nomeSocial !== item.nome && <span>Nome civil: {item.nome}</span>}
+                        <small>{summary.details.join(" · ") || "Cadastro sem informações complementares"}</small>
+                      </div>
+                      <div className="citizen-card-contact">
+                        {item.vip && <Star className="vip-star" size={17} fill="currentColor" aria-label="Cidadão VIP" />}
+                        <strong>{summary.phone || "Sem telefone"}</strong>
+                      </div>
+                    </article>;
+                  })}
+                </section>
+              ))}
+              {nextCursor && <button type="button" className="secondary-button directory-load-more" onClick={loadMoreCitizens} disabled={loadingMore}>{loadingMore ? "Carregando..." : "Carregar mais cidadãos"}</button>}
+            </div>
           </div>
-        )}
-      </section>
+          <div className="citizen-detail-region">
+            {detailLoading ? <div className="table-message">Carregando cidadão...</div> : modal === "citizens" ? (
+              <CitizenForm citizen={selectedCitizen} assistedReview={assistedReview} organizations={organizations} jurisdiction={jurisdiction} onClose={closeModal} onCreateRequest={onCreateRequest} onOpenRequest={onOpenRequest} onOpenCitizen={editCitizen} onSaved={async (saved) => { setAssistedReview(null); onAssistedRegistrationConsumed?.(); setSelectedCitizen(saved); await load(); }} />
+            ) : (
+              <div className="citizen-detail-empty"><UserRound size={30} /><h2>Selecione um cidadão</h2><p>Consulte o cadastro e suas solicitações ou inicie um novo registro.</p></div>
+            )}
+          </div>
+        </section>
+      ) : (
+        <section className="directory-list">
+          {loading ? <div className="table-message">Carregando cadastros...</div> : items.length === 0 ? (
+            <div className="empty-state request-empty"><div className="empty-icon"><Building2 size={27} /></div><h2>Nenhum cadastro encontrado</h2><p>Use o botão acima para iniciar o diretório do gabinete.</p></div>
+          ) : <div className="entity-grid">{items.map((item) => (
+            <article key={item.id}><span className="entity-icon"><Building2 size={20} /></span><div><strong>{item.nome}</strong><small>{item.tipo}</small></div><span className="consent">{item.territorio || "Sem território"}</span></article>
+          ))}</div>}
+        </section>
+      )}
 
-      {modal === "citizens" && <CitizenForm citizen={selectedCitizen} jurisdiction={jurisdiction} onClose={closeModal} onSaved={() => { closeModal(); load(); }} />}
       {modal === "organizations" && <OrganizationForm onClose={closeModal} onCreated={() => { closeModal(); load(); }} />}
     </>
   );
 }
 
-function CitizenForm({ citizen, jurisdiction, onClose, onSaved }) {
+function CitizenForm({ citizen, assistedReview, organizations, jurisdiction, onClose, onCreateRequest, onOpenRequest, onOpenCitizen, onSaved }) {
   const isEditing = Boolean(citizen?.id);
-  const [form, setForm] = useState(() => citizenFormValues(citizen));
+  const [form, setForm] = useState(() => citizenFormValues(citizen, assistedReview?.preenchimento));
+  const [assistedConfirmations, setAssistedConfirmations] = useState([]);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
+  const [duplicates, setDuplicates] = useState(null);
+  const [homonymConfirmed, setHomonymConfirmed] = useState(false);
+  const [pendingPhoto, setPendingPhoto] = useState(null);
+  const [removePhoto, setRemovePhoto] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const startedAt = useRef(performance.now());
+
+  useEffect(() => {
+    setForm(citizenFormValues(citizen, assistedReview?.preenchimento));
+    setAssistedConfirmations([]);
+    setPendingPhoto(null);
+    setRemovePhoto(false);
+    setDirty(false);
+    setConflict(false);
+    startedAt.current = performance.now();
+  }, [citizen, assistedReview]);
+
+  useEffect(() => {
+    function preventUnsavedNavigation(event) {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", preventUnsavedNavigation);
+    return () => window.removeEventListener("beforeunload", preventUnsavedNavigation);
+  }, [dirty]);
 
   function change(event) {
     const { name, type, checked } = event.target;
     let value = type === "checkbox" ? checked : event.target.value;
     if (name === "telefone") value = formatBrazilianPhone(value);
+    if (name === "cpf") value = formatBrazilianCpf(value);
+    if (name === "tituloEleitor") value = value.replace(/\D/g, "").slice(0, 12);
     setForm((current) => ({ ...current, [name]: value }));
+    setDirty(true);
+    setConflict(false);
+    if (["nome", "nomeSocial", "cpf"].includes(name)) {
+      setDuplicates(null);
+      setHomonymConfirmed(false);
+    }
     if (fieldErrors[name]) setFieldErrors((current) => ({ ...current, [name]: "" }));
   }
 
@@ -137,6 +316,12 @@ function CitizenForm({ citizen, jurisdiction, onClose, onSaved }) {
     if (form.email && !isValidEmail(form.email)) {
       errors.email = "Informe um e-mail válido, como nome@dominio.com.br.";
     }
+    if (form.cpf && !isValidBrazilianCpf(form.cpf)) {
+      errors.cpf = "Informe um CPF válido.";
+    }
+    if (form.tituloEleitor && !/^\d{12}$/.test(form.tituloEleitor)) {
+      errors.tituloEleitor = "Informe os 12 dígitos do título de eleitor.";
+    }
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -145,28 +330,96 @@ function CitizenForm({ citizen, jurisdiction, onClose, onSaved }) {
     event.preventDefault();
     setError("");
     if (!validateContacts()) return;
+    if (assistedReview && assistedConfirmations.length !== 3) {
+      setError("Confirme nome, contato e base legal antes de concluir o cadastro assistido.");
+      return;
+    }
     try {
-      await apiRequest(isEditing ? `/api/v1/cidadaos/${citizen.id}` : "/api/v1/cidadaos", {
+      if (!isEditing && !homonymConfirmed) {
+        const duplicateResult = await apiRequest("/api/v1/cidadaos/verificar-duplicidade", {
+          method: "POST",
+          body: JSON.stringify({ nome: form.nome, nomeSocial: form.nomeSocial, cpf: form.cpf || null }),
+        });
+        if (duplicateResult.cpfDuplicado || duplicateResult.homonimos?.length) {
+          setDuplicates(duplicateResult);
+          apiRequest("/api/v1/cidadaos/metricas-fluxo", {
+            method: "POST", body: JSON.stringify({ evento: "DUPLICIDADE_DETECTADA" }),
+          }).catch(() => {});
+          return;
+        }
+      }
+      const saved = await apiRequest(isEditing ? `/api/v1/cidadaos/${citizen.id}` : "/api/v1/cidadaos", {
         method: isEditing ? "PATCH" : "POST",
+        headers: isEditing ? { "If-Match": `"${citizen.versao}"` } : undefined,
         body: JSON.stringify({
           nome: form.nome,
           nomeSocial: form.nomeSocial,
+          profissao: form.profissao,
+          dataNascimento: form.dataNascimento || null,
+          cpf: form.cpf || null,
+          tituloEleitor: form.tituloEleitor || null,
+          vip: form.vip,
+          organizacaoIds: form.organizacaoIds,
           contatos: updatedContacts(citizen, form),
-          enderecos: updatedAddresses(citizen, form.endereco),
+          endereco: form.endereco ? { ...form.enderecoDetalhes, endereco: form.endereco } : null,
           canalPreferencial: form.canalPreferencial,
           baseLegal: form.baseLegal,
           consentimentoContato: form.consentimentoContato,
           consentimentoDivulgacao: form.consentimentoDivulgacao,
+          revisaoCanalId: assistedReview?.revisaoId,
+          confirmacoesCadastroAssistido: assistedConfirmations,
         }),
       });
-      onSaved();
+      if (pendingPhoto) {
+        const photo = new FormData();
+        photo.append("foto", pendingPhoto, pendingPhoto.name || "foto.jpg");
+        await apiRequest(`/api/v1/cidadaos/${saved.id}/foto`, { method: "PUT", body: photo });
+      } else if (removePhoto && isEditing) {
+        await apiRequest(`/api/v1/cidadaos/${saved.id}/foto`, { method: "DELETE" });
+      }
+      if (!isEditing) {
+        apiRequest("/api/v1/cidadaos/metricas-fluxo", {
+          method: "POST",
+          body: JSON.stringify({
+            evento: "CADASTRO_CONCLUIDO",
+            duracaoMs: Math.round(performance.now() - startedAt.current),
+          }),
+        }).catch(() => {});
+      }
+      setDirty(false);
+      onSaved(await apiRequest(`/api/v1/cidadaos/${saved.id}`));
     } catch (requestError) {
       setError(requestError.message);
+      setConflict(requestError.status === 412 || requestError.status === 428);
     }
   }
 
-  return <EntityModal title={isEditing ? "Editar cidadão" : "Cadastrar cidadão"} onClose={onClose}><form className="request-form" onSubmit={submit} noValidate>
-    <div className="form-grid"><label>Nome<input required name="nome" value={form.nome} onChange={change} /></label><label>Nome social<input name="nomeSocial" value={form.nomeSocial} onChange={change} /></label></div>
+  function safeClose() {
+    if (dirty && !window.confirm("Descartar as alterações não salvas deste cadastro?")) return;
+    onClose();
+  }
+
+  return <section className="citizen-editor" aria-label={isEditing ? "Editar cidadão" : "Cadastrar cidadão"}>
+    <header className="citizen-editor-header">
+      <div><p className="eyebrow">Diretório</p><h2>{isEditing ? "Editar cidadão" : "Cadastrar cidadão"}</h2></div>
+      <div className="citizen-editor-actions">
+        {isEditing && <button type="button" className="primary-button compact" onClick={() => onCreateRequest?.(citizen)}><Plus size={17} /> Nova solicitação</button>}
+        <button type="button" className={`vip-toggle ${form.vip ? "active" : ""}`} onClick={() => { setForm((current) => ({ ...current, vip: !current.vip })); setDirty(true); }} aria-pressed={form.vip} aria-label={form.vip ? "Desmarcar cidadão VIP" : "Marcar cidadão como VIP"}><Star size={19} fill={form.vip ? "currentColor" : "none"} /> VIP</button>
+        <button type="button" className="icon-button" onClick={safeClose} aria-label="Fechar cadastro"><X size={20} /></button>
+      </div>
+    </header>
+    <form className="request-form citizen-form" onSubmit={submit} noValidate>
+    {assistedReview && <section className="assisted-registration-banner">
+      <div><ShieldCheck size={20} /><span><strong>Cadastro assistido por {assistedReview.canal === "EMAIL" ? "e-mail" : "WhatsApp"}</strong><small>{assistedReview.aviso}</small></span></div>
+      <fieldset><legend>Confirmações obrigatórias</legend>{[
+        ["nome", "Revisei o nome informado"],
+        ["contato", "Revisei o contato e confirmei que pertence à pessoa"],
+        ["baseLegal", "Revisei a base legal aplicável"],
+      ].map(([value, label]) => <label key={value} className="checkbox-label"><input type="checkbox" checked={assistedConfirmations.includes(value)} onChange={(event) => setAssistedConfirmations((current) => event.target.checked ? [...current, value] : current.filter((item) => item !== value))} /> {label}</label>)}</fieldset>
+    </section>}
+    <CitizenPhotoField citizen={citizen} pendingPhoto={pendingPhoto} onPhotoChange={(photo) => { setPendingPhoto(photo); setRemovePhoto(false); setDirty(true); }} onRemove={() => { setPendingPhoto(null); setRemovePhoto(true); setDirty(true); }} removed={removePhoto} />
+    <div className="form-grid"><label>Nome<input required autoFocus name="nome" value={form.nome} onChange={change} /></label><label>Nome social<input name="nomeSocial" value={form.nomeSocial} onChange={change} /></label></div>
+    <div className="form-grid"><label>Profissão<input name="profissao" value={form.profissao} onChange={change} /></label><label>Data de nascimento<input type="date" name="dataNascimento" max={new Date().toISOString().slice(0, 10)} value={form.dataNascimento} onChange={change} /></label></div>
     <div className="form-grid">
       <label>Telefone
         <input name="telefone" type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} value={form.telefone} onChange={change} aria-invalid={Boolean(fieldErrors.telefone)} aria-describedby={fieldErrors.telefone ? "citizen-phone-error" : undefined} />
@@ -177,27 +430,54 @@ function CitizenForm({ citizen, jurisdiction, onClose, onSaved }) {
         {fieldErrors.email && <small id="citizen-email-error" className="field-error">{fieldErrors.email}</small>}
       </label>
     </div>
-    <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={(endereco) => setForm((current) => ({ ...current, endereco }))} placeholder="Digite o endereço do cidadão" territoryBounds={jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
+    <fieldset className="citizen-form-section"><legend>Documentos</legend><div className="form-grid">
+      <label>CPF<input name="cpf" inputMode="numeric" autoComplete="off" placeholder="000.000.000-00" maxLength={14} value={form.cpf} onChange={change} aria-invalid={Boolean(fieldErrors.cpf)} />{fieldErrors.cpf && <small className="field-error">{fieldErrors.cpf}</small>}</label>
+      <label>Título de eleitor<input name="tituloEleitor" inputMode="numeric" autoComplete="off" placeholder="000000000000" maxLength={12} value={form.tituloEleitor} onChange={change} aria-invalid={Boolean(fieldErrors.tituloEleitor)} />{fieldErrors.tituloEleitor && <small className="field-error">{fieldErrors.tituloEleitor}</small>}</label>
+    </div></fieldset>
+    <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={async (endereco, details) => {
+      setForm((current) => ({ ...current, endereco, enderecoDetalhes: details || {} })); setDirty(true);
+      if (details) {
+        try {
+          const resolved = await apiRequest("/api/v1/enderecos/resolver", { method: "POST", body: JSON.stringify(details) });
+          setForm((current) => ({ ...current, enderecoDetalhes: resolved }));
+        } catch (requestError) {
+          setError(requestError.message);
+        }
+      }
+    }} placeholder="Digite o endereço do cidadão" territoryBounds={jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
+    {form.endereco && <AddressResolution address={form.enderecoDetalhes} />}
+    <OrganizationSearchSelect organizations={organizations} value={form.organizacaoIds} onChange={(organizacaoIds) => { setForm((current) => ({ ...current, organizacaoIds })); setDirty(true); }} />
     <div className="form-grid"><label>Canal preferencial<select name="canalPreferencial" value={form.canalPreferencial} onChange={change}><option>WHATSAPP</option><option>TELEFONE</option><option>EMAIL</option><option>PRESENCIAL</option></select></label><label>Base legal<select name="baseLegal" value={form.baseLegal} onChange={change}><option value="EXECUCAO_POLITICA_PUBLICA">Execução de política pública</option><option value="CONSENTIMENTO">Consentimento</option><option value="LEGITIMO_INTERESSE">Legítimo interesse</option></select></label></div>
     <label className="checkbox-label"><input type="checkbox" name="consentimentoContato" checked={form.consentimentoContato} onChange={change} /> Autoriza contato pelo gabinete</label>
     <label className="checkbox-label"><input type="checkbox" name="consentimentoDivulgacao" checked={form.consentimentoDivulgacao} onChange={change} /> Autoriza divulgação pública</label>
-    {error && <p className="form-error" role="alert">{error}</p>}<FormFooter onClose={onClose} isEditing={isEditing} />
-  </form></EntityModal>;
+    {duplicates && <DuplicateCitizenAlert result={duplicates} onContinue={() => { setHomonymConfirmed(true); setDuplicates(null); }} onOpenCitizen={onOpenCitizen} />}
+    {isEditing && <div className="citizen-readonly-meta"><span><strong>Cadastrado em</strong>{formatDateTime(citizen.criadoEm)}</span><span><strong>Último contato</strong>{citizen.ultimoContatoEm ? formatDateTime(citizen.ultimoContatoEm) : "Sem contato"}</span><span><strong>Atendido por</strong>{citizen.atendidoPor || "Não informado"}</span></div>}
+    {isEditing && <CitizenTimeline citizenId={citizen.id} onOpenRequest={onOpenRequest} />}
+    {error && <p className="form-error" role="alert">{error}{conflict && <button type="button" className="secondary-button compact" onClick={() => onOpenCitizen(citizen)}><RefreshCw size={16} /> Recarregar cadastro</button>}</p>}<FormFooter onClose={safeClose} isEditing={isEditing} />
+  </form>
+  </section>;
 }
 
-function citizenFormValues(citizen) {
+function citizenFormValues(citizen, prefill = {}) {
   const contacts = citizen?.contatos || [];
   const phone = contacts.find((item) => ["TELEFONE", "CELULAR", "WHATSAPP"].includes(String(item.tipo).toUpperCase()));
   const email = contacts.find((item) => String(item.tipo).toUpperCase() === "EMAIL");
   const address = citizen?.enderecos?.[0];
   return {
-    nome: citizen?.nome || "",
+    nome: citizen?.nome || prefill.nome || "",
     nomeSocial: citizen?.nomeSocial || "",
-    telefone: formatBrazilianPhone(String(phone?.valor || "")),
-    email: email?.valor || "",
+    profissao: citizen?.profissao || "",
+    dataNascimento: citizen?.dataNascimento || "",
+    cpf: formatBrazilianCpf(citizen?.cpf || ""),
+    tituloEleitor: citizen?.tituloEleitor || "",
+    vip: Boolean(citizen?.vip),
+    organizacaoIds: (citizen?.organizacoes || []).map((item) => item.id),
+    telefone: formatBrazilianPhone(String(phone?.valor || prefill.telefone || "")),
+    email: email?.valor || prefill.email || "",
     endereco: address?.endereco || address?.logradouro || "",
-    canalPreferencial: citizen?.canalPreferencial || "WHATSAPP",
-    baseLegal: citizen?.baseLegal || "EXECUCAO_POLITICA_PUBLICA",
+    enderecoDetalhes: address || {},
+    canalPreferencial: citizen?.canalPreferencial || prefill.canalPreferencial || "WHATSAPP",
+    baseLegal: citizen?.baseLegal || prefill.baseLegal || "EXECUCAO_POLITICA_PUBLICA",
     consentimentoContato: Boolean(citizen?.consentimentoContato),
     consentimentoDivulgacao: Boolean(citizen?.consentimentoDivulgacao),
   };
@@ -213,10 +493,276 @@ function updatedContacts(citizen, form) {
   ];
 }
 
-function updatedAddresses(citizen, address) {
-  const existing = citizen?.enderecos || [];
-  if (!address.trim()) return existing.slice(1);
-  return [{ ...(existing[0] || {}), endereco: address.trim() }, ...existing.slice(1)];
+function DuplicateCitizenAlert({ result, onContinue, onOpenCitizen }) {
+  const cpfDuplicate = result.cpfDuplicado;
+  const homonyms = result.homonimos || [];
+  return <section className={`duplicate-citizen-alert ${cpfDuplicate ? "blocking" : ""}`} role="alert">
+    <h3>{cpfDuplicate ? "CPF já cadastrado" : "Encontramos possíveis homônimos"}</h3>
+    <p>{cpfDuplicate ? "Não é possível criar outro cadastro com este CPF." : "Confira se a pessoa já está na agenda antes de continuar."}</p>
+    <div>{[...(cpfDuplicate ? [cpfDuplicate] : []), ...homonyms.filter((item) => item.id !== cpfDuplicate?.id)].map((item) => <article key={item.id}><span><strong>{item.nomeSocial || item.nome}</strong><small>{citizenContactSummary(item)}</small></span><button type="button" className="secondary-button" onClick={() => onOpenCitizen(item)}>Abrir cadastro</button></article>)}</div>
+    {!cpfDuplicate && <button type="button" className="secondary-button" onClick={onContinue}>Criar mesmo assim</button>}
+  </section>;
+}
+
+function AddressResolution({ address = {} }) {
+  const labels = {
+    RESOLVIDO: "Bairro e território identificados",
+    FORA_DA_JURISDICAO: "Endereço fora da jurisdição configurada",
+    TERRITORIO_NAO_ENCONTRADO: "Bairro identificado; território ainda não cadastrado",
+    BAIRRO_NAO_IDENTIFICADO: "Selecione uma sugestão completa para identificar o bairro",
+  };
+  const status = address.statusResolucao || "BAIRRO_NAO_IDENTIFICADO";
+  return <div className={`address-resolution status-${status.toLowerCase()}`} role="status">
+    <span><strong>Bairro</strong>{address.bairro || "Não identificado"}</span>
+    <span><strong>Território</strong>{address.territorio || "Não resolvido"}</span>
+    <small>{labels[status]}{address.metodoResolucao ? ` · via ${resolutionMethodLabel(address.metodoResolucao)}` : ""}</small>
+  </div>;
+}
+
+function resolutionMethodLabel(method) {
+  return { POLIGONO: "polígono", ALIAS: "alias", NOME: "nome do território" }[method] || method;
+}
+
+function CitizenPhotoField({ citizen, pendingPhoto, onPhotoChange, onRemove, removed }) {
+  const [storedPreview, setStoredPreview] = useState(null);
+  const [localPreview, setLocalPreview] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl;
+    if (citizen?.fotoUrl && !removed) {
+      apiDownload(citizen.fotoUrl, { method: "GET" }).then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setStoredPreview(objectUrl);
+      }).catch(() => setStoredPreview(null));
+    } else {
+      setStoredPreview(null);
+    }
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [citizen?.fotoUrl, removed]);
+
+  useEffect(() => {
+    if (!pendingPhoto) {
+      setLocalPreview(null);
+      return undefined;
+    }
+    const objectUrl = URL.createObjectURL(pendingPhoto);
+    setLocalPreview(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [pendingPhoto]);
+
+  useEffect(() => () => stopCamera(streamRef), []);
+
+  async function openCamera() {
+    setCameraError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("A câmera não está disponível neste dispositivo; escolha uma foto.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      streamRef.current = stream;
+      setCameraOpen(true);
+      window.setTimeout(() => { if (videoRef.current) videoRef.current.srcObject = stream; }, 0);
+    } catch {
+      setCameraError("Não foi possível acessar a câmera. Verifique a permissão do navegador.");
+    }
+  }
+
+  function closeCamera() {
+    stopCamera(streamRef);
+    setCameraOpen(false);
+  }
+
+  function capture() {
+    const video = videoRef.current;
+    if (!video?.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (blob) onPhotoChange(new File([blob], "foto-camera.jpg", { type: "image/jpeg" }));
+      closeCamera();
+    }, "image/jpeg", 0.9);
+  }
+
+  const preview = localPreview || storedPreview;
+  return <fieldset className="citizen-photo-field"><legend>Foto</legend>
+    <div className="citizen-photo-row">
+      <div className="citizen-photo-preview">{preview ? <img src={preview} alt="Prévia da foto do cidadão" /> : <UserRound size={42} aria-hidden="true" />}</div>
+      <div className="citizen-photo-actions">
+        <button type="button" className="secondary-button" onClick={openCamera}><Camera size={17} /> Usar câmera</button>
+        <label className="secondary-button file-button"><Upload size={17} /> Escolher foto<input type="file" accept="image/jpeg,image/png,image/webp" capture="user" onChange={(event) => event.target.files?.[0] && onPhotoChange(event.target.files[0])} /></label>
+        {preview && <button type="button" className="table-link-button danger" onClick={onRemove}><Trash2 size={16} /> Remover</button>}
+        <small>JPEG, PNG ou WebP, até 8 MB. A imagem será recortada e seus metadados removidos.</small>
+      </div>
+    </div>
+    {cameraOpen && <div className="citizen-camera" role="dialog" aria-label="Capturar foto"><video ref={videoRef} autoPlay playsInline muted /><div><button type="button" className="primary-button compact" onClick={capture}><Camera size={17} /> Capturar</button><button type="button" className="secondary-button" onClick={closeCamera}>Cancelar</button></div></div>}
+    {cameraError && <p className="field-error" role="alert">{cameraError}</p>}
+  </fieldset>;
+}
+
+function stopCamera(streamRef) {
+  streamRef.current?.getTracks().forEach((track) => track.stop());
+  streamRef.current = null;
+}
+
+function OrganizationSearchSelect({ organizations = [], value = [], onChange }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const selected = organizations.filter((item) => value.includes(item.id));
+  const options = organizations.filter((item) => (
+    !value.includes(item.id) && item.nome.toLowerCase().includes(query.trim().toLowerCase())
+  )).slice(0, 8);
+
+  function select(organization) {
+    onChange([...value, organization.id]);
+    setQuery("");
+    setOpen(false);
+  }
+
+  return <div className="organization-search-select">
+    <label htmlFor="citizen-organizations">Organizações</label>
+    {selected.length > 0 && <div className="organization-chips">{selected.map((item) => <button type="button" key={item.id} onClick={() => onChange(value.filter((id) => id !== item.id))} aria-label={`Remover organização ${item.nome}`}>{item.nome} <X size={14} /></button>)}</div>}
+    <input id="citizen-organizations" role="combobox" aria-expanded={open} aria-controls="citizen-organization-options" aria-autocomplete="list" value={query} onFocus={() => setOpen(true)} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }} placeholder="Buscar e selecionar organização" />
+    {open && <div id="citizen-organization-options" className="organization-options" role="listbox">
+      {options.length === 0 ? <p>Nenhuma organização disponível.</p> : options.map((item) => <div role="option" aria-selected="false" tabIndex={0} key={item.id} onClick={() => select(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(item); } }}><strong>{item.nome}</strong><small>{item.tipo}</small></div>)}
+    </div>}
+  </div>;
+}
+
+function CitizenTimeline({ citizenId, onOpenRequest }) {
+  const [requests, setRequests] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [requestCursor, setRequestCursor] = useState(null);
+  const [historyCursor, setHistoryCursor] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    Promise.all([
+      apiRequest(`/api/v1/cidadaos/${citizenId}/solicitacoes?limite=10`),
+      apiRequest(`/api/v1/cidadaos/${citizenId}/historico?limite=10`),
+    ]).then(([requestPage, historyPage]) => {
+      if (!active) return;
+      setRequests(requestPage.content || []);
+      setHistory(historyPage.content || []);
+      setRequestCursor(requestPage.proximoCursor || null);
+      setHistoryCursor(historyPage.proximoCursor || null);
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [citizenId]);
+
+  async function loadMore(type) {
+    const cursor = type === "request" ? requestCursor : historyCursor;
+    if (!cursor) return;
+    const resource = type === "request" ? "solicitacoes" : "historico";
+    const page = await apiRequest(`/api/v1/cidadaos/${citizenId}/${resource}?limite=10&cursor=${encodeURIComponent(cursor)}`);
+    if (type === "request") {
+      setRequests((current) => [...current, ...page.content]);
+      setRequestCursor(page.proximoCursor || null);
+    } else {
+      setHistory((current) => [...current, ...page.content]);
+      setHistoryCursor(page.proximoCursor || null);
+    }
+  }
+
+  const events = [
+    ...requests.map((item) => ({ ...item, kind: "request", occurredAt: item.criadaEm })),
+    ...history.map((item) => ({ ...item, kind: "history", occurredAt: item.alteradoEm })),
+  ].sort((left, right) => new Date(right.occurredAt) - new Date(left.occurredAt));
+
+  return <section className="citizen-requests citizen-timeline" aria-labelledby="citizen-timeline-title">
+    <div><h3 id="citizen-timeline-title">Linha do tempo</h3><span>{events.length}</span></div>
+    {loading ? <p>Carregando histórico...</p> : events.length === 0 ? <p>Nenhum evento vinculado.</p> : events.map((item) => item.kind === "request" ? (
+      <article key={`request-${item.id}`} className={onOpenRequest ? "interactive" : ""} role={onOpenRequest ? "button" : undefined} tabIndex={onOpenRequest ? 0 : undefined} onClick={() => onOpenRequest?.(item)} onKeyDown={(event) => { if (onOpenRequest && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpenRequest(item); } }}>
+        <span className="timeline-icon"><Clock3 size={16} /></span><div><strong>Solicitação {item.protocolo}</strong><span>{item.status}</span><p>{item.titulo || "Sem título"}</p><small>{formatDateTime(item.criadaEm)}</small></div>
+      </article>
+    ) : (
+      <article key={`history-${item.id}`}>
+        <span className="timeline-icon"><UserRound size={16} /></span><div><strong>{historyActionLabel(item.acao)}</strong><span>{item.usuario}</span><p>{changedFieldsLabel(item.camposAlterados)}</p><small>{formatDateTime(item.alteradoEm)}</small></div>
+      </article>
+    ))}
+    <div className="timeline-more-actions">
+      {requestCursor && <button type="button" className="secondary-button compact" onClick={() => loadMore("request")}>Mais solicitações</button>}
+      {historyCursor && <button type="button" className="secondary-button compact" onClick={() => loadMore("history")}>Mais alterações</button>}
+    </div>
+  </section>;
+}
+
+function historyActionLabel(action) {
+  return {
+    CADASTRO_CRIADO: "Cadastro criado",
+    CADASTRO_ATUALIZADO: "Cadastro atualizado",
+    FOTO_ATUALIZADA: "Foto atualizada",
+    FOTO_REMOVIDA: "Foto removida",
+    CONSENTIMENTO_ATUALIZADO: "Consentimento atualizado",
+    CADASTRO_ANONIMIZADO: "Cadastro anonimizado",
+  }[action] || action;
+}
+
+function changedFieldsLabel(fields = []) {
+  if (!fields.length) return "Nenhum campo cadastral alterado";
+  return `Campos: ${fields.join(", ")}`;
+}
+
+function groupCitizens(citizens) {
+  const groups = new Map();
+  citizens.forEach((citizen) => {
+    const name = (citizen.nomeSocial || citizen.nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const letter = /^[A-Za-z]/.test(name) ? name[0].toUpperCase() : "#";
+    if (!groups.has(letter)) groups.set(letter, []);
+    groups.get(letter).push(citizen);
+  });
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right, "pt-BR"));
+}
+
+function citizenAgendaUrl(query, letter, cursor = "") {
+  const params = new URLSearchParams({ q: query });
+  if (letter) params.set("letra", letter);
+  if (cursor) {
+    params.set("cursor", cursor);
+    params.set("limite", "30");
+  }
+  return `/api/v1/cidadaos?${params}`;
+}
+
+function citizenCardSummary(citizen) {
+  const contacts = citizen.contatos || [];
+  const phone = contacts.find((item) => ["TELEFONE", "CELULAR", "WHATSAPP"].includes(String(item.tipo).toUpperCase()));
+  const email = contacts.find((item) => String(item.tipo).toUpperCase() === "EMAIL");
+  const address = citizen.enderecos?.[0] || {};
+  const location = address.bairro || address.cidade || address.territorio;
+  const preferredChannel = {
+    WHATSAPP: "Prefere contato por WhatsApp",
+    TELEFONE: "Prefere contato por telefone",
+    EMAIL: "Prefere contato por e-mail",
+    PRESENCIAL: "Prefere atendimento presencial",
+  }[citizen.canalPreferencial];
+  return {
+    phone: phone?.valor ? formatBrazilianPhone(phone.valor) : "",
+    details: [email?.valor, location, citizen.profissao, preferredChannel].filter(Boolean),
+  };
+}
+
+function citizenContactSummary(citizen) {
+  const summary = citizenCardSummary(citizen);
+  return summary.phone || summary.details[0] || "Sem contato";
+}
+
+function formatDateTime(value) {
+  if (!value) return "Não informado";
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
 function OrganizationForm({ onClose, onCreated }) {

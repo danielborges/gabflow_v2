@@ -109,6 +109,8 @@ gabflow-spec-driven/
 - Histórico, anexos, comentários, SLA e notificações.
 - Painel operacional.
 
+Especificação evolutiva do diretório: `features/cadastro-cidadaos-organizacoes-v2.feature`.
+
 ### Fase 2 — Inteligência e automação
 - Classificação automática.
 - Transcrição e resumo de áudio.

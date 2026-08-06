@@ -24,10 +24,98 @@
 - tenant_id
 - nome
 - nome_social
+- photo_storage_key
+- profissao
+- data_nascimento
+- cpf_cifrado
+- cpf_lookup_hash
+- cpf_final
+- titulo_eleitor
 - contatos
-- preferências
-- consentimentos
+- enderecos
+- canal_preferencial
+- base_legal
+- consentimento_contato
+- consentimento_divulgacao
+- vip
 - flags_privacidade
+- criado_por_id
+- criado_em
+- atualizado_em
+
+`cpf_lookup_hash`, quando presente, é um HMAC versionado calculado sobre os onze dígitos
+normalizados e possui índice único parcial por `tenant_id`; `cpf_cifrado` preserva o valor
+recuperável sob criptografia autenticada e `cpf_final` permite diferenciação visual sem
+expor o documento. O CPF completo e o título de eleitor não entram em logs, eventos ou
+respostas de listagem; o contrato de detalhe pode retornar apenas o valor necessário a
+usuários autorizados. `photo_storage_key` referencia o objeto WebP privado já sanitizado,
+armazenado com criptografia autenticada; metadados operacionais do processamento ficam
+no evento de auditoria, sem expor o conteúdo.
+
+## VinculoCidadaoOrganizacao
+- id
+- tenant_id
+- cidadao_id
+- organizacao_id
+- papel
+- principal
+- criado_por_id
+- criado_em
+
+O vínculo representa a responsabilidade ou atuação do cidadão na organização. A chave
+`tenant_id`, `cidadao_id`, `organizacao_id` e `papel` é única e todas as referências
+privadas incluem o tenant.
+
+## EnderecoCidadao (estrutura JSON do cadastro neste corte)
+- id
+- tenant_id
+- cidadao_id
+- endereco_formatado
+- logradouro
+- numero
+- complemento
+- cep
+- bairro_texto
+- latitude
+- longitude
+- place_id
+- territorio_id
+- resolucao_status
+- resolvido_em
+
+`bairro_texto` e `territorio_id` são resultados somente para consulta. Neste corte, os
+componentes do Google Places são validados contra os limites da jurisdição e o território
+ativo é associado prioritariamente por ponto-em-polígono e, na ausência de interseção,
+por nome ou alias normalizado. A estrutura é persistida no primeiro item de
+`citizens.addresses`, permitindo
+migração aditiva para tabela própria quando houver múltiplos endereços e versionamento.
+
+## Territorio
+- id
+- tenant_id
+- nome
+- aliases
+- geometry (`Polygon` ou `MultiPolygon` GeoJSON)
+- ativo
+
+Nomes e aliases não podem colidir dentro do tenant. Geometrias são validadas na escrita;
+quando mais de um polígono contém o ponto, prevalece a menor área para representar o
+recorte mais específico. A implementação JSON é adequada ao volume operacional atual;
+índice espacial/PostGIS deve ser adotado se o catálogo crescer para milhares de polígonos.
+
+## HistoricoCidadao
+- id
+- tenant_id
+- cidadao_id
+- usuario_id
+- acao
+- campos_alterados
+- metadados_resumidos
+- alterado_em
+
+O histórico funcional é append-only, tenant-scoped e registra metadados e nomes de campos alterados. Valores pessoais
+permanecem no mecanismo de auditoria protegido somente quando estritamente necessários,
+com acesso restrito e retenção definida; logs técnicos recebem apenas identificadores.
 
 ## Organizacao
 - id
@@ -527,6 +615,21 @@ próxima execução sem apagar seu histórico.
 - criada_em
 
 ## Invariantes de tenant
+
+### Canais assistidos
+
+- `channel_messages`: envelope canônico da mensagem, único por `tenant_id`, canal e identificador externo quando informado;
+- `channel_identity_reviews`: estado da revisão, IDs opacos dos candidatos, critério determinístico, cidadão escolhido, revisor e instantes;
+- a revisão não replica conteúdo, nome, telefone ou e-mail; esses dados permanecem no envelope sujeito à retenção;
+- foreign keys de mensagem, cidadão e usuário incluem `tenant_id`, e a tabela de revisão possui RLS forçado;
+- estados válidos: `PENDENTE`, `VINCULADA` e `DESCARTADA`; não existe estado de criação automática.
+- `channel_identity_reviews` também mantém responsável, prazo, tipo da decisão e contador de
+  reaberturas; esses campos não carregam dados pessoais livres;
+- `channel_assisted_settings` define, por tenant, base legal padrão, SLA e prazo de retenção;
+- `channel_messages.redacted_at` registra a minimização do envelope concluído sem remover a
+  chave idempotente nem a relação de proveniência;
+- a criação manual assistida bloqueia a revisão com `FOR UPDATE` e grava cidadão, vínculo,
+  histórico e auditoria na mesma transação.
 
 - Toda entidade privada possui `tenant_id` não nulo.
 - Relacionamentos privados usam foreign keys compostas que incluem `tenant_id`.

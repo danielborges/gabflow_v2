@@ -448,6 +448,12 @@ class ChannelMessageStatus(str, enum.Enum):
     IGNORADA = "IGNORADA"
 
 
+class ChannelIdentityReviewStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    VINCULADA = "VINCULADA"
+    DESCARTADA = "DESCARTADA"
+
+
 class Tenant(db.Model):
     __tablename__ = "tenants"
 
@@ -2292,6 +2298,10 @@ class PublicLead(db.Model):
 
 class Citizen(db.Model):
     __tablename__ = "citizens"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_citizens_tenant_id_id"),
+        UniqueConstraint("tenant_id", "cpf_fingerprint", name="uq_citizens_tenant_cpf_fingerprint"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -2299,6 +2309,15 @@ class Citizen(db.Model):
     )
     name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
     social_name: Mapped[str | None] = mapped_column(String(180))
+    profession: Mapped[str | None] = mapped_column(String(180))
+    birth_date: Mapped[date | None] = mapped_column(Date)
+    cpf_ciphertext: Mapped[str | None] = mapped_column(Text)
+    cpf_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    cpf_final: Mapped[str | None] = mapped_column(String(2))
+    cpf_key_version: Mapped[int | None] = mapped_column(Integer)
+    electoral_title_ciphertext: Mapped[str | None] = mapped_column(Text)
+    photo_storage_key: Mapped[str | None] = mapped_column(String(300))
+    vip: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     contacts: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     addresses: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     preferred_channel: Mapped[str | None] = mapped_column(String(30))
@@ -2308,6 +2327,10 @@ class Citizen(db.Model):
     privacy_flags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -2325,6 +2348,49 @@ class Citizen(db.Model):
         cascade="all, delete-orphan",
         order_by="PrivacyRequest.created_at",
     )
+    organization_links: Mapped[list["CitizenOrganizationLink"]] = relationship(
+        back_populates="citizen",
+        cascade="all, delete-orphan",
+        order_by="CitizenOrganizationLink.created_at",
+    )
+    functional_history: Mapped[list["CitizenHistory"]] = relationship(
+        back_populates="citizen",
+        cascade="all, delete-orphan",
+        order_by="CitizenHistory.created_at",
+    )
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_id])
+
+
+class CitizenHistory(db.Model):
+    __tablename__ = "citizen_history"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "citizen_id"],
+            ["citizens.tenant_id", "citizens.id"],
+            ondelete="CASCADE",
+            name="fk_citizen_history_tenant_citizen",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_citizen_history_tenant_user",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    citizen_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    changed_fields: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    metadata_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    citizen: Mapped[Citizen] = relationship(back_populates="functional_history")
+    user: Mapped["User"] = relationship()
 
 
 class ConsentRecord(db.Model):
@@ -2418,6 +2484,7 @@ class RetentionPolicy(db.Model):
 
 class Organization(db.Model):
     __tablename__ = "organizations"
+    __table_args__ = (UniqueConstraint("tenant_id", "id", name="uq_organizations_tenant_id_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -2435,6 +2502,56 @@ class Organization(db.Model):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
+    citizen_links: Mapped[list["CitizenOrganizationLink"]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        order_by="CitizenOrganizationLink.created_at",
+    )
+
+
+class CitizenOrganizationLink(db.Model):
+    __tablename__ = "citizen_organization_links"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "citizen_id"],
+            ["citizens.tenant_id", "citizens.id"],
+            ondelete="CASCADE",
+            name="fk_citizen_org_links_tenant_citizen",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "organization_id"],
+            ["organizations.tenant_id", "organizations.id"],
+            ondelete="CASCADE",
+            name="fk_citizen_org_links_tenant_organization",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_citizen_org_links_tenant_creator",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "citizen_id",
+            "organization_id",
+            "role",
+            name="uq_citizen_org_links_scope",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    citizen_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(40), default="RESPONSAVEL", nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+    citizen: Mapped[Citizen] = relationship(back_populates="organization_links")
+    organization: Mapped[Organization] = relationship(back_populates="citizen_links")
+    created_by: Mapped["User"] = relationship()
 
 
 class RequestCategory(db.Model):
@@ -2468,6 +2585,8 @@ class Territory(db.Model):
         ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    aliases: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    geometry: Mapped[dict | None] = mapped_column(JSON)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -4575,6 +4694,15 @@ class IntegrationSetting(db.Model):
 
 class ChannelMessage(db.Model):
     __tablename__ = "channel_messages"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_channel_messages_tenant_id_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "channel",
+            "external_id",
+            name="uq_channel_messages_tenant_channel_external",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -4607,6 +4735,106 @@ class ChannelMessage(db.Model):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    redacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ChannelIdentityReview(db.Model):
+    __tablename__ = "channel_identity_reviews"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "message_id"],
+            ["channel_messages.tenant_id", "channel_messages.id"],
+            ondelete="CASCADE",
+            name="fk_channel_identity_reviews_tenant_message",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "selected_citizen_id"],
+            ["citizens.tenant_id", "citizens.id"],
+            ondelete="RESTRICT",
+            name="fk_channel_identity_reviews_tenant_citizen",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "reviewed_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_channel_identity_reviews_tenant_reviewer",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "assigned_to_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_channel_identity_reviews_tenant_assignee",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_channel_identity_reviews_tenant_id_id"),
+        UniqueConstraint(
+            "tenant_id", "message_id", name="uq_channel_identity_reviews_tenant_message"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    message_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    status: Mapped[ChannelIdentityReviewStatus] = mapped_column(
+        Enum(ChannelIdentityReviewStatus, name="channel_identity_review_status"),
+        default=ChannelIdentityReviewStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    resolution_state: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    candidate_citizen_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    match_basis: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    selected_citizen_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    assigned_to_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    decision_type: Mapped[str | None] = mapped_column(String(40), index=True)
+    reopened_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    review_note: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+    message: Mapped[ChannelMessage] = relationship(
+        overlaps="selected_citizen,reviewed_by,assigned_to"
+    )
+    selected_citizen: Mapped["Citizen | None"] = relationship(
+        overlaps="message,reviewed_by,assigned_to"
+    )
+    reviewed_by: Mapped["User | None"] = relationship(
+        foreign_keys=[reviewed_by_id], overlaps="message,selected_citizen,assigned_to"
+    )
+    assigned_to: Mapped["User | None"] = relationship(
+        foreign_keys=[assigned_to_id], overlaps="message,selected_citizen,reviewed_by"
+    )
+
+
+class ChannelAssistedSetting(db.Model):
+    __tablename__ = "channel_assisted_settings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "updated_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_channel_assisted_settings_tenant_updater",
+        ),
+        UniqueConstraint("tenant_id", name="uq_channel_assisted_settings_tenant"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    default_legal_basis: Mapped[str | None] = mapped_column(String(120))
+    sla_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    retention_days: Mapped[int] = mapped_column(Integer, default=365, nullable=False)
+    updated_by_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
 
 class Notification(db.Model):

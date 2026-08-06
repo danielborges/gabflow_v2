@@ -10,6 +10,22 @@
 - Notificações.
 - Painel operacional.
 
+### Evolução planejada — Diretório de cidadãos e organizações v2
+
+- Agenda alfabética responsiva com pesquisa por identidade e contato.
+- Cadastro e edição no fluxo da página, sem modal, com foto e captura por câmera.
+- CPF único por tenant, alerta de homônimos e reaproveitamento de cadastro existente.
+- Bairro e território derivados do endereço.
+- Vínculo Search-Select entre cidadão responsável e organização.
+- Histórico de solicitações, criação de solicitação no contexto do cidadão e navegação direta.
+- Rastreabilidade de criação/alterações e marcador VIP.
+- Ingestão assistida por WhatsApp e e-mail com envelope idempotente, resolvedor tenant-safe e fila de revisão humana. **Entregue no incremento 9.5, sem criação ou mesclagem automática.**
+- Operação do cadastro assistido com responsável, SLA, métricas, confirmação campo a campo,
+  vínculo transacional, proveniência e retenção minimizada. **Entregue no incremento 9.6,
+  mantendo proibida a criação automática.**
+- Gestão cartográfica com visualização da jurisdição, desenho e edição acessível de polígonos,
+  múltiplas partes e aliases sincronizados. **Entregue no incremento 9.7.**
+
 ## Release 2 — Automação do atendimento
 
 - Transcrição de áudio.

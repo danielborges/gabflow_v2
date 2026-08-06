@@ -47,3 +47,33 @@
 - **RN-045** Somente uma versão de artefato por tenant e tipo pode estar ativa, com troca atômica e rollback auditável.
 - **RN-046** Feedback sem motivo ou julgamento suficiente pode compor métricas de satisfação, mas não pode gerar ajuste comportamental.
 - **RN-047** Somente sinal estruturado de baixo risco pode ser aprovado automaticamente; texto livre, correção, fonte ausente e mudança de alto impacto exigem moderação humana.
+- **RN-048** A unicidade de CPF é aplicada por tenant sobre o valor normalizado com onze dígitos; CPF ausente é permitido e múltiplos valores ausentes não violam a restrição.
+- **RN-049** A criação ou alteração deve rejeitar CPF estruturalmente inválido antes da persistência e responder a conflito sem revelar dados além do cidadão acessível ao usuário no mesmo tenant.
+- **RN-050** Coincidência de nome ou nome social normalizado gera alerta de homônimo, mas não bloqueia o cadastro; a decisão de continuar ou reutilizar o cadastro existente deve ser explícita e auditável.
+- **RN-051** Somente o nome exige entrada no cadastro mínimo. Telefone, e-mail, data de nascimento, CPF, título de eleitor e seleção manual de base legal são opcionais, mas valores preenchidos devem ser normalizados e validados. Antes da persistência, o sistema deve resolver uma base legal válida a partir da seleção explícita ou da política padrão configurada pelo tenant; se nenhuma existir, deve bloquear a conclusão e orientar a configuração, sem escolher uma hipótese arbitrariamente.
+- **RN-052** Bairro e território são derivados do endereço validado e da configuração geográfica do tenant. Não podem ser digitados diretamente no formulário do cidadão; ausência de correspondência não deve impedir salvar os demais dados.
+- **RN-063** A resolução territorial prioriza polígono ativo que contenha as coordenadas; em sobreposição prevalece o menor recorte. Sem interseção, usa nome ou alias normalizado. Nomes e aliases não podem ser ambíguos dentro do tenant.
+- **RN-064** Correções do cidadão exigem a versão lida pelo usuário; versão ausente retorna 428 e versão desatualizada retorna 412 sem persistir alterações.
+- **RN-065** O histórico funcional registra somente ação, usuário, horário, versão e nomes de campos; valores pessoais não são projetados na linha do tempo.
+- **RN-053** O consentimento para contato e a autorização de divulgação pública são finalidades independentes, não são inferidos pela seleção de base legal e preservam histórico de concessão ou revogação.
+- **RN-054** A foto do perfil integra o cadastro privado do cidadão e não implica autorização para divulgação. Captura de câmera só pode começar após ação do usuário e deve possuir alternativa sem câmera.
+- **RN-055** O marcador VIP é informação interna do gabinete, não altera direitos, prioridade ou SLA automaticamente e não pode ser usado para pontuação eleitoral individual.
+- **RN-056** O campo “Último contato” corresponde à interação de entrada ou saída ou tentativa de contato mais recente vinculada ao cidadão; “Atendido por” corresponde ao usuário dessa ocorrência ou, na ausência, ao responsável da solicitação mais recente.
+- **RN-057** A lista de solicitações do cidadão respeita permissões, tenant e ordenação por criação decrescente; a navegação para uma solicitação deve usar seu identificador interno, nunca somente o protocolo exibido.
+- **RN-058** Mensagens recebidas por canais externos podem originar apenas uma sugestão de cadastro ou vínculo. Correspondências determinísticas de contato podem pré-selecionar um cidadão, mas criação, mesclagem e sobrescrita exigem confirmação humana.
+- **RN-059** Toda criação, correção, vínculo com organização, alteração de documento, consentimento, foto ou status VIP deve gerar auditoria com ator e instante; logs operacionais não devem conter CPF completo, título de eleitor, endereço, foto ou conteúdo de contato.
+- **RN-066** Uma correspondência única de telefone ou e-mail é somente uma sugestão e nunca equivale a identidade confirmada; todo vínculo exige decisão humana autenticada.
+- **RN-067** Replay do mesmo identificador externo no mesmo tenant e canal deve retornar o envelope existente sem criar nova mensagem ou revisão.
+- **RN-068** Mensagem, contato e payload bruto de provedor não podem ser copiados para logs de auditoria; respostas da fila devem mascarar o contato.
+- **RN-069** Revisão de identidade pode vincular cadastro existente ou ser descartada. Criação e mesclagem de cidadãos permanecem indisponíveis no fluxo assistido 9.5.
+- **RN-070** A preparação do cadastro assistido não constitui criação: nome, contato e base legal devem ser conferidos separadamente pelo operador antes da persistência.
+- **RN-071** A conclusão assistida deve ocorrer na mesma transação que cria o cidadão e vincula a revisão; qualquer falha de CPF, homônimo não confirmado ou persistência mantém a revisão pendente.
+- **RN-072** A base legal padrão é configurada explicitamente por tenant; sua ausência bloqueia a preparação sem inferência automática pelo canal ou perfil do usuário.
+- **RN-073** Reabertura de revisão concluída exige perfil administrativo e justificativa, não elimina nem altera o cidadão previamente vinculado e gera nova trilha de auditoria.
+- **RN-074** A retenção minimiza conteúdo, remetente, contato, assunto e metadados somente em envelopes de revisões concluídas e vencidas; identificadores, decisão e auditoria minimizada são preservados.
+- **RN-075** A edição cartográfica persiste exclusivamente `Polygon` ou `MultiPolygon` GeoJSON com coordenadas na ordem longitude/latitude, limites geográficos válidos e anéis fechados com no mínimo três vértices distintos.
+- **RN-076** O mapa usa a geometria oficial da jurisdição como referência visual, mas a ausência dessa malha não impede importação ou desenho manual de território.
+- **RN-077** Selecionar, desenhar ou mover vértice no mapa altera apenas o rascunho local; a geometria só passa a orientar resoluções territoriais depois do salvamento explícito e auditado.
+- **RN-078** Nome e aliases continuam únicos no tenant segundo a forma normalizada; a interface cartográfica não pode contornar essa validação nem acessar territórios de outro gabinete.
+- **RN-079** As letras habilitadas da agenda são calculadas sobre todos os cidadãos não anonimizados do tenant, independentemente da página ou da letra selecionada; iniciais acentuadas são agrupadas pela letra latina correspondente.
+- **RN-080** O filtro alfabético usa o nome social quando preenchido e, caso contrário, o nome civil; a troca de letra invalida o cursor anterior e nunca amplia o escopo do tenant.

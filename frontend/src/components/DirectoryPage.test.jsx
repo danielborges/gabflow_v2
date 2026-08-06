@@ -4,10 +4,11 @@ import { apiRequest } from "../api";
 import { formatBrazilianPhone, isValidBrazilianPhone, isValidEmail } from "../contactValidation";
 import { DirectoryPage } from "./DirectoryPage";
 
-vi.mock("../api", () => ({ apiRequest: vi.fn() }));
+vi.mock("../api", () => ({ apiDownload: vi.fn(), apiRequest: vi.fn() }));
 
 describe("cadastro de cidadão", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     apiRequest.mockReset();
     apiRequest.mockResolvedValue({ content: [] });
   });
@@ -24,10 +25,62 @@ describe("cadastro de cidadão", () => {
     expect(isValidEmail("pessoa@exemplo")).toBe(false);
   });
 
+  it("habilita apenas iniciais existentes e apresenta cards completos da agenda", async () => {
+    const citizen = {
+      id: "cid-card",
+      nome: "Carla Menezes",
+      contatos: [
+        { tipo: "TELEFONE", valor: "31984141102" },
+        { tipo: "EMAIL", valor: "carla.m@exemplo.com" },
+      ],
+      enderecos: [{ cidade: "Belo Horizonte", bairro: "Centro" }],
+      canalPreferencial: "EMAIL",
+      profissao: "Arquiteta",
+      vip: true,
+    };
+    apiRequest.mockImplementation((url) => Promise.resolve(
+      url.startsWith("/api/v1/cidadaos?")
+        ? { content: [citizen], letrasDisponiveis: ["C", "M"], proximoCursor: null }
+        : { content: [] },
+    ));
+
+    render(<DirectoryPage />);
+
+    const enabledLetter = await screen.findByRole("button", { name: "Filtrar pela letra C" });
+    const disabledLetter = screen.getByRole("button", { name: "Letra J sem cadastros" });
+    const clearLetter = screen.getByRole("button", { name: "Limpar filtro por letra" });
+    expect(enabledLetter).toBeEnabled();
+    expect(disabledLetter).toBeDisabled();
+    expect(clearLetter).toBeDisabled();
+    expect(screen.getByText("(31) 98414-1102")).toBeInTheDocument();
+    expect(screen.getByText(/carla\.m@exemplo\.com · Centro · Arquiteta · Prefere contato por e-mail/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Cidadão VIP")).toBeInTheDocument();
+
+    fireEvent.click(enabledLetter);
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining("letra=C")));
+    expect(enabledLetter).toHaveAttribute("aria-pressed", "true");
+    expect(clearLetter).toBeEnabled();
+    expect(window.location.search).toContain("letraCidadao=C");
+
+    const citizenRequestsBeforeClear = apiRequest.mock.calls.filter(([url]) => url.startsWith("/api/v1/cidadaos?")).length;
+    fireEvent.click(clearLetter);
+
+    await waitFor(() => {
+      const citizenRequests = apiRequest.mock.calls.filter(([url]) => url.startsWith("/api/v1/cidadaos?"));
+      expect(citizenRequests).toHaveLength(citizenRequestsBeforeClear + 1);
+      expect(citizenRequests.at(-1)[0]).not.toContain("letra=");
+    });
+    expect(enabledLetter).toHaveAttribute("aria-pressed", "false");
+    expect(clearLetter).toBeDisabled();
+    expect(window.location.search).not.toContain("letraCidadao");
+  });
+
   it("aplica a máscara e impede o envio de contatos inválidos", async () => {
     render(<DirectoryPage />);
     await waitFor(() => expect(apiRequest).toHaveBeenCalledTimes(3));
     fireEvent.click(screen.getByRole("button", { name: /novo cidadão/i }));
+    expect(screen.getByRole("region", { name: "Cadastrar cidadão" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Cadastrar cidadão" })).not.toBeInTheDocument();
 
     const phone = screen.getByLabelText("Telefone");
     fireEvent.change(phone, { target: { value: "32987001487" } });
@@ -46,6 +99,7 @@ describe("cadastro de cidadão", () => {
   it("abre o cidadão pelo card e salva as alterações", async () => {
     const citizen = {
       id: "cid-1",
+      versao: 1,
       nome: "Daniel Borges",
       nomeSocial: "Daniel",
       contatos: [
@@ -60,6 +114,7 @@ describe("cadastro de cidadão", () => {
     };
     apiRequest.mockImplementation((url, options) => {
       if (options?.method === "PATCH") return Promise.resolve(citizen);
+      if (url === "/api/v1/cidadaos/cid-1") return Promise.resolve(citizen);
       return Promise.resolve({ content: url.includes("cidadaos") ? [citizen] : [] });
     });
 
@@ -67,7 +122,8 @@ describe("cadastro de cidadão", () => {
     const card = await screen.findByRole("button", { name: "Editar cidadão Daniel Borges" });
     fireEvent.click(card);
 
-    expect(screen.getByRole("dialog", { name: "Editar cidadão" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Editar cidadão" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Editar cidadão" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Telefone")).toHaveValue("(32) 98700-1487");
     expect(screen.getByLabelText("E-mail")).toHaveValue("daniel@exemplo.com");
     expect(screen.getByLabelText("Endereço")).toHaveValue("Rua Central, 10");
@@ -77,15 +133,82 @@ describe("cadastro de cidadão", () => {
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
       "/api/v1/cidadaos/cid-1",
-      expect.objectContaining({ method: "PATCH" }),
+      expect.objectContaining({ method: "PATCH", headers: { "If-Match": '"1"' } }),
     ));
     const updateCall = apiRequest.mock.calls.find(([, options]) => options?.method === "PATCH");
     const payload = JSON.parse(updateCall[1].body);
     expect(payload).toMatchObject({
       nome: "Daniel Borges da Silva",
       nomeSocial: "Daniel",
-      enderecos: [{ endereco: "Rua Central, 10", referencia: "Centro" }],
+      profissao: "",
+      dataNascimento: null,
+      cpf: null,
+      tituloEleitor: null,
+      vip: false,
+      organizacaoIds: [],
+      endereco: { endereco: "Rua Central, 10", referencia: "Centro" },
       consentimentoContato: true,
     });
+  });
+
+  it("alerta sobre homônimo e exige confirmação para criar outro cadastro", async () => {
+    const homonym = { id: "cid-existing", nome: "Ana Souza", contatos: [] };
+    apiRequest.mockImplementation((url, options) => {
+      if (url === "/api/v1/cidadaos/verificar-duplicidade") {
+        return Promise.resolve({ cpfDuplicado: null, homonimos: [homonym] });
+      }
+      if (options?.method === "POST" && url === "/api/v1/cidadaos") {
+        return Promise.resolve({ id: "cid-new", nome: "Ana Souza" });
+      }
+      return Promise.resolve({ content: [] });
+    });
+
+    render(<DirectoryPage />);
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledTimes(3));
+    fireEvent.click(screen.getByRole("button", { name: /novo cidadão/i }));
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Ana Souza" } });
+    fireEvent.click(screen.getByRole("button", { name: /^salvar$/i }));
+
+    expect(await screen.findByText("Encontramos possíveis homônimos")).toBeInTheDocument();
+    expect(apiRequest).not.toHaveBeenCalledWith("/api/v1/cidadaos", expect.objectContaining({ method: "POST" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Criar mesmo assim" }));
+    fireEvent.click(screen.getByRole("button", { name: /^salvar$/i }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/cidadaos",
+      expect.objectContaining({ method: "POST" }),
+    ));
+  });
+
+  it("impede sobrescrita silenciosa quando a versão do cadastro mudou", async () => {
+    const citizen = {
+      id: "cid-conflict", nome: "Ana Concorrente", versao: 3, contatos: [], enderecos: [],
+      baseLegal: "EXECUCAO_POLITICA_PUBLICA",
+    };
+    apiRequest.mockImplementation((url, options) => {
+      if (url.includes("/solicitacoes") || url.includes("/historico")) {
+        return Promise.resolve({ content: [], proximoCursor: null });
+      }
+      if (options?.method === "PATCH") {
+        const error = new Error("Este cadastro foi alterado por outro usuário.");
+        error.status = 412;
+        return Promise.reject(error);
+      }
+      if (url === "/api/v1/cidadaos/cid-conflict") return Promise.resolve(citizen);
+      return Promise.resolve({ content: url.includes("cidadaos") ? [citizen] : [] });
+    });
+
+    render(<DirectoryPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar cidadão Ana Concorrente" }));
+    await screen.findByRole("region", { name: "Editar cidadão" });
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Ana Editada" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    expect(await screen.findByText(/alterado por outro usuário/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Recarregar cadastro/ })).toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/cidadaos/cid-conflict",
+      expect.objectContaining({ headers: { "If-Match": '"3"' } }),
+    );
   });
 });

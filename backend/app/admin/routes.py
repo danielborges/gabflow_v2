@@ -5,6 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from unicodedata import combining, normalize
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity
@@ -32,6 +33,7 @@ from app.models import (
     UserStatus,
 )
 from app.plans import USER_LIMIT_REACHED_MESSAGE, user_limit_for_plan
+from app.territory_geometry import TerritoryGeometryError, normalize_geometry
 from app.territory_suggestions import reload_suggested_territories
 
 admin_bp = Blueprint("admin", __name__)
@@ -61,12 +63,60 @@ def _serialize(item: RequestCategory) -> dict:
 
 def _simple_data(item) -> dict:
     data = {"id": str(item.id), "nome": item.name, "ativa": item.active}
+    if isinstance(item, Territory):
+        data["aliases"] = item.aliases or []
+        data["geometria"] = item.geometry
     if isinstance(item, ExternalAgency):
         data["emailContato"] = item.contact_email
         data["responsavel"] = item.responsible
         data["telefone"] = _format_phone(item.phone)
         data["origem"] = item.source
     return data
+
+
+def _territory_aliases(value, name: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("Aliases devem ser uma lista.")
+    aliases = []
+    seen = {_territory_key(name)}
+    for raw in value:
+        alias = " ".join(str(raw).strip().split())
+        key = _territory_key(alias)
+        if not alias or key in seen:
+            continue
+        if len(alias) > 120:
+            raise ValueError("Cada alias deve possuir no máximo 120 caracteres.")
+        seen.add(key)
+        aliases.append(alias)
+    if len(aliases) > 50:
+        raise ValueError("Informe no máximo 50 aliases por território.")
+    return aliases
+
+
+def _territory_key(value: str) -> str:
+    text = " ".join(value.lower().split())
+    return "".join(char for char in normalize("NFKD", text) if not combining(char))
+
+
+def _territory_collision(
+    tenant_id: uuid.UUID, name: str, aliases: list[str], ignore_id: uuid.UUID | None = None
+) -> str | None:
+    requested = {_territory_key(value) for value in [name, *aliases]}
+    items = db.session.execute(select(Territory).where(Territory.tenant_id == tenant_id)).scalars()
+    for item in items:
+        if ignore_id and item.id == ignore_id:
+            continue
+        existing = {_territory_key(value) for value in [item.name, *(item.aliases or [])]}
+        overlap = requested & existing
+        if overlap:
+            return next(
+                value
+                for value in [item.name, *(item.aliases or [])]
+                if _territory_key(value) in overlap
+            )
+    return None
 
 
 def _jurisdiction_data(item: Tenant) -> dict:
@@ -1304,15 +1354,25 @@ def reload_territory_suggestions():
 @roles_required("admin")
 def create_territory():
     tenant_id, user_id = _context()
-    name = str((request.get_json(silent=True) or {}).get("nome", "")).strip()
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("nome", "")).strip()
     if len(name) < 2:
         return jsonify(error="validation_error", message="Informe o nome do território."), 422
-    exists = db.session.execute(
-        select(Territory.id).where(Territory.tenant_id == tenant_id, Territory.name == name)
-    ).scalar_one_or_none()
-    if exists:
-        return jsonify(error="conflict", message="Território ja cadastrado no gabinete."), 409
-    item = Territory(tenant_id=tenant_id, name=name)
+    try:
+        aliases = _territory_aliases(payload.get("aliases"), name)
+        geometry = normalize_geometry(payload.get("geometria"))
+    except (ValueError, TerritoryGeometryError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    collision = _territory_collision(tenant_id, name, aliases)
+    if collision:
+        return (
+            jsonify(
+                error="conflict",
+                message=f'Nome ou alias já utilizado em outro território: "{collision}".',
+            ),
+            409,
+        )
+    item = Territory(tenant_id=tenant_id, name=name, aliases=aliases, geometry=geometry)
     db.session.add(item)
     db.session.flush()
     add_audit(
@@ -1333,20 +1393,30 @@ def update_territory(territory_id: uuid.UUID):
         return jsonify(error="resource_not_found", message="Território não encontrado."), 404
     payload = request.get_json(silent=True) or {}
     before = _simple_data(item)
-    if "nome" in payload:
-        name = str(payload["nome"]).strip()
-        if len(name) < 2:
-            return jsonify(error="validation_error", message="Informe o nome do território."), 422
-        exists = db.session.execute(
-            select(Territory.id).where(
-                Territory.tenant_id == tenant_id,
-                Territory.name == name,
-                Territory.id != item.id,
-            )
-        ).scalar_one_or_none()
-        if exists:
-            return jsonify(error="conflict", message="Território ja cadastrado no gabinete."), 409
-        item.name = name
+    name = str(payload.get("nome", item.name)).strip()
+    if len(name) < 2:
+        return jsonify(error="validation_error", message="Informe o nome do território."), 422
+    try:
+        aliases = _territory_aliases(payload.get("aliases", item.aliases), name)
+        geometry = (
+            normalize_geometry(payload.get("geometria"))
+            if "geometria" in payload
+            else item.geometry
+        )
+    except (ValueError, TerritoryGeometryError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    collision = _territory_collision(tenant_id, name, aliases, ignore_id=item.id)
+    if collision:
+        return (
+            jsonify(
+                error="conflict",
+                message=f'Nome ou alias já utilizado em outro território: "{collision}".',
+            ),
+            409,
+        )
+    item.name = name
+    item.aliases = aliases
+    item.geometry = geometry
     if "ativa" in payload:
         item.active = bool(payload["ativa"])
     after = _simple_data(item)

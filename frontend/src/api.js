@@ -27,7 +27,11 @@ export async function apiRequest(path, options = {}) {
   const data = await readResponsePayload(response);
 
   if (!response.ok) {
-    throw new Error(errorMessageFor(response, data, "Não foi possível concluir a operação."));
+    const error = new Error(errorMessageFor(response, data, "Não foi possível concluir a operação."));
+    error.status = response.status;
+    error.code = data.code || data.error;
+    error.data = data;
+    throw error;
   }
   return data;
 }

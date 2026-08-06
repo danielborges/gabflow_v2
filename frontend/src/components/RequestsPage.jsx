@@ -74,7 +74,7 @@ const attachmentMimeTypes = [
 ];
 const maximumAttachmentBytes = 15 * 1024 * 1024;
 
-export function RequestsPage({ user, initialSearch = "" }) {
+export function RequestsPage({ user, initialSearch = "", initialCitizenId, initialRequestId, onInitialContextConsumed }) {
   const readOnly = user?.role === "representative";
   const [items, setItems] = useState([]);
   const [references, setReferences] = useState(emptyReferences);
@@ -83,11 +83,21 @@ export function RequestsPage({ user, initialSearch = "" }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [createCitizenId, setCreateCitizenId] = useState("");
   const [selected, setSelected] = useState(null);
 
   useEffect(() => {
     if (initialSearch) setSearch(initialSearch);
   }, [initialSearch]);
+
+  useEffect(() => {
+    if (initialCitizenId && !readOnly) {
+      setCreateCitizenId(initialCitizenId);
+      setShowCreate(true);
+    }
+    if (initialRequestId) openDetails(initialRequestId);
+    if (initialCitizenId || initialRequestId) onInitialContextConsumed?.();
+  }, [initialCitizenId, initialRequestId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,7 +164,7 @@ export function RequestsPage({ user, initialSearch = "" }) {
           <h1>Solicitações</h1>
           <p>Registre e acompanhe as demandas recebidas pelo gabinete.</p>
         </div>
-        {!readOnly && <button className="primary-button compact" onClick={() => setShowCreate(true)}>
+        {!readOnly && <button className="primary-button compact" onClick={() => { setCreateCitizenId(""); setShowCreate(true); }}>
           <Plus size={18} /> Nova solicitação
         </button>}
       </section>
@@ -224,9 +234,11 @@ export function RequestsPage({ user, initialSearch = "" }) {
       {showCreate && !readOnly && (
         <RequestForm
           references={references}
-          onClose={() => setShowCreate(false)}
+          initialCitizenId={createCitizenId}
+          onClose={() => { setShowCreate(false); setCreateCitizenId(""); }}
           onCreated={(created) => {
             setShowCreate(false);
+            setCreateCitizenId("");
             setSelected(created);
             load();
           }}
@@ -248,13 +260,13 @@ export function RequestsPage({ user, initialSearch = "" }) {
   );
 }
 
-function RequestForm({ references, onClose, onCreated }) {
+function RequestForm({ references, initialCitizenId = "", onClose, onCreated }) {
   const [form, setForm] = useState({
     origem: "WHATSAPP",
     titulo: "",
     descricao: "",
     categoriaId: "",
-    cidadaoId: "",
+    cidadaoId: initialCitizenId,
     organizacaoId: "",
     responsavelId: "",
     subcategoria: "",

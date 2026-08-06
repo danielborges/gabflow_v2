@@ -62,4 +62,17 @@ describe("RequestsPage", () => {
 
     expect(citizenField).toHaveValue("Bruno Silva");
   });
+
+  it("abre nova solicitação com o cidadão recebido do diretório pré-selecionado", async () => {
+    apiRequest.mockImplementation((url) => Promise.resolve({
+      content: String(url).includes("/api/v1/cidadaos")
+        ? [{ id: "cid-1", nome: "Bruno Silva", contatos: [] }]
+        : [],
+    }));
+
+    render(<RequestsPage initialCitizenId="cid-1" onInitialContextConsumed={vi.fn()} />);
+
+    expect(await screen.findByRole("dialog", { name: "Registrar solicitação" })).toBeInTheDocument();
+    expect(await screen.findByRole("combobox", { name: "Cidadão" })).toHaveValue("Bruno Silva");
+  });
 });

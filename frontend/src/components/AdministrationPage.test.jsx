@@ -174,4 +174,80 @@ describe("AdministrationPage office settings", () => {
     expect(screen.getByLabelText("E-mail")).toHaveValue("ana@gabinete.com.br");
     expect(screen.getByRole("button", { name: /Salvar usuário/ })).toBeInTheDocument();
   });
+
+  it("cadastra aliases e polígono GeoJSON para resolução territorial", async () => {
+    render(<AdministrationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Territórios" }));
+
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "São Pedro" } });
+    fireEvent.change(screen.getByLabelText("Aliases de bairros"), {
+      target: { value: "Jardim SP\nS. Pedro" },
+    });
+    fireEvent.change(screen.getByLabelText("Polígono GeoJSON"), {
+      target: {
+        value: JSON.stringify({
+          type: "Polygon",
+          coordinates: [[[-43.4, -21.8], [-43.3, -21.8], [-43.3, -21.7], [-43.4, -21.7], [-43.4, -21.8]]],
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar território/ }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/admin/territorios",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const call = apiRequest.mock.calls.find(([path, options]) => (
+      path === "/api/v1/admin/territorios" && options?.method === "POST"
+    ));
+    expect(JSON.parse(call[1].body)).toMatchObject({
+      nome: "São Pedro",
+      aliases: ["Jardim SP", "S. Pedro"],
+      geometria: { type: "Polygon" },
+    });
+  });
+
+  it("desenha e edita um polígono diretamente no mapa territorial", async () => {
+    apiRequest.mockImplementation((path, options = {}) => {
+      if (path === "/api/v1/admin/jurisdicao") {
+        return Promise.resolve({
+          nome: "Juiz de Fora / MG",
+          geojson: {
+            type: "Polygon",
+            coordinates: [[[-43.5, -21.9], [-43.2, -21.9], [-43.2, -21.6], [-43.5, -21.6], [-43.5, -21.9]]],
+          },
+        });
+      }
+      return mockAdminApi(path, options);
+    });
+
+    render(<AdministrationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Territórios" }));
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Zona Leste" } });
+    fireEvent.change(screen.getByLabelText("Aliases de bairros"), { target: { value: "Leste\nZL" } });
+    fireEvent.click(screen.getByRole("button", { name: /Desenhar polígono/ }));
+
+    const map = screen.getByRole("application", { name: /Mapa para visualizar/ });
+    vi.spyOn(map, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 900, bottom: 500, width: 900, height: 500,
+      toJSON: () => ({}),
+    });
+    fireEvent.click(map, { clientX: 250, clientY: 350 });
+    fireEvent.click(map, { clientX: 600, clientY: 350 });
+    fireEvent.click(map, { clientX: 420, clientY: 140 });
+    fireEvent.click(screen.getByRole("button", { name: /Concluir desenho/ }));
+
+    expect(screen.getByText("Leste")).toBeInTheDocument();
+    expect(screen.getByText("ZL")).toBeInTheDocument();
+    const geometry = JSON.parse(screen.getByLabelText("Polígono GeoJSON").value);
+    expect(geometry.type).toBe("Polygon");
+    expect(geometry.coordinates[0]).toHaveLength(4);
+    expect(geometry.coordinates[0][0]).toEqual(geometry.coordinates[0][3]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar território/ }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/admin/territorios",
+      expect.objectContaining({ method: "POST" }),
+    ));
+  });
 });

@@ -32,14 +32,14 @@ export function GooglePlaceAutocompleteInput({
         autocomplete = new window.google.maps.places.Autocomplete(inputRef.current, {
           bounds: toGoogleBounds(territoryBounds),
           componentRestrictions: { country: "br" },
-          fields: ["formatted_address", "geometry", "name", "place_id"],
+          fields: ["address_components", "formatted_address", "geometry", "name", "place_id"],
           strictBounds: hasValidBounds(territoryBounds),
           types: ["address"],
         });
         listener = autocomplete.addListener("place_changed", () => {
           const place = autocomplete.getPlace();
           const nextValue = place.formatted_address || place.name || inputRef.current.value;
-          onChangeRef.current(nextValue);
+          onChangeRef.current(nextValue, placeDetails(place, nextValue));
         });
         setStatus("ready");
       })
@@ -66,6 +66,24 @@ export function GooglePlaceAutocompleteInput({
       {!hideStatus && googleMapsApiKey && <small>{statusLabel(status, territoryBounds)}</small>}
     </span>
   );
+}
+
+function placeDetails(place, formattedAddress) {
+  const components = place.address_components || [];
+  const component = (...types) => components.find((item) => types.some((type) => item.types.includes(type)));
+  const location = place.geometry?.location;
+  return {
+    endereco: formattedAddress,
+    logradouro: component("route")?.long_name || "",
+    numero: component("street_number")?.long_name || "",
+    bairro: component("neighborhood", "sublocality_level_1", "administrative_area_level_4")?.long_name || "",
+    cidade: component("administrative_area_level_2", "locality")?.long_name || "",
+    uf: component("administrative_area_level_1")?.short_name || "",
+    cep: component("postal_code")?.long_name || "",
+    latitude: typeof location?.lat === "function" ? location.lat() : null,
+    longitude: typeof location?.lng === "function" ? location.lng() : null,
+    placeId: place.place_id || null,
+  };
 }
 
 function loadGoogleMapsPlaces(apiKey) {

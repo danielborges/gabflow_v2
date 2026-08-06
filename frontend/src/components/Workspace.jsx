@@ -70,7 +70,9 @@ export function Workspace({ user, onLogout }) {
     (!item.representativeOnly || user.role === "representative" || delegatedElectoralAccess) &&
     (user.role !== "representative" || representativeViews.has(item.id))
   ));
+  const requestedView = new URLSearchParams(window.location.search).get("tela");
   const initialView =
+    availableNavigation.find((item) => item.id === requestedView)?.id ||
     availableNavigation.find((item) => item.id === "requests")?.id ||
     availableNavigation[0]?.id ||
     "overview";
@@ -86,6 +88,10 @@ export function Workspace({ user, onLogout }) {
       : ["overview", "results"]
   ));
   const [requestSearch, setRequestSearch] = useState("");
+  const [requestContext, setRequestContext] = useState(null);
+  const [assistedReviewId, setAssistedReviewId] = useState(() => (
+    new URLSearchParams(window.location.search).get("revisaoCanal")
+  ));
 
   const updateElectoralSections = useCallback((sectionIds) => {
     setElectoralSectionIds((current) => (
@@ -109,6 +115,7 @@ export function Workspace({ user, onLogout }) {
       setRequestSearch(item.pesquisa);
     }
     setActiveView(item.view || "requests");
+    syncViewQuery(item.view || "requests");
     setElectoralMenuOpen(item.view === "electoral");
     setMenuOpen(false);
   }
@@ -119,13 +126,55 @@ export function Workspace({ user, onLogout }) {
         setElectoralMenuOpen((current) => !current);
       } else {
         setActiveView(id);
+        syncViewQuery(id);
         setElectoralMenuOpen(true);
       }
       return;
     }
     setActiveView(id);
+    syncViewQuery(id);
     setElectoralMenuOpen(false);
     setMenuOpen(false);
+  }
+
+  function startRequestForCitizen(citizen) {
+    apiRequest("/api/v1/cidadaos/metricas-fluxo", {
+      method: "POST", body: JSON.stringify({ evento: "SOLICITACAO_INICIADA" }),
+    }).catch(() => {});
+    setRequestContext({ citizenId: citizen.id, requestId: null });
+    setActiveView("requests");
+    syncViewQuery("requests");
+    setMenuOpen(false);
+  }
+
+  function openCitizenRequest(request) {
+    setRequestContext({ citizenId: null, requestId: request.id });
+    setActiveView("requests");
+    syncViewQuery("requests");
+    setMenuOpen(false);
+  }
+
+  function startAssistedRegistration(reviewId) {
+    setAssistedReviewId(reviewId);
+    setActiveView("citizens");
+    const params = new URLSearchParams(window.location.search);
+    params.set("tela", "citizens");
+    params.set("revisaoCanal", reviewId);
+    window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+    setMenuOpen(false);
+  }
+
+  function clearAssistedRegistration() {
+    setAssistedReviewId(null);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("revisaoCanal");
+    window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+  }
+
+  function syncViewQuery(view) {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tela", view);
+    window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
   }
 
   function openElectoralSection(sectionId) {
@@ -226,11 +275,11 @@ export function Workspace({ user, onLogout }) {
         </header>
 
         {activeView === "requests" && isModuleEnabled("solicitacoes") && (
-          <RequestsPage user={user} initialSearch={requestSearch} />
+          <RequestsPage user={user} initialSearch={requestSearch} initialCitizenId={requestContext?.citizenId} initialRequestId={requestContext?.requestId} onInitialContextConsumed={() => setRequestContext(null)} />
         )}
         {activeView === "agenda" && isModuleEnabled("agenda") && <AgendaPage />}
         {activeView === "oversight" && isModuleEnabled("fiscalizacao") && <OversightPage />}
-        {activeView === "channels" && isModuleEnabled("canais") && <ChannelsPage />}
+        {activeView === "channels" && isModuleEnabled("canais") && <ChannelsPage user={user} onStartAssistedRegistration={startAssistedRegistration} />}
         {activeView === "electoral" && isModuleEnabled("inteligencia_eleitoral") && (
           <ElectoralIntelligencePage
             activeSection={electoralSection}
@@ -238,7 +287,7 @@ export function Workspace({ user, onLogout }) {
             onSectionsChange={updateElectoralSections}
           />
         )}
-        {activeView === "citizens" && isModuleEnabled("cidadaos") && <DirectoryPage />}
+        {activeView === "citizens" && isModuleEnabled("cidadaos") && <DirectoryPage assistedReviewId={assistedReviewId} onAssistedRegistrationConsumed={clearAssistedRegistration} onCreateRequest={startRequestForCitizen} onOpenRequest={openCitizenRequest} />}
         {activeView === "ai-quality" && isModuleEnabled("ia") && <AIQualityPage />}
         {activeView === "rag-assistant" && isModuleEnabled("rag") && <RagAssistantPage />}
         {activeView === "documents" && isModuleEnabled("documentos") && (

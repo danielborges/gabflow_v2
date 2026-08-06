@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GabFlow API
-  version: 0.6.0
+  version: 0.7.0
   description: API principal para gestão de gabinetes municipais.
 servers:
   - url: https://api.gabflow.example/api/v1
@@ -501,35 +501,415 @@ paths:
           description: Conteúdo do anexo
   /cidadaos:
     get:
-      summary: Lista cidadãos do tenant
+      summary: Lista cidadãos do tenant no formato de agenda
+      parameters:
+        - in: query
+          name: q
+          description: Busca não sensível por nome ou nome social
+          schema: { type: string, maxLength: 120 }
+        - in: query
+          name: letra
+          schema: { type: string, pattern: "^[A-Z#]$" }
+        - in: query
+          name: vip
+          schema: { type: boolean }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limite
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
       responses:
-        "200": { description: Lista de cidadãos }
+        "200":
+          description: Página da agenda de cidadãos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CidadaoAgendaPage" }
     post:
       summary: Cadastra cidadão, contatos, base legal e consentimentos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CadastroCidadaoInput" }
       responses:
-        "201": { description: Cidadão criado }
+        "201":
+          description: Cidadão criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CidadaoDetalhe" }
+        "409":
+          description: CPF já vinculado a cidadão do tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CpfDuplicadoProblem" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /cidadaos/busca-segura:
+    post:
+      summary: Busca cidadãos por CPF ou contato sem expor PII na URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BuscaSeguraCidadaoInput" }
+      responses:
+        "200":
+          description: Resultados mascarados e tenant-scoped
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CidadaoResumo" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /cidadaos/verificar-duplicidade:
+    post:
+      summary: Verifica CPF duplicado e possíveis homônimos antes da persistência
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerificarDuplicidadeCidadaoInput" }
+      responses:
+        "200":
+          description: Resultado da verificação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResultadoDuplicidadeCidadao" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /cidadaos/{id}:
     get:
       summary: Obtém cidadão e histórico de solicitações
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
-        "200": { description: Cidadão }
+        "200":
+          description: Detalhe do cidadão
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CidadaoDetalhe" }
+        "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Atualiza o cadastro do cidadão
       parameters:
         - $ref: "#/components/parameters/Id"
+        - in: header
+          name: If-Match
+          required: true
+          description: ETag retornado na leitura do cidadão
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CadastroCidadaoInput" }
       responses:
-        "200": { description: Cidadão atualizado }
+        "200":
+          description: Cidadão atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CidadaoDetalhe" }
+        "409":
+          description: CPF já vinculado a outro cidadão do tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CpfDuplicadoProblem" }
+        "412": { description: Cadastro alterado por outro usuário; releitura obrigatória }
+        "428": { description: Cabeçalho If-Match obrigatório }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /cidadaos/{id}/foto:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      summary: Obtém a foto privada processada do cidadão
+      responses:
+        "200":
+          description: Imagem WebP privada
+          content:
+            image/webp:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      summary: Inclui ou substitui a foto privada do cidadão
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [foto]
+              properties:
+                foto: { type: string, format: binary }
+      responses:
+        "200":
+          description: Foto processada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FotoCidadao" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Remove a foto do cidadão conforme a política de retenção
+      responses:
+        "204": { description: Foto removida }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /cidadaos/{id}/solicitacoes:
+    get:
+      summary: Lista solicitações do cidadão em ordem decrescente
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limite
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: Histórico paginado de solicitações
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SolicitacoesCidadaoPage" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /cidadaos/{id}/historico:
+    get:
+      summary: Lista o histórico funcional autorizado do cidadão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Alterações sem valores pessoais em logs técnicos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistoricoCidadaoPage" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /cidadaos/metricas-fluxo:
+    post:
+      summary: Registra métrica operacional do fluxo sem conteúdo pessoal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [evento]
+              properties:
+                evento:
+                  type: string
+                  enum: [CADASTRO_CONCLUIDO, PESQUISA_SEM_RESULTADO, DUPLICIDADE_DETECTADA, SOLICITACAO_INICIADA]
+                duracaoMs: { type: integer, minimum: 0, maximum: 3600000 }
+      responses:
+        "204": { description: Métrica registrada }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      summary: Consolida métricas do fluxo nos últimos 30 dias
+      responses:
+        "200": { description: Contagens e tempo médio de cadastro }
+  /enderecos/resolver:
+    post:
+      summary: Resolve prévia de bairro e território a partir de endereço validado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EnderecoCidadaoInput" }
+      responses:
+        "200":
+          description: Resultado derivado; o save do cidadão revalida a resolução
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnderecoResolvido" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /organizacoes:
     get:
       summary: Lista organizações do tenant
+      parameters:
+        - in: query
+          name: q
+          description: Busca para o Search-Select
+          schema: { type: string, maxLength: 120 }
+        - in: query
+          name: limite
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
       responses:
         "200": { description: Lista de organizações }
     post:
       summary: Cadastra uma organização
       responses:
         "201": { description: Organização criada }
+  /canais/mensagens:
+    get:
+      summary: Lista envelopes canônicos recebidos no tenant
+      responses:
+        "200": { description: Caixa de entrada autenticada }
+    post:
+      summary: Registra uma mensagem para atendimento assistido
+      description: WhatsApp e e-mail geram uma sugestão de identidade, nunca um cidadão.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [canal, conteudo]
+              properties:
+                canal: { type: string, enum: [WHATSAPP, EMAIL, REDE_SOCIAL] }
+                remetenteNome: { type: [string, "null"], maxLength: 180 }
+                remetenteContato: { type: [string, "null"], maxLength: 254 }
+                assunto: { type: [string, "null"], maxLength: 180 }
+                conteudo: { type: string, minLength: 3 }
+                idExterno: { type: [string, "null"], maxLength: 160 }
+                metadados: { type: object, additionalProperties: true }
+      responses:
+        "201": { description: Envelope e eventual revisão pendente criados }
+        "200": { description: Replay idempotente; envelope existente retornado }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/revisoes-identidade:
+    get:
+      summary: Lista a fila de revisão humana de identidades recebidas
+      description: Contatos são mascarados e candidatos pertencem sempre ao tenant autenticado.
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [PENDENTE, VINCULADA, DESCARTADA], default: PENDENTE }
+        - in: query
+          name: canal
+          schema: { type: string, enum: [WHATSAPP, EMAIL] }
+        - in: query
+          name: responsavelId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: vencida
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Até 100 revisões ordenadas da mais recente para a mais antiga
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content]
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/RevisaoIdentidadeCanal" }
+                  resumo: { type: object, additionalProperties: { type: integer } }
+                  responsaveis:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        nome: { type: string }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/revisoes-identidade/{id}/decisao:
+    post:
+      summary: Vincula um cidadão existente ou descarta uma sugestão
+      description: Não cria nem mescla cidadãos. A decisão é final e auditada.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decisao]
+              properties:
+                decisao: { type: string, enum: [VINCULAR, DESCARTAR] }
+                cidadaoId: { type: [string, "null"], format: uuid }
+                observacao: { type: [string, "null"], maxLength: 500 }
+      responses:
+        "200":
+          description: Revisão concluída
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevisaoIdentidadeCanal" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/configuracao-cadastro-assistido:
+    get:
+      summary: Consulta base legal padrão, SLA e retenção do tenant
+      responses:
+        "200": { description: Configuração efetiva }
+    put:
+      summary: Atualiza a configuração operacional do cadastro assistido
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                baseLegalPadrao: { type: [string, "null"] }
+                slaHoras: { type: integer, minimum: 1, maximum: 720 }
+                retencaoDias: { type: integer, minimum: 30, maximum: 3650 }
+      responses:
+        "200": { description: Configuração atualizada e auditada }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/revisoes-identidade/{id}/atribuicao:
+    put:
+      summary: Atribui ou remove o responsável por uma revisão
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                responsavelId: { type: [string, "null"], format: uuid }
+      responses:
+        "200": { description: Revisão atribuída }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/revisoes-identidade/{id}/preparar-cadastro:
+    post:
+      summary: Prepara dados mínimos para cadastro manual assistido
+      description: Não cria cidadão. Exige base legal padrão configurada e revisão pendente.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Sugestões e confirmações obrigatórias }
+        "409": { description: Base legal padrão não configurada }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/revisoes-identidade/{id}/reabrir:
+    post:
+      summary: Reabre uma revisão concluída mediante justificativa
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justificativa]
+              properties:
+                justificativa: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        "200": { description: Revisão reaberta e auditada }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /canais/revisoes-identidade/metricas:
+    get:
+      summary: Consulta métricas operacionais da fila assistida
+      responses:
+        "200": { description: Volumes por estado, cadastros manuais e tempo médio }
+  /canais/revisoes-identidade/retencao/executar:
+    post:
+      summary: Minimiza envelopes concluídos além da retenção configurada
+      responses:
+        "200": { description: Quantidade de envelopes minimizados, limitada a 500 por execução }
   /admin/categorias:
     get:
       summary: Lista categorias e SLA
@@ -545,9 +925,30 @@ paths:
       responses:
         "200": { description: Lista de territórios }
     post:
-      summary: Cria território
+      summary: Cria território com aliases e geometria administrável
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerritorioInput" }
       responses:
         "201": { description: Território criado }
+        "409": { description: Nome ou alias já utilizado no tenant }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /admin/territorios/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      summary: Atualiza nome, aliases, geometria ou estado do território
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerritorioInput" }
+      responses:
+        "200": { description: Território atualizado }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Nome ou alias já utilizado no tenant }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /admin/orgaos:
     get:
       summary: Lista órgãos externos
@@ -2334,6 +2735,297 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    RevisaoIdentidadeCanal:
+      type: object
+      additionalProperties: false
+      required: [id, status, estadoResolucao, criterios, mensagem, candidatos, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [PENDENTE, VINCULADA, DESCARTADA] }
+        estadoResolucao:
+          type: string
+          enum: [SEM_CORRESPONDENCIA, CORRESPONDENCIA_UNICA, CORRESPONDENCIA_AMBIGUA]
+        criterios:
+          type: array
+          items: { type: string, enum: [CONTATO_EXATO] }
+        mensagem:
+          type: object
+          required: [id, canal, conteudo, recebidaEm]
+          properties:
+            id: { type: string, format: uuid }
+            canal: { type: string, enum: [WHATSAPP, EMAIL] }
+            remetenteNome: { type: [string, "null"] }
+            remetenteContatoMascarado: { type: [string, "null"] }
+            assunto: { type: [string, "null"] }
+            conteudo: { type: string, description: Conteúdo externo não confiável }
+            recebidaEm: { type: string, format: date-time }
+        candidatos:
+          type: array
+          items:
+            type: object
+            required: [id, nome, vip]
+            properties:
+              id: { type: string, format: uuid }
+              nome: { type: string }
+              nomeSocial: { type: [string, "null"] }
+              vip: { type: boolean }
+        cidadaoSelecionadoId: { type: [string, "null"], format: uuid }
+        responsavelId: { type: [string, "null"], format: uuid }
+        responsavel: { type: [string, "null"] }
+        prazoEm: { type: [string, "null"], format: date-time }
+        vencida: { type: boolean }
+        tipoDecisao: { type: [string, "null"] }
+        reaberturas: { type: integer, minimum: 0 }
+        revisadoPor: { type: [string, "null"] }
+        observacao: { type: [string, "null"] }
+        criadaEm: { type: string, format: date-time }
+        revisadaEm: { type: [string, "null"], format: date-time }
+    ContatoCidadaoInput:
+      type: object
+      additionalProperties: false
+      properties:
+        telefone: { type: [string, "null"], maxLength: 20 }
+        email: { type: [string, "null"], format: email, maxLength: 254 }
+    EnderecoCidadaoInput:
+      type: object
+      additionalProperties: false
+      required: [endereco]
+      properties:
+        endereco: { type: string, maxLength: 500 }
+        enderecoFormatado: { type: string, maxLength: 500 }
+        logradouro: { type: [string, "null"], maxLength: 180 }
+        numero: { type: [string, "null"], maxLength: 30 }
+        complemento: { type: [string, "null"], maxLength: 120 }
+        cep: { type: [string, "null"], maxLength: 12 }
+        bairro: { type: [string, "null"], maxLength: 120 }
+        cidade: { type: [string, "null"], maxLength: 120 }
+        uf: { type: [string, "null"], maxLength: 2 }
+        placeId: { type: [string, "null"], maxLength: 255 }
+        latitude: { type: [number, "null"], minimum: -90, maximum: 90 }
+        longitude: { type: [number, "null"], minimum: -180, maximum: 180 }
+    EnderecoResolvido:
+      type: object
+      additionalProperties: false
+      required: [statusResolucao]
+      properties:
+        statusResolucao: { type: string, enum: [RESOLVIDO, TERRITORIO_NAO_ENCONTRADO, BAIRRO_NAO_IDENTIFICADO, FORA_DA_JURISDICAO] }
+        bairro: { type: [string, "null"] }
+        territorioId: { type: [string, "null"], format: uuid }
+        territorio: { type: [string, "null"] }
+        metodoResolucao: { type: [string, "null"], enum: [POLIGONO, ALIAS, NOME, null] }
+    TerritorioInput:
+      type: object
+      additionalProperties: false
+      description: Contrato usado pelo formulário e pelo editor cartográfico do incremento 9.7.
+      properties:
+        nome: { type: string, minLength: 2, maxLength: 120 }
+        aliases:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, maxLength: 120 }
+        geometria:
+          type: [object, "null"]
+          description: GeoJSON Polygon, MultiPolygon ou Feature; anéis fechados em longitude/latitude
+        ativa: { type: boolean }
+    CadastroCidadaoInput:
+      type: object
+      additionalProperties: false
+      required: [nome]
+      properties:
+        nome: { type: string, minLength: 2, maxLength: 180 }
+        nomeSocial: { type: [string, "null"], maxLength: 180 }
+        profissao: { type: [string, "null"], maxLength: 180 }
+        dataNascimento: { type: [string, "null"], format: date }
+        cpf: { type: [string, "null"], maxLength: 14 }
+        tituloEleitor: { type: [string, "null"], maxLength: 20 }
+        contato: { $ref: "#/components/schemas/ContatoCidadaoInput" }
+        endereco: { $ref: "#/components/schemas/EnderecoCidadaoInput" }
+        canalPreferencial:
+          type: [string, "null"]
+          enum: [WHATSAPP, TELEFONE, EMAIL, PRESENCIAL, null]
+        baseLegal:
+          type: [string, "null"]
+          description: Quando ausente, o backend resolve a política padrão válida do tenant
+          maxLength: 120
+        autorizaContato: { type: boolean, default: false }
+        autorizaDivulgacao: { type: boolean, default: false }
+        vip: { type: boolean, default: false }
+        organizacaoIds:
+          type: array
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        confirmarHomonimo: { type: boolean, default: false }
+        revisaoCanalId:
+          type: [string, "null"]
+          format: uuid
+          description: Revisão pendente previamente preparada para conclusão manual assistida
+        confirmacoesCadastroAssistido:
+          type: object
+          additionalProperties: false
+          properties:
+            nome: { type: boolean }
+            contato: { type: boolean }
+            baseLegal: { type: boolean }
+    CidadaoResumo:
+      type: object
+      additionalProperties: false
+      required: [id, nomeExibicao, vip]
+      properties:
+        id: { type: string, format: uuid }
+        nomeExibicao: { type: string }
+        nomeCivil: { type: [string, "null"] }
+        contatoPrincipalMascarado: { type: [string, "null"] }
+        cpfFinal: { type: [string, "null"], pattern: "^[0-9]{2}$" }
+        bairro: { type: [string, "null"] }
+        dataNascimentoParcial:
+          type: [string, "null"]
+          description: Ano ou faixa suficiente para diferenciar homônimos sem expor a data completa
+        vip: { type: boolean }
+    CidadaoAgendaPage:
+      type: object
+      additionalProperties: false
+      required: [content, letrasDisponiveis]
+      properties:
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/CidadaoResumo" }
+        letrasDisponiveis:
+          type: array
+          description: Iniciais existentes em todo o diretório ativo do tenant, independentemente da página ou filtro atual
+          uniqueItems: true
+          items: { type: string, pattern: "^[A-Z#]$" }
+        proximoCursor: { type: [string, "null"] }
+        totalAproximado: { type: [integer, "null"], minimum: 0 }
+    FotoCidadao:
+      type: object
+      additionalProperties: false
+      required: [fotoUrl, versao]
+      properties:
+        fotoUrl: { type: string }
+        versao: { type: integer, minimum: 1 }
+    OrganizacaoCidadaoResumo:
+      type: object
+      additionalProperties: false
+      required: [id, nome, papel]
+      properties:
+        id: { type: string, format: uuid }
+        nome: { type: string }
+        tipo: { type: [string, "null"] }
+        papel: { type: string, enum: [RESPONSAVEL] }
+    MetadadosAtendimentoCidadao:
+      type: object
+      additionalProperties: false
+      required: [cadastradoEm]
+      properties:
+        cadastradoEm: { type: string, format: date-time }
+        cadastradoPor: { type: [string, "null"] }
+        ultimoContatoEm: { type: [string, "null"], format: date-time }
+        atendidoPor: { type: [string, "null"] }
+    CidadaoDetalhe:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/CidadaoResumo"
+        - type: object
+          required: [nome, baseLegal, autorizaContato, autorizaDivulgacao, organizacoes, metadados, versao]
+          properties:
+            nome: { type: string }
+            nomeSocial: { type: [string, "null"] }
+            profissao: { type: [string, "null"] }
+            dataNascimento: { type: [string, "null"], format: date }
+            cpf: { type: [string, "null"] }
+            tituloEleitor: { type: [string, "null"] }
+            contato: { $ref: "#/components/schemas/ContatoCidadaoInput" }
+            endereco: { $ref: "#/components/schemas/EnderecoCidadaoInput" }
+            enderecoResolvido: { $ref: "#/components/schemas/EnderecoResolvido" }
+            foto: { anyOf: [{ $ref: "#/components/schemas/FotoCidadao" }, { type: "null" }] }
+            canalPreferencial: { type: [string, "null"] }
+            baseLegal: { type: string }
+            autorizaContato: { type: boolean }
+            autorizaDivulgacao: { type: boolean }
+            organizacoes:
+              type: array
+              items: { $ref: "#/components/schemas/OrganizacaoCidadaoResumo" }
+            metadados: { $ref: "#/components/schemas/MetadadosAtendimentoCidadao" }
+            versao: { type: integer, minimum: 1 }
+    BuscaSeguraCidadaoInput:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        cpf: { type: string, maxLength: 14 }
+        telefone: { type: string, maxLength: 20 }
+        email: { type: string, format: email, maxLength: 254 }
+    VerificarDuplicidadeCidadaoInput:
+      type: object
+      additionalProperties: false
+      required: [nome]
+      properties:
+        ignorarCidadaoId: { type: [string, "null"], format: uuid }
+        nome: { type: string, minLength: 2, maxLength: 180 }
+        nomeSocial: { type: [string, "null"], maxLength: 180 }
+        cpf: { type: [string, "null"], maxLength: 14 }
+    ResultadoDuplicidadeCidadao:
+      type: object
+      additionalProperties: false
+      required: [homonimos]
+      properties:
+        cpfDuplicado: { anyOf: [{ $ref: "#/components/schemas/CidadaoResumo" }, { type: "null" }] }
+        homonimos:
+          type: array
+          items: { $ref: "#/components/schemas/CidadaoResumo" }
+    CpfDuplicadoProblem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, cidadao]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, const: 409 }
+        code: { type: string, const: CPF_DUPLICADO }
+        cidadao: { $ref: "#/components/schemas/CidadaoResumo" }
+    SolicitacaoCidadaoResumo:
+      type: object
+      additionalProperties: false
+      required: [id, protocolo, titulo, status, criadaEm]
+      properties:
+        id: { type: string, format: uuid }
+        protocolo: { type: string }
+        titulo: { type: string }
+        status: { type: string }
+        criadaEm: { type: string, format: date-time }
+        responsavel: { type: [string, "null"] }
+    SolicitacoesCidadaoPage:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/SolicitacaoCidadaoResumo" }
+        proximoCursor: { type: [string, "null"] }
+    HistoricoCidadaoItem:
+      type: object
+      additionalProperties: false
+      required: [id, acao, camposAlterados, usuario, alteradoEm]
+      properties:
+        id: { type: string, format: uuid }
+        acao: { type: string, enum: [CADASTRO_CRIADO, CADASTRO_ATUALIZADO, FOTO_ATUALIZADA, FOTO_REMOVIDA, CONSENTIMENTO_ATUALIZADO, CADASTRO_ANONIMIZADO] }
+        camposAlterados:
+          type: array
+          items: { type: string }
+        usuario: { type: string }
+        metadados: { type: object, additionalProperties: true }
+        alteradoEm: { type: string, format: date-time }
+    HistoricoCidadaoPage:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/HistoricoCidadaoItem" }
+        proximoCursor: { type: [string, "null"] }
     SecurityRescanRequest:
       type: object
       additionalProperties: false

@@ -34,6 +34,7 @@ import {
 } from "../contactValidation";
 import brazilLocations from "../data/brazilLocations.json";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
+import { TerritoryMapEditor } from "./TerritoryMapEditor";
 
 const brazilStates = brazilLocations.states;
 const municipalitiesByState = brazilLocations.municipalitiesByState;
@@ -53,6 +54,8 @@ const sections = [
 
 const initialForm = {
   nome: "",
+  aliasesTerritorio: "",
+  geometriaTerritorio: "",
   slaHoras: 72,
   emailContato: "",
   responsavelOrgao: "",
@@ -365,9 +368,15 @@ export function AdministrationPage() {
     try {
       await apiRequest("/api/v1/admin/territorios", {
         method: "POST",
-        body: JSON.stringify({ nome: form.nome }),
+        body: JSON.stringify({
+          nome: form.nome,
+          aliases: territoryAliases(form.aliasesTerritorio),
+          geometria: territoryGeometry(form.geometriaTerritorio),
+        }),
       });
-      setForm((current) => ({ ...current, nome: "" }));
+      setForm((current) => ({
+        ...current, nome: "", aliasesTerritorio: "", geometriaTerritorio: "",
+      }));
       await load();
       showSuccess("territories", "Território adicionado com sucesso.");
     } catch (requestError) {
@@ -378,9 +387,18 @@ export function AdministrationPage() {
   async function updateTerritory(territory, patch) {
     clearError("territories");
     try {
+      const normalizedPatch = { ...patch };
+      if (Object.hasOwn(normalizedPatch, "aliasesText")) {
+        normalizedPatch.aliases = territoryAliases(normalizedPatch.aliasesText);
+        delete normalizedPatch.aliasesText;
+      }
+      if (Object.hasOwn(normalizedPatch, "geometriaText")) {
+        normalizedPatch.geometria = territoryGeometry(normalizedPatch.geometriaText);
+        delete normalizedPatch.geometriaText;
+      }
       await apiRequest(`/api/v1/admin/territorios/${territory.id}`, {
         method: "PATCH",
-        body: JSON.stringify(patch),
+        body: JSON.stringify(normalizedPatch),
       });
       await load();
       showSuccess("territories", "Território atualizado com sucesso.");
@@ -1882,30 +1900,64 @@ function renderTemplateExample(value = "") {
     .replaceAll("{{status}}", "Em atendimento");
 }
 
+function territoryAliases(value = "") {
+  return [...new Set(value.split(/[\n,;]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function territoryGeometry(value = "") {
+  if (!value.trim()) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error("A geometria deve ser um GeoJSON válido.");
+  }
+}
+
 function TerritoriesSettings({ form, territories, jurisdiction, onForm, onSubmit, onUpdate, onDelete, onReload, error }) {
   const [selectedId, setSelectedId] = useState("");
   const [editName, setEditName] = useState("");
+  const [editAliases, setEditAliases] = useState("");
+  const [editGeometry, setEditGeometry] = useState("");
   const selected = territories.find((item) => item.id === selectedId);
   const jurisdictionLabel = jurisdiction?.nome || [jurisdiction?.municipio, jurisdiction?.uf].filter(Boolean).join("/") || "Jurisdição não configurada";
 
   function selectTerritory(item) {
     setSelectedId(item.id);
     setEditName(item.nome);
+    setEditAliases((item.aliases || []).join("\n"));
+    setEditGeometry(item.geometria ? JSON.stringify(item.geometria, null, 2) : "");
   }
 
   function clearSelection() {
     setSelectedId("");
     setEditName("");
-    onForm((current) => ({ ...current, nome: "" }));
+    setEditAliases("");
+    setEditGeometry("");
+    onForm((current) => ({
+      ...current, nome: "", aliasesTerritorio: "", geometriaTerritorio: "",
+    }));
   }
 
   async function submit(event) {
     event.preventDefault();
     if (selected) {
-      await onUpdate(selected, { nome: editName, ativa: selected.ativa });
+      await onUpdate(selected, {
+        nome: editName,
+        aliasesText: editAliases,
+        geometriaText: editGeometry,
+        ativa: selected.ativa,
+      });
       return;
     }
     await onSubmit(event);
+  }
+
+  async function importGeometry(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const content = await file.text();
+    if (selected) setEditGeometry(content);
+    else onForm((current) => ({ ...current, geometriaTerritorio: content }));
   }
 
   return <>
@@ -1918,6 +1970,26 @@ function TerritoriesSettings({ form, territories, jurisdiction, onForm, onSubmit
     <form className="settings-form" onSubmit={submit}>
       <div className="settings-title"><MapPinned size={21} /><div><strong>{selected ? "Editar território" : "Novo território"}</strong><small>Use os territórios reais sugeridos para a jurisdição e ajuste quando necessário.</small></div></div>
       <label>Nome<input required value={selected ? editName : form.nome} onChange={(event) => selected ? setEditName(event.target.value) : onForm((current) => ({ ...current, nome: event.target.value }))} /></label>
+      <label>Aliases de bairros<textarea aria-label="Aliases de bairros" rows="3" value={selected ? editAliases : form.aliasesTerritorio} onChange={(event) => selected ? setEditAliases(event.target.value) : onForm((current) => ({ ...current, aliasesTerritorio: event.target.value }))} placeholder={"Um alias por linha\nEx.: Jd. São Pedro"} /><small>Variações aceitas na resolução automática; também podem ser separadas por vírgula.</small></label>
+      <TerritoryMapEditor
+        territories={territories}
+        jurisdiction={jurisdiction}
+        selectedId={selectedId}
+        draftName={selected ? editName : form.nome}
+        draftAliases={selected ? editAliases : form.aliasesTerritorio}
+        draftGeometry={territoryGeometryValue(selected ? editGeometry : form.geometriaTerritorio)}
+        onSelect={selectTerritory}
+        onGeometryChange={(geometry) => {
+          const value = geometry ? JSON.stringify(geometry, null, 2) : "";
+          if (selected) setEditGeometry(value);
+          else onForm((current) => ({ ...current, geometriaTerritorio: value }));
+        }}
+      />
+      <details className="territory-geojson-details">
+        <summary>GeoJSON avançado</summary>
+        <label>Polígono GeoJSON<textarea aria-label="Polígono GeoJSON" className="territory-geometry-input" rows="8" spellCheck="false" value={selected ? editGeometry : form.geometriaTerritorio} onChange={(event) => selected ? setEditGeometry(event.target.value) : onForm((current) => ({ ...current, geometriaTerritorio: event.target.value }))} placeholder={'{"type":"Polygon","coordinates":[[[-43.4,-21.8],...]]}'} /><small>Aceita Polygon, MultiPolygon ou Feature. Coordenadas seguem a ordem longitude, latitude.</small></label>
+      </details>
+      <label className="secondary-button file-button territory-geometry-file"><Upload size={16} /> Importar arquivo GeoJSON<input aria-label="Importar arquivo GeoJSON" type="file" accept=".json,.geojson,application/geo+json,application/json" onChange={importGeometry} /></label>
       {error && <p className="form-error">{error}</p>}
       <div className="form-actions">
         <button className="primary-button compact">{selected ? <Save size={18} /> : <Plus size={18} />} {selected ? "Salvar território" : "Adicionar território"}</button>
@@ -1928,11 +2000,12 @@ function TerritoriesSettings({ form, territories, jurisdiction, onForm, onSubmit
       <div className="settings-title"><MapPinned size={21} /><div><strong>Territórios cadastrados</strong><small>Itens excluídos ficam inativos e podem ser restaurados pela recarga de sugestões.</small></div></div>
       <div className="users-datatable territories-datatable" role="region" aria-label="Territórios cadastrados">
         <table>
-          <thead><tr><th>Território</th><th>Status</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Território</th><th>Resolução</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>
             {territories.map((item) => (
               <tr key={item.id} className={selectedId === item.id ? "selected" : ""} onClick={() => selectTerritory(item)} tabIndex={0}>
-                <td><strong>{item.nome}</strong></td>
+                <td><strong>{item.nome}</strong>{Boolean(item.aliases?.length) && <small>{item.aliases.join(", ")}</small>}</td>
+                <td>{item.geometria ? "Polígono + aliases" : item.aliases?.length ? "Aliases" : "Nome"}</td>
                 <td>{item.ativa ? "Ativo" : "Inativo"}</td>
                 <td>
                   <div className="row-actions">
@@ -1943,12 +2016,21 @@ function TerritoriesSettings({ form, territories, jurisdiction, onForm, onSubmit
                 </td>
               </tr>
             ))}
-            {!territories.length && <tr><td colSpan={3} className="empty-table-cell">Nenhum território cadastrado.</td></tr>}
+            {!territories.length && <tr><td colSpan={4} className="empty-table-cell">Nenhum território cadastrado.</td></tr>}
           </tbody>
         </table>
       </div>
     </section>
   </>;
+}
+
+function territoryGeometryValue(value = "") {
+  if (!value.trim()) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function AgenciesSettings({ form, agencies, jurisdiction, onForm, onSubmit, onUpdate, onDelete, onReload, error }) {

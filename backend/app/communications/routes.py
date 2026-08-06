@@ -1,11 +1,11 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.audit import add_audit
@@ -15,6 +15,12 @@ from app.communications.email import (
     email_idempotency_key,
     retrieve_received_email,
     verify_resend_webhook,
+)
+from app.communications.identity import (
+    assisted_settings_data,
+    get_assisted_settings,
+    parse_candidate_ids,
+    prepare_identity_review,
 )
 from app.communications.service import (
     ALLOWED_CHANNELS,
@@ -32,6 +38,9 @@ from app.communications.whatsapp import (
 )
 from app.extensions import db, limiter
 from app.models import (
+    ChannelAssistedSetting,
+    ChannelIdentityReview,
+    ChannelIdentityReviewStatus,
     ChannelMessage,
     ChannelMessageStatus,
     Citizen,
@@ -128,10 +137,111 @@ def _channel_message_data(item: ChannelMessage) -> dict:
         "assunto": item.subject,
         "conteudo": item.content,
         "idExterno": item.external_id,
-        "metadados": item.metadata_data,
+        "metadados": _safe_channel_metadata(item.metadata_data),
         "solicitacaoId": str(item.request_id) if item.request_id else None,
         "recebidaEm": item.received_at.isoformat(),
         "revisadaEm": item.reviewed_at.isoformat() if item.reviewed_at else None,
+    }
+
+
+def _safe_channel_metadata(value: dict | None) -> dict:
+    metadata = value if isinstance(value, dict) else {}
+    allowed = {
+        "provider",
+        "eventType",
+        "messageType",
+        "phoneNumberId",
+        "displayPhoneNumber",
+        "timestamp",
+        "messageId",
+    }
+    result = {key: metadata[key] for key in allowed if metadata.get(key) is not None}
+    attachments = metadata.get("attachments")
+    if isinstance(attachments, list):
+        result["attachments"] = [
+            {
+                key: attachment.get(key)
+                for key in ("id", "filename", "contentType", "size")
+                if attachment.get(key) is not None
+            }
+            for attachment in attachments[:20]
+            if isinstance(attachment, dict)
+        ]
+    return result
+
+
+def _masked_contact(value: str | None) -> str | None:
+    contact = str(value or "").strip()
+    if not contact:
+        return None
+    if "@" in contact:
+        local, domain = contact.rsplit("@", 1)
+        return f"{local[:1]}***@{domain}"
+    digits = "".join(character for character in contact if character.isdigit())
+    return f"***{digits[-4:]}" if digits else "***"
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _identity_review_data(review: ChannelIdentityReview) -> dict:
+    candidate_ids = parse_candidate_ids(review)
+    candidates = []
+    if candidate_ids:
+        candidates = db.session.execute(
+            select(Citizen).where(
+                Citizen.tenant_id == review.tenant_id,
+                Citizen.id.in_(candidate_ids),
+                Citizen.anonymized_at.is_(None),
+            )
+        ).scalars()
+    message = review.message
+    due_at = _as_utc(review.due_at)
+    return {
+        "id": str(review.id),
+        "status": review.status.value,
+        "estadoResolucao": review.resolution_state,
+        "criterios": review.match_basis,
+        "mensagem": {
+            "id": str(message.id),
+            "canal": message.channel.value,
+            "remetenteNome": message.sender_name,
+            "remetenteContatoMascarado": _masked_contact(message.sender_contact),
+            "assunto": message.subject,
+            "conteudo": message.content,
+            "recebidaEm": message.received_at.isoformat(),
+        },
+        "candidatos": [
+            {
+                "id": str(citizen.id),
+                "nome": citizen.name,
+                "nomeSocial": citizen.social_name,
+                "vip": citizen.vip,
+            }
+            for citizen in candidates
+        ],
+        "cidadaoSelecionadoId": (
+            str(review.selected_citizen_id) if review.selected_citizen_id else None
+        ),
+        "responsavelId": str(review.assigned_to_id) if review.assigned_to_id else None,
+        "responsavel": review.assigned_to.name if review.assigned_to else None,
+        "prazoEm": due_at.isoformat() if due_at else None,
+        "vencida": bool(
+            review.status == ChannelIdentityReviewStatus.PENDENTE
+            and due_at
+            and due_at < datetime.now(UTC)
+        ),
+        "tipoDecisao": review.decision_type,
+        "reaberturas": review.reopened_count,
+        "revisadoPor": review.reviewed_by.name if review.reviewed_by else None,
+        "observacao": review.review_note,
+        "criadaEm": review.created_at.isoformat(),
+        "revisadaEm": review.reviewed_at.isoformat() if review.reviewed_at else None,
     }
 
 
@@ -168,6 +278,413 @@ def list_channel_messages():
     return jsonify(content=[_channel_message_data(item) for item in items])
 
 
+@communications_bp.get("/canais/revisoes-identidade")
+@roles_required("admin", "manager", "staff")
+def list_channel_identity_reviews():
+    tenant_id, _ = _context()
+    filters = [ChannelIdentityReview.tenant_id == tenant_id]
+    status = request.args.get("status", "PENDENTE")
+    channel = request.args.get("canal")
+    assignee_id = request.args.get("responsavelId")
+    overdue = request.args.get("vencida")
+    if status:
+        try:
+            filters.append(
+                ChannelIdentityReview.status == ChannelIdentityReviewStatus(status.upper())
+            )
+        except ValueError:
+            return jsonify(error="validation_error", message="Status inválido."), 422
+    query = (
+        select(ChannelIdentityReview)
+        .join(
+            ChannelMessage,
+            (ChannelMessage.id == ChannelIdentityReview.message_id)
+            & (ChannelMessage.tenant_id == ChannelIdentityReview.tenant_id),
+        )
+        .where(*filters)
+        .order_by(ChannelIdentityReview.created_at.desc())
+        .limit(100)
+    )
+    if channel:
+        try:
+            query = query.where(ChannelMessage.channel == _channel_from_payload(channel))
+        except CommunicationValidationError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
+    if assignee_id:
+        if assignee_id == "SEM_RESPONSAVEL":
+            query = query.where(ChannelIdentityReview.assigned_to_id.is_(None))
+        else:
+            try:
+                query = query.where(ChannelIdentityReview.assigned_to_id == uuid.UUID(assignee_id))
+            except ValueError:
+                return jsonify(error="validation_error", message="Responsável inválido."), 422
+    if overdue == "true":
+        query = query.where(ChannelIdentityReview.due_at < datetime.now(UTC))
+    items = db.session.execute(query).scalars().all()
+    counts = dict(
+        db.session.execute(
+            select(ChannelIdentityReview.status, func.count(ChannelIdentityReview.id))
+            .where(ChannelIdentityReview.tenant_id == tenant_id)
+            .group_by(ChannelIdentityReview.status)
+        ).all()
+    )
+    users = db.session.execute(
+        select(User)
+        .where(User.tenant_id == tenant_id, User.status == UserStatus.ACTIVE)
+        .order_by(User.name)
+    ).scalars()
+    overdue_count = db.session.execute(
+        select(func.count(ChannelIdentityReview.id)).where(
+            ChannelIdentityReview.tenant_id == tenant_id,
+            ChannelIdentityReview.status == ChannelIdentityReviewStatus.PENDENTE,
+            ChannelIdentityReview.due_at < datetime.now(UTC),
+        )
+    ).scalar_one()
+    return jsonify(
+        content=[_identity_review_data(item) for item in items],
+        resumo={
+            "pendentes": counts.get(ChannelIdentityReviewStatus.PENDENTE, 0),
+            "vinculadas": counts.get(ChannelIdentityReviewStatus.VINCULADA, 0),
+            "descartadas": counts.get(ChannelIdentityReviewStatus.DESCARTADA, 0),
+            "vencidas": overdue_count,
+        },
+        responsaveis=[{"id": str(user.id), "nome": user.name} for user in users],
+    )
+
+
+@communications_bp.get("/canais/configuracao-cadastro-assistido")
+@jwt_required()
+def get_channel_assisted_settings():
+    tenant_id, _ = _context()
+    return jsonify(assisted_settings_data(get_assisted_settings(tenant_id)))
+
+
+@communications_bp.put("/canais/configuracao-cadastro-assistido")
+@roles_required("admin", "manager")
+def save_channel_assisted_settings():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    legal_basis = str(payload.get("baseLegalPadrao", "")).strip() or None
+    allowed_legal_basis = {"EXECUCAO_POLITICA_PUBLICA", "CONSENTIMENTO", "LEGITIMO_INTERESSE"}
+    try:
+        sla_hours = int(payload.get("slaHoras", 24))
+        retention_days = int(payload.get("retencaoDias", 365))
+    except (TypeError, ValueError):
+        return jsonify(error="validation_error", message="Configuração inválida."), 422
+    if legal_basis not in allowed_legal_basis | {None}:
+        return jsonify(error="validation_error", message="Base legal inválida."), 422
+    if not 1 <= sla_hours <= 720 or not 30 <= retention_days <= 3650:
+        return jsonify(error="validation_error", message="SLA ou retenção inválidos."), 422
+    item = get_assisted_settings(tenant_id)
+    before = assisted_settings_data(item)
+    if item is None:
+        item = ChannelAssistedSetting(tenant_id=tenant_id)
+        db.session.add(item)
+    item.default_legal_basis = legal_basis
+    item.sla_hours = sla_hours
+    item.retention_days = retention_days
+    item.updated_by_id = user_id
+    after = assisted_settings_data(item)
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.assisted_settings.updated",
+        "channel_assisted_setting",
+        item.id,
+        before=before,
+        after=after,
+    )
+    db.session.commit()
+    return jsonify(assisted_settings_data(item))
+
+
+@communications_bp.put("/canais/revisoes-identidade/<uuid:review_id>/atribuicao")
+@roles_required("admin", "manager", "staff")
+def assign_channel_identity_review(review_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    review = db.session.execute(
+        select(ChannelIdentityReview)
+        .where(
+            ChannelIdentityReview.id == review_id,
+            ChannelIdentityReview.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if review is None:
+        return jsonify(error="resource_not_found", message="Revisão não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    assignee_id = payload.get("responsavelId")
+    assignee = None
+    if assignee_id:
+        try:
+            assignee_uuid = uuid.UUID(str(assignee_id))
+        except ValueError:
+            return jsonify(error="validation_error", message="Responsável inválido."), 422
+        assignee = db.session.execute(
+            select(User).where(
+                User.id == assignee_uuid,
+                User.tenant_id == tenant_id,
+                User.status == UserStatus.ACTIVE,
+            )
+        ).scalar_one_or_none()
+        if assignee is None:
+            return jsonify(error="resource_not_found", message="Responsável não encontrado."), 404
+    review.assigned_to_id = assignee.id if assignee else None
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.identity_review.assigned",
+        "channel_identity_review",
+        review.id,
+        after={"responsavelId": str(assignee.id) if assignee else None},
+    )
+    db.session.commit()
+    return jsonify(_identity_review_data(review))
+
+
+@communications_bp.post("/canais/revisoes-identidade/<uuid:review_id>/reabrir")
+@roles_required("admin", "manager")
+def reopen_channel_identity_review(review_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    review = db.session.execute(
+        select(ChannelIdentityReview)
+        .where(
+            ChannelIdentityReview.id == review_id,
+            ChannelIdentityReview.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if review is None:
+        return jsonify(error="resource_not_found", message="Revisão não encontrada."), 404
+    if review.status == ChannelIdentityReviewStatus.PENDENTE:
+        return jsonify(error="validation_error", message="Revisão já está pendente."), 422
+    payload = request.get_json(silent=True) or {}
+    note = str(payload.get("justificativa", "")).strip()
+    if len(note) < 5 or len(note) > 500:
+        return jsonify(error="validation_error", message="Informe a justificativa."), 422
+    settings = get_assisted_settings(tenant_id)
+    review.status = ChannelIdentityReviewStatus.PENDENTE
+    review.selected_citizen_id = None
+    review.reviewed_by_id = None
+    review.reviewed_at = None
+    review.review_note = note
+    review.decision_type = "REABERTA"
+    review.reopened_count += 1
+    review.due_at = datetime.now(UTC) + timedelta(hours=settings.sla_hours if settings else 24)
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.identity_review.reopened",
+        "channel_identity_review",
+        review.id,
+        after={"reaberturas": review.reopened_count},
+    )
+    db.session.commit()
+    return jsonify(_identity_review_data(review))
+
+
+@communications_bp.post("/canais/revisoes-identidade/<uuid:review_id>/preparar-cadastro")
+@roles_required("admin", "manager", "staff")
+def prepare_assisted_citizen_registration(review_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    review = db.session.execute(
+        select(ChannelIdentityReview)
+        .where(
+            ChannelIdentityReview.id == review_id,
+            ChannelIdentityReview.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if review is None:
+        return jsonify(error="resource_not_found", message="Revisão não encontrada."), 404
+    if review.status != ChannelIdentityReviewStatus.PENDENTE:
+        return jsonify(error="validation_error", message="Revisão já concluída."), 422
+    settings = get_assisted_settings(tenant_id)
+    if settings is None or not settings.default_legal_basis:
+        return (
+            jsonify(
+                error="configuration_required",
+                code="BASE_LEGAL_PADRAO_OBRIGATORIA",
+                message="Configure a base legal padrão do cadastro assistido.",
+            ),
+            409,
+        )
+    if review.assigned_to_id is None:
+        review.assigned_to_id = user_id
+    review.decision_type = "CADASTRO_EM_PREPARACAO"
+    message = review.message
+    contact = message.sender_contact or ""
+    review_payload = {
+        "revisaoId": str(review.id),
+        "mensagemId": str(message.id),
+        "canal": message.channel.value,
+        "preenchimento": {
+            "nome": message.sender_name or "",
+            "telefone": contact if message.channel == RequestSource.WHATSAPP else "",
+            "email": contact if message.channel == RequestSource.EMAIL else "",
+            "canalPreferencial": message.channel.value,
+            "baseLegal": settings.default_legal_basis,
+        },
+        "confirmacoesObrigatorias": ["nome", "contato", "baseLegal"],
+        "aviso": "Confira cada campo. A mensagem não comprova identidade civil.",
+    }
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.identity_review.registration_prepared",
+        "channel_identity_review",
+        review.id,
+        after={"mensagemId": str(message.id)},
+    )
+    db.session.commit()
+    return jsonify(review_payload)
+
+
+@communications_bp.get("/canais/revisoes-identidade/metricas")
+@roles_required("admin", "manager")
+def channel_identity_review_metrics():
+    tenant_id, _ = _context()
+    reviews = (
+        db.session.execute(
+            select(ChannelIdentityReview).where(ChannelIdentityReview.tenant_id == tenant_id)
+        )
+        .scalars()
+        .all()
+    )
+    completed = [item for item in reviews if item.reviewed_at]
+    average_hours = (
+        sum((item.reviewed_at - item.created_at).total_seconds() for item in completed)
+        / len(completed)
+        / 3600
+        if completed
+        else None
+    )
+    return jsonify(
+        total=len(reviews),
+        pendentes=sum(item.status == ChannelIdentityReviewStatus.PENDENTE for item in reviews),
+        vinculadas=sum(item.status == ChannelIdentityReviewStatus.VINCULADA for item in reviews),
+        descartadas=sum(item.status == ChannelIdentityReviewStatus.DESCARTADA for item in reviews),
+        cadastrosManuais=sum(item.decision_type == "CADASTRO_MANUAL" for item in reviews),
+        tempoMedioRevisaoHoras=round(average_hours, 2) if average_hours is not None else None,
+    )
+
+
+@communications_bp.post("/canais/revisoes-identidade/retencao/executar")
+@roles_required("admin", "manager")
+def execute_channel_message_retention():
+    tenant_id, user_id = _context()
+    settings = get_assisted_settings(tenant_id)
+    retention_days = settings.retention_days if settings else 365
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    messages = (
+        db.session.execute(
+            select(ChannelMessage)
+            .join(
+                ChannelIdentityReview,
+                (ChannelIdentityReview.message_id == ChannelMessage.id)
+                & (ChannelIdentityReview.tenant_id == ChannelMessage.tenant_id),
+            )
+            .where(
+                ChannelMessage.tenant_id == tenant_id,
+                ChannelMessage.redacted_at.is_(None),
+                ChannelIdentityReview.status != ChannelIdentityReviewStatus.PENDENTE,
+                ChannelIdentityReview.reviewed_at < cutoff,
+            )
+            .limit(500)
+        )
+        .scalars()
+        .all()
+    )
+    for message in messages:
+        message.sender_name = None
+        message.sender_contact = None
+        message.subject = None
+        message.content = "[CONTEÚDO REMOVIDO POR POLÍTICA DE RETENÇÃO]"
+        message.metadata_data = {}
+        message.redacted_at = datetime.now(UTC)
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.message.retention_executed",
+        "channel_message",
+        None,
+        after={"quantidade": len(messages), "retencaoDias": retention_days},
+    )
+    db.session.commit()
+    return jsonify(processadas=len(messages), retencaoDias=retention_days)
+
+
+@communications_bp.post("/canais/revisoes-identidade/<uuid:review_id>/decisao")
+@roles_required("admin", "manager", "staff")
+def decide_channel_identity_review(review_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    review = db.session.execute(
+        select(ChannelIdentityReview)
+        .where(
+            ChannelIdentityReview.id == review_id,
+            ChannelIdentityReview.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if review is None:
+        return jsonify(error="resource_not_found", message="Revisão não encontrada."), 404
+    if review.status != ChannelIdentityReviewStatus.PENDENTE:
+        return jsonify(error="validation_error", message="Revisão já concluída."), 422
+
+    payload = request.get_json(silent=True) or {}
+    decision = str(payload.get("decisao", "")).upper()
+    note = str(payload.get("observacao", "")).strip() or None
+    if note and len(note) > 500:
+        return jsonify(error="validation_error", message="Observação excede 500 caracteres."), 422
+    citizen = None
+    if decision == "VINCULAR":
+        try:
+            citizen_id = uuid.UUID(str(payload.get("cidadaoId")))
+        except (TypeError, ValueError):
+            return jsonify(error="validation_error", message="Selecione um cidadão."), 422
+        citizen = db.session.execute(
+            select(Citizen).where(
+                Citizen.id == citizen_id,
+                Citizen.tenant_id == tenant_id,
+                Citizen.anonymized_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if citizen is None:
+            return jsonify(error="resource_not_found", message="Cidadão não encontrado."), 404
+        review.status = ChannelIdentityReviewStatus.VINCULADA
+        review.selected_citizen_id = citizen.id
+        review.decision_type = "VINCULO_EXISTENTE"
+    elif decision == "DESCARTAR":
+        review.status = ChannelIdentityReviewStatus.DESCARTADA
+        review.selected_citizen_id = None
+        review.decision_type = "DESCARTADA"
+    else:
+        return (
+            jsonify(
+                error="validation_error",
+                message="Decisão deve ser VINCULAR ou DESCARTAR.",
+            ),
+            422,
+        )
+    review.reviewed_by_id = user_id
+    review.reviewed_at = datetime.now(UTC)
+    review.review_note = note
+    add_audit(
+        tenant_id,
+        user_id,
+        "channel.identity_review.decided",
+        "channel_identity_review",
+        review.id,
+        after={
+            "decisao": review.status.value,
+            "mensagemId": str(review.message_id),
+            "cidadaoId": str(citizen.id) if citizen else None,
+        },
+    )
+    db.session.commit()
+    return jsonify(_identity_review_data(review))
+
+
 @communications_bp.post("/canais/mensagens")
 @roles_required("admin", "manager", "staff")
 def create_channel_message():
@@ -191,7 +708,7 @@ def create_channel_message():
         "channel.message.received",
         "channel_message",
         item.id,
-        after=_channel_message_data(item),
+        after={"canal": item.channel.value, "status": item.status.value},
     )
     db.session.commit()
     return jsonify(_channel_message_data(item)), 201
@@ -332,6 +849,7 @@ def receive_resend_inbound_email(tenant_slug: str):
     )
     db.session.add(item)
     db.session.flush()
+    prepare_identity_review(item)
     add_audit(
         tenant.id,
         None,
@@ -428,6 +946,7 @@ def receive_whatsapp_business_webhook(tenant_slug: str):
         )
         db.session.add(item)
         db.session.flush()
+        prepare_identity_review(item)
         add_audit(
             tenant.id,
             None,
@@ -573,9 +1092,17 @@ def convert_channel_message(message_id: uuid.UUID):
     description = str(payload.get("descricao") or item.content).strip()
     if len(title) < 3 or len(description) < 10:
         return jsonify(error="validation_error", message="Informe título e descrição."), 422
+    identity_review = db.session.execute(
+        select(ChannelIdentityReview).where(
+            ChannelIdentityReview.tenant_id == tenant_id,
+            ChannelIdentityReview.message_id == item.id,
+            ChannelIdentityReview.status == ChannelIdentityReviewStatus.VINCULADA,
+        )
+    ).scalar_one_or_none()
     service_request = ServiceRequest(
         tenant_id=tenant_id,
         created_by_id=user_id,
+        citizen_id=identity_review.selected_citizen_id if identity_review else None,
         protocol=next_protocol(tenant_id),
         source=item.channel,
         title=title,
@@ -613,7 +1140,7 @@ def update_channel_message(message_id: uuid.UUID):
     if item is None:
         return jsonify(error="resource_not_found", message="Mensagem não encontrada."), 404
     payload = request.get_json(silent=True) or {}
-    before = _channel_message_data(item)
+    before = {"status": item.status.value}
     if "status" in payload:
         try:
             item.status = ChannelMessageStatus(str(payload["status"]).upper())
@@ -621,7 +1148,7 @@ def update_channel_message(message_id: uuid.UUID):
             return jsonify(error="validation_error", message="Status inválido."), 422
         item.reviewed_by_id = user_id
         item.reviewed_at = datetime.now(UTC)
-    after = _channel_message_data(item)
+    after = {"status": item.status.value}
     add_audit(
         tenant_id,
         user_id,
@@ -727,11 +1254,15 @@ def submit_public_request(tenant_slug: str):
 
 
 def _tenant_receiver_user_id(tenant_id: uuid.UUID) -> uuid.UUID:
-    user = db.session.execute(
-        select(User)
-        .where(User.tenant_id == tenant_id, User.status == UserStatus.ACTIVE)
-        .order_by(User.created_at)
-    ).scalars().first()
+    user = (
+        db.session.execute(
+            select(User)
+            .where(User.tenant_id == tenant_id, User.status == UserStatus.ACTIVE)
+            .order_by(User.created_at)
+        )
+        .scalars()
+        .first()
+    )
     if user is None:
         raise CommunicationValidationError("Tenant não possui usuário ativo para receber demandas.")
     return user.id
@@ -760,6 +1291,20 @@ def _create_channel_message(
     metadata = payload.get("metadados") or {}
     if not isinstance(metadata, dict):
         return None, (jsonify(error="validation_error", message="Metadados inválidos."), 422)
+    external_id = str(payload.get("idExterno", "")).strip() or None
+    if external_id:
+        existing = db.session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.tenant_id == tenant_id,
+                ChannelMessage.channel == channel,
+                ChannelMessage.external_id == external_id,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing, (
+                jsonify(id=str(existing.id), status=existing.status.value, duplicado=True),
+                200,
+            )
     item = ChannelMessage(
         tenant_id=tenant_id,
         channel=channel,
@@ -768,12 +1313,13 @@ def _create_channel_message(
         sender_contact=str(payload.get("remetenteContato", "")).strip() or None,
         subject=str(payload.get("assunto", "")).strip() or None,
         content=content,
-        external_id=str(payload.get("idExterno", "")).strip() or None,
+        external_id=external_id,
         metadata_data=metadata,
         reviewed_by_id=reviewed_by_id,
     )
     db.session.add(item)
     db.session.flush()
+    prepare_identity_review(item)
     return item, None
 
 
@@ -1006,8 +1552,10 @@ def send_response(request_id: uuid.UUID):
             else None
         )
         destination = _citizen_email(citizen)
-        subject = subject or (template.subject if template else None) or (
-            f"Atualização da solicitação {service_request.protocol}"
+        subject = (
+            subject
+            or (template.subject if template else None)
+            or (f"Atualização da solicitação {service_request.protocol}")
         )
         if destination is None:
             return (
