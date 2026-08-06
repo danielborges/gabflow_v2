@@ -417,6 +417,19 @@ def test_office_admin_validates_user_roles_email_and_unique_singleton_profiles(a
     )
     assert representative.status_code == 201
 
+    synchronized_profile = client.patch(
+        "/api/v1/admin/parlamentar",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "nomeParlamentar": "Parlamentar Titular",
+            "cpf": "987.654.321-00",
+        },
+    )
+    assert synchronized_profile.status_code == 200
+    with app.app_context():
+        synchronized_user = db.session.get(User, uuid.UUID(representative.json["id"]))
+        assert synchronized_user.cpf == "98765432100"
+
     duplicate_representative = client.post(
         "/api/v1/admin/usuarios",
         headers={"X-CSRF-TOKEN": csrf},

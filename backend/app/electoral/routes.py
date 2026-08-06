@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from flask import Blueprint, current_app, g, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, cast, exists, func, or_, select
 
 from app.audit import add_audit
 from app.electoral.access import electoral_access_required
@@ -255,21 +255,20 @@ def _list_elections(*, explore: bool):
     )
     if not explore:
         tenant_id, _ = _private_context()
-        statement = (
-            statement.join(
-                ElectoralCandidacy,
-                ElectoralCandidacy.election_id == ElectoralElection.id,
-            )
+        linked_candidacy = exists(
+            select(1)
+            .select_from(ElectoralCandidacy)
             .join(
                 ElectoralUserCandidacy,
                 ElectoralUserCandidacy.candidacy_id == ElectoralCandidacy.id,
             )
             .where(
+                ElectoralCandidacy.election_id == ElectoralElection.id,
                 ElectoralUserCandidacy.tenant_id == tenant_id,
                 ElectoralUserCandidacy.user_id == _identity_owner_id(),
             )
-            .distinct()
         )
+        statement = statement.where(linked_candidacy)
     total = db.session.scalar(select(func.count()).select_from(statement.subquery())) or 0
     rows = db.session.execute(
         statement.order_by(

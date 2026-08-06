@@ -2632,6 +2632,15 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-ai-status-tooltip span::before { content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: #23845d; box-shadow: 0 0 0 3px #dff3e7; }
 .electoral-ai-status-tooltip span.inactive::before { background: #b7791f; box-shadow: 0 0 0 3px #fff1cc; }
 .electoral-insight-intro { width: 100%; max-width: none; margin: 0; color: #52627a; font-size: .84rem; line-height: 1.6; }
+.electoral-insight-tabs { display: flex; gap: 24px; margin-top: 18px; border-bottom: 1px solid #cfdae6; }
+.electoral-insight-tabs button { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 4px; border: 0; color: #607188; background: transparent; cursor: pointer; font-size: .82rem; font-weight: 800; }
+.electoral-insight-tabs button::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 3px; border-radius: 3px 3px 0 0; background: transparent; content: ""; }
+.electoral-insight-tabs button:hover { color: var(--navy-800); }
+.electoral-insight-tabs button.active { color: var(--blue-700); }
+.electoral-insight-tabs button.active::after { background: var(--blue-600); }
+.electoral-insight-tabs button:focus-visible { border-radius: 5px; outline: 3px solid rgba(11,111,194,.25); outline-offset: 2px; }
+.electoral-insight-tabs button small { min-width: 20px; padding: 2px 6px; border-radius: 999px; color: #315b82; background: #e6f1fb; font-size: .66rem; text-align: center; }
+.electoral-insight-tab-panel { min-width: 0; }
 .electoral-insight-context { display: grid; gap: 14px; margin-top: 20px; padding: clamp(16px, 2vw, 22px); border: 1px solid #c9dced; border-radius: 12px; background: #f6faff; }
 .electoral-insight-context > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .electoral-insight-context > header h3 { margin: 2px 0 0; color: var(--navy-800); font-size: 1rem; }

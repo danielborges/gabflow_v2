@@ -248,6 +248,8 @@ it("exibe o catalogo eleitoral somente ao Parlamentar habilitado", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Inteligência Eleitoral" }));
 
   expect(await screen.findByRole("heading", { name: "Catálogo consultável" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Privacidade/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Administra/ })).not.toBeInTheDocument();
   expect(screen.getByText("1/7")).toBeInTheDocument();
   expect(screen.getByText("14%")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Cobertura histórica incompleta para MG" })).toBeInTheDocument();

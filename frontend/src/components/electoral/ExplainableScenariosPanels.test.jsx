@@ -23,6 +23,8 @@ test("solicita insight explicável para a candidatura selecionada", async () => 
   />);
 
   await screen.findByText("Nenhum insight solicitado.");
+  expect(screen.getByRole("tab", { name: "Análise" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: "Histórico" })).toHaveAttribute("aria-selected", "false");
   expect(screen.getByRole("button", { name: "Analisar com a GabIA" }).closest(".electoral-insight-context")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Analisar com a GabIA" }));
 
@@ -348,9 +350,10 @@ test("contesta sem executar nova analise e diferencia fallback historico", async
 
   await screen.findByText("Quantos votos foram registrados?");
   expect(screen.queryByText(/Esta análise foi concluída anteriormente/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Consultar histórico" }));
+  fireEvent.click(screen.getByRole("tab", { name: /Histórico/ }));
   fireEvent.click(screen.getByRole("button", { name: /Comparação.*Foram registrados 123 votos/ }));
   expect(await screen.findByText(/Esta análise foi concluída anteriormente/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: /Histórico/ }));
   fireEvent.click(screen.getByRole("button", { name: /Pergunta fundamentada.*Quantos votos foram registrados/ }));
   fireEvent.click(screen.getAllByRole("button", { name: "Contestar" })[0]);
 
@@ -391,7 +394,7 @@ test("consulta o historico paginado sem renderizar todas as analises completas",
 
   expect(await screen.findByText("Análise mais recente")).toBeInTheDocument();
   expect(screen.queryByText("Análise anterior")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Consultar histórico" }));
+  fireEvent.click(screen.getByRole("tab", { name: /Histórico/ }));
   expect(screen.getByText("Análise anterior")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
   await waitFor(() => expect(apiRequest).toHaveBeenLastCalledWith("/api/v1/electoral/insights?page=2"));
