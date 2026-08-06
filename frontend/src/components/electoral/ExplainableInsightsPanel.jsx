@@ -1,4 +1,4 @@
-import { BrainCircuit, Check, ChevronDown, CircleHelp, History, MessageSquareWarning, Search, Trash2, X } from "lucide-react";
+import { BrainCircuit, Check, CircleHelp, History, MessageSquareWarning, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../../api";
 
@@ -68,7 +68,7 @@ export function ExplainableInsightsPanel({
 }) {
   const [items, setItems] = useState([]);
   const [activeItem, setActiveItem] = useState(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("analysis");
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState("");
   const [historyStatus, setHistoryStatus] = useState("");
@@ -362,6 +362,37 @@ export function ExplainableInsightsPanel({
       A GabIA combina resultados oficiais, documentos autorizados e fontes públicas da internet.
       Fatos permanecem verificáveis; leituras estratégicas são hipóteses, nunca causas presumidas.
     </p>
+    <div className="electoral-insight-tabs" role="tablist" aria-label="Áreas da GabIA Eleitoral">
+      <button
+        type="button"
+        role="tab"
+        id="electoral-insight-analysis-tab"
+        aria-selected={activeTab === "analysis"}
+        aria-controls="electoral-insight-analysis-panel"
+        className={activeTab === "analysis" ? "active" : ""}
+        onClick={() => setActiveTab("analysis")}
+      >
+        <BrainCircuit size={17} aria-hidden="true" /> Análise
+      </button>
+      <button
+        type="button"
+        role="tab"
+        id="electoral-insight-history-tab"
+        aria-selected={activeTab === "history"}
+        aria-controls="electoral-insight-history-panel"
+        className={activeTab === "history" ? "active" : ""}
+        onClick={() => setActiveTab("history")}
+      >
+        <History size={17} aria-hidden="true" /> Histórico
+        {historyMeta.total > 0 && <small>{historyMeta.total}</small>}
+      </button>
+    </div>
+    {activeTab === "analysis" && <div
+      id="electoral-insight-analysis-panel"
+      className="electoral-insight-tab-panel"
+      role="tabpanel"
+      aria-labelledby="electoral-insight-analysis-tab"
+    >
     <section className="electoral-insight-context" aria-labelledby="electoral-insight-context-title">
       <header>
         <div>
@@ -497,20 +528,22 @@ export function ExplainableInsightsPanel({
       <strong>Contestação registrada</strong>
       <span>{feedbackNotice}</span>
     </p>}
-    <section className="electoral-insight-history" aria-labelledby="electoral-insight-history-title">
+    </div>}
+    {activeTab === "history" && <section
+      id="electoral-insight-history-panel"
+      className="electoral-insight-history electoral-insight-tab-panel"
+      role="tabpanel"
+      aria-labelledby="electoral-insight-history-tab"
+    >
       <header>
         <div>
           <p className="eyebrow">Consultas anteriores</p>
           <h3 id="electoral-insight-history-title">Histórico de análises</h3>
           <small>{historyMeta.total} análise(s) registrada(s)</small>
         </div>
-        <button type="button" className="secondary-button" aria-expanded={historyOpen} aria-controls="electoral-insight-history-content" onClick={() => setHistoryOpen((current) => !current)}>
-          <History size={17} aria-hidden="true" />
-          {historyOpen ? "Ocultar histórico" : "Consultar histórico"}
-          <ChevronDown size={16} className={historyOpen ? "expanded" : ""} aria-hidden="true" />
-        </button>
+        <History size={22} aria-hidden="true" />
       </header>
-      {historyOpen && <div id="electoral-insight-history-content" className="electoral-insight-history-content">
+      <div id="electoral-insight-history-content" className="electoral-insight-history-content">
         <form className="electoral-insight-history-filters" onSubmit={(event) => {
           event.preventDefault();
           setHistoryPage(1);
@@ -544,7 +577,7 @@ export function ExplainableInsightsPanel({
         {!loadingHistory && items.length === 0 && <p className="electoral-empty">Nenhuma análise encontrada com estes filtros.</p>}
         {!loadingHistory && items.length > 0 && <ul className="electoral-insight-history-list">
           {items.map((item) => <li key={`history-${item.id}`}>
-            <button type="button" className={activeItem?.id === item.id ? "selected" : ""} aria-pressed={activeItem?.id === item.id} onClick={() => setActiveItem(item)}>
+            <button type="button" className={activeItem?.id === item.id ? "selected" : ""} aria-pressed={activeItem?.id === item.id} onClick={() => { setActiveItem(item); setActiveTab("analysis"); }}>
               <span>
                 <strong>{analysisTypeLabel(item.analysis_type)}</strong>
                 <small>{insightSummary(item)}</small>
@@ -561,9 +594,9 @@ export function ExplainableInsightsPanel({
           <span>Página {historyMeta.page} de {historyMeta.totalPages}</span>
           <button type="button" className="secondary-button" disabled={historyPage >= historyMeta.totalPages || loadingHistory} onClick={() => setHistoryPage((page) => page + 1)}>Próxima</button>
         </footer>}
-      </div>}
-    </section>
-    <div className="electoral-insight-list">
+      </div>
+    </section>}
+    {activeTab === "analysis" && <div className="electoral-insight-list">
       {!activeItem && <p className="electoral-empty">Nenhum insight solicitado.</p>}
       {(activeItem ? [activeItem] : []).map((item) => <article key={item.id} className="electoral-insight-card">
         <header>
@@ -647,7 +680,7 @@ export function ExplainableInsightsPanel({
           </>}
         </div>}
       </article>)}
-    </div>
+    </div>}
     {reviewDialog && <div className="modal-backdrop" role="presentation" onMouseDown={closeReviewDialog}>
       <section className="modal electoral-review-modal" role="dialog" aria-modal="true" aria-labelledby="electoral-review-modal-title" onMouseDown={(event) => event.stopPropagation()}>
         <header>

@@ -193,20 +193,18 @@ export function Workspace({ user, onLogout }) {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <button
+          {["admin", "manager"].includes(user.role) && isModuleEnabled("privacidade") && <button
             className={activeView === "privacy" ? "nav-item active" : "nav-item"}
-            disabled={!["admin", "manager"].includes(user.role) || !isModuleEnabled("privacidade")}
             onClick={() => openView("privacy")}
           >
             <ShieldCheck size={19} /><span>Privacidade</span>
-          </button>
-          <button
+          </button>}
+          {user.role === "admin" && <button
             className={activeView === "admin" ? "nav-item active" : "nav-item"}
-            disabled={user.role !== "admin"}
             onClick={() => openView("admin")}
           >
             <Settings size={19} /><span>Administração</span>
-          </button>
+          </button>}
           <div className="security-note"><ShieldCheck size={18} /><span>Sessao protegida</span></div>
         </div>
       </aside>
@@ -247,8 +245,8 @@ export function Workspace({ user, onLogout }) {
           <LegislativeDocumentsPage user={user} />
         )}
         {activeView === "rag" && isModuleEnabled("rag") && <RagKnowledgeBasePage />}
-        {activeView === "admin" && <AdministrationPage />}
-        {activeView === "privacy" && isModuleEnabled("privacidade") && <PrivacyGovernancePage />}
+        {activeView === "admin" && user.role === "admin" && <AdministrationPage />}
+        {activeView === "privacy" && ["admin", "manager"].includes(user.role) && isModuleEnabled("privacidade") && <PrivacyGovernancePage />}
         {activeView === "overview" && <OperationalDashboard onOpenRequests={() => openView("requests")} />}
       </main>
     </div>

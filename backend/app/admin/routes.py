@@ -312,9 +312,32 @@ def update_parliamentarian_profile():
     payload = request.get_json(silent=True) or {}
     before = _parliamentarian_data(tenant)
     try:
-        tenant.representative_info = _clean_parliamentarian(payload, before)
+        representative_info = _clean_parliamentarian(payload, before)
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
+    representative = db.session.execute(
+        select(User).where(
+            User.tenant_id == tenant_id,
+            User.role == Role.REPRESENTATIVE,
+        )
+    ).scalar_one_or_none()
+    representative_cpf = _cpf_digits(representative_info.get("cpf"))
+    should_sync_cpf = (
+        representative is not None
+        and representative_cpf
+        and representative.cpf != representative_cpf
+    )
+    if should_sync_cpf:
+        duplicate = db.session.execute(
+            select(User.id).where(
+                User.cpf == representative_cpf,
+                User.id != representative.id,
+            )
+        ).scalar_one_or_none()
+        if duplicate is not None:
+            return jsonify(error="conflict", message="CPF ja cadastrado na plataforma."), 409
+        representative.cpf = representative_cpf
+    tenant.representative_info = representative_info
     sync_active_mandate(tenant)
     after = _parliamentarian_data(tenant)
     add_audit(
