@@ -18,6 +18,7 @@ from app.models import (
     ElectoralMandateSnapshot,
     ElectoralModuleSettings,
     ElectoralParty,
+    ElectoralPublicCommitment,
     ElectoralResult,
     LegislativeDraft,
     LegislativeDraftRequest,
@@ -192,17 +193,27 @@ def generate_snapshot(
         select(Territory).where(Territory.tenant_id == tenant_id, Territory.active.is_(True))
         .order_by(Territory.name)
     ).scalars())
+    commitments = list(db.session.execute(
+        select(ElectoralPublicCommitment).where(
+            ElectoralPublicCommitment.tenant_id == tenant_id,
+            ElectoralPublicCommitment.mandate_id == mandate_id,
+            ElectoralPublicCommitment.created_at < end_at,
+            ElectoralPublicCommitment.created_at <= cutoff,
+        )
+    ).scalars())
 
     request_by_id = {item.id: item for item in requests}
     rows = [
         _territory_metrics(
             None, "Mandato inteiro", requests, agenda, actions, draft_rows, request_by_id,
+            commitments,
             threshold, profile, metric_cutoff,
         )
     ]
     rows.extend(
         _territory_metrics(
             territory.id, territory.name, requests, agenda, actions, draft_rows, request_by_id,
+            commitments,
             threshold, profile, metric_cutoff,
         )
         for territory in territories
@@ -284,7 +295,7 @@ def profile_data(profile: ElectoralCoverageProfile) -> dict:
 
 
 def _territory_metrics(
-    territory_id, name, requests, agenda, actions, draft_rows, request_by_id,
+    territory_id, name, requests, agenda, actions, draft_rows, request_by_id, commitments,
     threshold, profile, cutoff,
 ) -> dict:
     scoped_requests = [
@@ -306,6 +317,30 @@ def _territory_metrics(
         draft.id for draft, request_id in draft_rows
         if territory_id is None or request_id in request_ids
     }
+    scoped_commitments = [
+        item for item in commitments
+        if territory_id is None or item.territory_id == territory_id
+    ]
+    completed_commitments = [
+        item for item in scoped_commitments
+        if item.status == "COMPLETED"
+        and item.completed_at is not None
+        and _aware(item.completed_at) <= _aware(cutoff)
+    ]
+    overdue_commitments = [
+        item for item in scoped_commitments
+        if item.status not in {"COMPLETED", "CANCELLED"} and item.due_on < cutoff.date()
+    ]
+    commitment_summary = {
+        "total": len(scoped_commitments),
+        "completed": len(completed_commitments),
+        "overdue": len(overdue_commitments),
+        "average_progress": (
+            round(sum(item.progress for item in scoped_commitments) / len(scoped_commitments), 1)
+            if scoped_commitments
+            else None
+        ),
+    }
     demand_count = len(scoped_requests)
     base = {
         "territory_id": str(territory_id) if territory_id else None,
@@ -314,6 +349,7 @@ def _territory_metrics(
         "demand_count": demand_count if demand_count >= threshold else None,
         "suppressed": demand_count < threshold,
         "suppression_reason": "privacy_threshold" if demand_count < threshold else None,
+        "public_commitments": commitment_summary,
     }
     if demand_count < threshold:
         return {
@@ -364,6 +400,8 @@ def _territory_metrics(
         alerts.append("Nenhuma agenda territorial realizada no período.")
     if completed_actions == 0:
         alerts.append("Nenhuma ação de fiscalização concluída no período.")
+    if overdue_commitments:
+        alerts.append(f"{len(overdue_commitments)} compromissos públicos com prazo vencido.")
 
     return {
         **base,

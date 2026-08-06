@@ -28,6 +28,16 @@ from app.electoral.analytics import (
 from app.electoral.analytics import (
     search_candidates as load_candidate_search,
 )
+from app.electoral.commitments import (
+    CommitmentError,
+    accessible_commitment,
+    add_evidence,
+    commitment_data,
+    create_commitment,
+    effective_status,
+    operational_map_data,
+    update_commitment,
+)
 from app.electoral.mandate_intelligence import (
     MandateIntelligenceError,
     active_profile,
@@ -58,10 +68,12 @@ from app.models import (
     ElectoralMandateSnapshot,
     ElectoralModuleSettings,
     ElectoralOffice,
+    ElectoralPublicCommitment,
     ElectoralReportJob,
     ElectoralSavedComparison,
     OutboxEvent,
     Role,
+    Territory,
     User,
     UserStatus,
 )
@@ -362,6 +374,169 @@ def get_mandate_snapshot(snapshot_id):
     if item is None:
         return jsonify(error="not_found", message="Snapshot territorial não encontrado."), 404
     return jsonify(snapshot_data(item))
+
+
+@electoral_bp.get("/electoral/public-commitments")
+@electoral_access_required("ver_camadas_mandato")
+def list_public_commitments():
+    if disabled := _feature_required("camadasMandato"):
+        return disabled
+    tenant_id, _ = _private_context()
+    statement = select(ElectoralPublicCommitment).where(
+        ElectoralPublicCommitment.tenant_id == tenant_id,
+        ElectoralPublicCommitment.mandate_id == g.electoral_mandate.id,
+    )
+    if territory_id := request.args.get("territory_id"):
+        try:
+            statement = statement.where(
+                ElectoralPublicCommitment.territory_id == uuid.UUID(territory_id)
+            )
+        except ValueError:
+            return _validation_error("territory_id inválido.")
+    items = list(db.session.execute(
+        statement.order_by(
+            ElectoralPublicCommitment.due_on,
+            ElectoralPublicCommitment.created_at.desc(),
+        ).limit(200)
+    ).scalars())
+    if status := request.args.get("status"):
+        items = [item for item in items if effective_status(item) == status.upper()]
+    territories = list(db.session.execute(
+        select(Territory).where(Territory.tenant_id == tenant_id, Territory.active.is_(True))
+        .order_by(Territory.name)
+    ).scalars())
+    responsible_users = list(db.session.execute(
+        select(User).where(User.tenant_id == tenant_id, User.status == UserStatus.ACTIVE)
+        .order_by(User.name)
+    ).scalars())
+    return jsonify(
+        content=[commitment_data(item) for item in items],
+        can_manage=get_jwt().get("role") == Role.REPRESENTATIVE.value,
+        territories=[{"id": str(item.id), "name": item.name} for item in territories],
+        responsible_users=[
+            {"id": str(item.id), "name": item.name, "role": item.role.value}
+            for item in responsible_users
+        ],
+    )
+
+
+@electoral_bp.post("/electoral/public-commitments")
+@electoral_access_required("ver_camadas_mandato")
+def post_public_commitment():
+    if disabled := _feature_required("camadasMandato"):
+        return disabled
+    if denied := _commitment_mutation_required():
+        return denied
+    tenant_id, user_id = _private_context()
+    try:
+        item = create_commitment(
+            tenant_id,
+            g.electoral_mandate.id,
+            user_id,
+            request.get_json(silent=True) or {},
+        )
+    except CommitmentError as exc:
+        return _validation_error(str(exc))
+    add_audit(
+        tenant_id,
+        user_id,
+        "electoral.public_commitment.created",
+        "electoral_public_commitment",
+        item.id,
+        after={"territory_id": str(item.territory_id), "due_on": item.due_on.isoformat()},
+    )
+    db.session.commit()
+    return jsonify(commitment_data(item, include_history=True)), 201
+
+
+@electoral_bp.get("/electoral/public-commitments/<uuid:commitment_id>")
+@electoral_access_required("ver_camadas_mandato")
+def get_public_commitment(commitment_id):
+    if disabled := _feature_required("camadasMandato"):
+        return disabled
+    tenant_id, _ = _private_context()
+    item = accessible_commitment(tenant_id, g.electoral_mandate.id, commitment_id)
+    if item is None:
+        return jsonify(error="not_found", message="Compromisso público não encontrado."), 404
+    return jsonify(commitment_data(item, include_history=True))
+
+
+@electoral_bp.patch("/electoral/public-commitments/<uuid:commitment_id>")
+@electoral_access_required("ver_camadas_mandato")
+def patch_public_commitment(commitment_id):
+    if disabled := _feature_required("camadasMandato"):
+        return disabled
+    if denied := _commitment_mutation_required():
+        return denied
+    tenant_id, user_id = _private_context()
+    item = accessible_commitment(tenant_id, g.electoral_mandate.id, commitment_id)
+    if item is None:
+        return jsonify(error="not_found", message="Compromisso público não encontrado."), 404
+    before = commitment_data(item)
+    try:
+        update_commitment(item, user_id, request.get_json(silent=True) or {})
+    except CommitmentError as exc:
+        return _validation_error(str(exc))
+    add_audit(
+        tenant_id,
+        user_id,
+        "electoral.public_commitment.updated",
+        "electoral_public_commitment",
+        item.id,
+        before={"status": before["status"], "progress": before["progress"]},
+        after={"status": item.status, "progress": item.progress},
+    )
+    db.session.commit()
+    return jsonify(commitment_data(item, include_history=True))
+
+
+@electoral_bp.post("/electoral/public-commitments/<uuid:commitment_id>/evidence")
+@electoral_access_required("ver_camadas_mandato")
+def post_public_commitment_evidence(commitment_id):
+    if disabled := _feature_required("camadasMandato"):
+        return disabled
+    if denied := _commitment_mutation_required():
+        return denied
+    tenant_id, user_id = _private_context()
+    item = accessible_commitment(tenant_id, g.electoral_mandate.id, commitment_id)
+    if item is None:
+        return jsonify(error="not_found", message="Compromisso público não encontrado."), 404
+    try:
+        evidence = add_evidence(item, user_id, request.get_json(silent=True) or {})
+    except CommitmentError as exc:
+        return _validation_error(str(exc))
+    add_audit(
+        tenant_id,
+        user_id,
+        "electoral.public_commitment.evidence_added",
+        "electoral_public_commitment",
+        item.id,
+        after={
+            "evidence_id": str(evidence.id),
+            "evidence_date": evidence.evidence_date.isoformat(),
+        },
+    )
+    db.session.commit()
+    return jsonify(commitment_data(item, include_history=True)), 201
+
+
+@electoral_bp.get("/electoral/operational-map")
+@electoral_access_required("ver_camadas_mandato")
+def get_operational_map():
+    if disabled := _feature_required("camadasMandato"):
+        return disabled
+    tenant_id, user_id = _private_context()
+    content = operational_map_data(tenant_id, g.electoral_mandate.id)
+    add_audit(
+        tenant_id,
+        user_id,
+        "electoral.operational_map.viewed",
+        "mandate",
+        g.electoral_mandate.id,
+        after={"located_commitments": len(content["features"])},
+    )
+    db.session.commit()
+    return jsonify(content)
 
 
 @electoral_bp.get("/electoral/candidates")
@@ -1319,6 +1494,18 @@ def _feature_required(name: str):
         jsonify(
             error="feature_disabled",
             message=f"Funcionalidade eleitoral desabilitada: {name}.",
+        ),
+        403,
+    )
+
+
+def _commitment_mutation_required():
+    if get_jwt().get("role") == Role.REPRESENTATIVE.value:
+        return None
+    return (
+        jsonify(
+            error="representative_required",
+            message="Somente o parlamentar pode alterar compromissos públicos.",
         ),
         403,
     )

@@ -32,6 +32,8 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "document_ocrs",
         "electoral_access_delegations",
         "electoral_coverage_profiles",
+        "electoral_commitment_evidence",
+        "electoral_commitment_history",
         "electoral_candidates",
         "electoral_candidacies",
         "electoral_dataset_versions",
@@ -43,6 +45,7 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "electoral_identity_reviews",
         "electoral_module_settings",
         "electoral_mandate_snapshots",
+        "electoral_public_commitments",
         "electoral_offices",
         "electoral_parties",
         "electoral_results",
@@ -561,6 +564,27 @@ def test_electoral_private_rls_and_official_geometry_index(postgres_app):
                 {"tables": list(private_tables)},
             )
         }
+        commitment_policy_commands = {
+            row.tablename: set(row.commands)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT tablename, array_agg(cmd ORDER BY cmd) AS commands
+                    FROM pg_policies
+                    WHERE schemaname = 'public'
+                      AND tablename = ANY(:tables)
+                    GROUP BY tablename
+                    """
+                ),
+                {
+                    "tables": [
+                        "electoral_public_commitments",
+                        "electoral_commitment_evidence",
+                        "electoral_commitment_history",
+                    ]
+                },
+            )
+        }
         geometry_type = connection.execute(
             text(
                 """
@@ -584,6 +608,11 @@ def test_electoral_private_rls_and_official_geometry_index(postgres_app):
     assert set(policies) == private_tables
     assert all(enabled and forced for enabled, forced, _ in policies.values())
     assert all("app.tenant_id" in expression for _, _, expression in policies.values())
+    assert commitment_policy_commands == {
+        "electoral_public_commitments": {"SELECT", "INSERT", "UPDATE"},
+        "electoral_commitment_evidence": {"SELECT", "INSERT"},
+        "electoral_commitment_history": {"SELECT", "INSERT"},
+    }
     assert all("app.user_id" in expression for _, _, expression in policies.values())
     assert geometry_type == ("MULTIPOLYGON", 4326)
     assert "using gist" in geometry_index.lower()
@@ -595,6 +624,9 @@ def test_electoral_export_tables_use_forced_tenant_rls(postgres_app):
         "electoral_generated_reports",
         "electoral_coverage_profiles",
         "electoral_mandate_snapshots",
+        "electoral_public_commitments",
+        "electoral_commitment_evidence",
+        "electoral_commitment_history",
     }
     with postgres_app.app_context(), db.engine.connect() as connection:
         policies = {
@@ -799,8 +831,11 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rag_security_rescan_runs" in rolled_back_tables
         assert "rag_output_validation_profiles" in rolled_back_tables
         assert "rls_audit_runs" in rolled_back_tables
-        assert "electoral_coverage_profiles" not in rolled_back_tables
-        assert "electoral_mandate_snapshots" not in rolled_back_tables
+        assert "electoral_coverage_profiles" in rolled_back_tables
+        assert "electoral_mandate_snapshots" in rolled_back_tables
+        assert "electoral_public_commitments" not in rolled_back_tables
+        assert "electoral_commitment_evidence" not in rolled_back_tables
+        assert "electoral_commitment_history" not in rolled_back_tables
         assert "encryption_key_version" in rolled_back_private_version_columns
         assert "encryption_key_version" in rolled_back_global_version_columns
         assert "encryption_key_version" in rolled_back_attachment_columns
@@ -895,6 +930,9 @@ def test_latest_migration_can_be_rolled_back_and_reapplied(postgres_app):
         assert "rls_audit_runs" in reapplied_tables
         assert "electoral_coverage_profiles" in reapplied_tables
         assert "electoral_mandate_snapshots" in reapplied_tables
+        assert "electoral_public_commitments" in reapplied_tables
+        assert "electoral_commitment_evidence" in reapplied_tables
+        assert "electoral_commitment_history" in reapplied_tables
         assert "learning_artifacts" in reapplied_query_columns
         assert "activation_mode" in reapplied_learning_artifact_columns
         assert "security_status" in reapplied_private_version_columns

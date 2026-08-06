@@ -1154,6 +1154,150 @@ class ElectoralMandateSnapshot(db.Model):
     )
 
 
+class ElectoralPublicCommitment(db.Model):
+    __tablename__ = "electoral_public_commitments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "mandate_id"],
+            ["mandates.tenant_id", "mandates.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_commitments_tenant_mandate",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "territory_id"],
+            ["territories.tenant_id", "territories.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_commitments_tenant_territory",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "responsible_user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_commitments_tenant_responsible",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_commitments_tenant_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "updated_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_commitments_tenant_updater",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_electoral_public_commitments_tenant_id"),
+        CheckConstraint(
+            "status IN ('PLANNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')",
+            name="ck_electoral_commitment_status",
+        ),
+        CheckConstraint(
+            "progress >= 0 AND progress <= 100",
+            name="ck_electoral_commitment_progress",
+        ),
+        CheckConstraint(
+            "(latitude IS NULL AND longitude IS NULL) OR "
+            "(latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 "
+            "AND location_is_public = true)",
+            name="ck_electoral_commitment_public_location",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    territory_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    responsible_user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    due_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="PLANNED", nullable=False, index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    public_location_name: Mapped[str | None] = mapped_column(String(180))
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    location_is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    updated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class ElectoralCommitmentEvidence(db.Model):
+    __tablename__ = "electoral_commitment_evidence"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "commitment_id"],
+            ["electoral_public_commitments.tenant_id", "electoral_public_commitments.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_commitment_evidence_tenant_commitment",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "added_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_commitment_evidence_tenant_adder",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    commitment_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    public_url: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_date: Mapped[date] = mapped_column(Date, nullable=False)
+    added_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class ElectoralCommitmentHistory(db.Model):
+    __tablename__ = "electoral_commitment_history"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "commitment_id"],
+            ["electoral_public_commitments.tenant_id", "electoral_public_commitments.id"],
+            ondelete="CASCADE",
+            name="fk_electoral_commitment_history_tenant_commitment",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "changed_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_electoral_commitment_history_tenant_changer",
+        ),
+        CheckConstraint(
+            "action IN ('CREATED', 'UPDATED', 'EVIDENCE_ADDED')",
+            name="ck_electoral_commitment_history_action",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "commitment_id",
+            "version",
+            name="uq_electoral_commitment_history_version",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    commitment_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
 class ElectoralAccessDelegation(db.Model):
     __tablename__ = "electoral_access_delegations"
     __table_args__ = (
@@ -1493,7 +1637,10 @@ class RequestCategory(db.Model):
 
 class Territory(db.Model):
     __tablename__ = "territories"
-    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name"),
+        UniqueConstraint("tenant_id", "id", name="uq_territories_tenant_id_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

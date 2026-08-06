@@ -143,6 +143,67 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MandateSnapshot' }
         '404': { description: Snapshot não encontrado no escopo autorizado. }
+  /electoral/public-commitments:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: listPublicCommitments
+      summary: Lista compromissos públicos do mandato por território e estado efetivo.
+      responses:
+        '200': { description: Compromissos, territórios e responsáveis elegíveis. }
+    post:
+      tags: [Mandate Intelligence]
+      operationId: createPublicCommitment
+      summary: Cadastra compromisso; operação exclusiva do parlamentar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicCommitmentInput' }
+      responses:
+        '201':
+          description: Compromisso criado com evento imutável de histórico.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCommitment' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /electoral/public-commitments/{commitment_id}:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getPublicCommitment
+      parameters:
+        - $ref: '#/components/parameters/CommitmentId'
+      responses:
+        '200':
+          description: Compromisso com evidências e histórico.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCommitment' }
+    patch:
+      tags: [Mandate Intelligence]
+      operationId: updatePublicCommitment
+      parameters:
+        - $ref: '#/components/parameters/CommitmentId'
+      responses:
+        '200': { description: Compromisso atualizado e nova versão registrada no histórico. }
+  /electoral/public-commitments/{commitment_id}/evidence:
+    post:
+      tags: [Mandate Intelligence]
+      operationId: addPublicCommitmentEvidence
+      parameters:
+        - $ref: '#/components/parameters/CommitmentId'
+      responses:
+        '201': { description: Evidência pública adicionada sem alterar eventos anteriores. }
+  /electoral/operational-map:
+    get:
+      tags: [Mandate Intelligence]
+      operationId: getElectoralOperationalMap
+      summary: Retorna limite oficial da jurisdição e pontos públicos dos compromissos.
+      responses:
+        '200':
+          description: Camada operacional; não cria polígonos para territórios sem malha oficial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationalMap' }
   /electoral/candidates:
     get:
       tags: [Candidates]
@@ -494,6 +555,11 @@ components:
       schema:
         type: string
         enum: [state, municipality, electoral_zone, neighborhood, polling_place, section]
+    CommitmentId:
+      name: commitment_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   responses:
     Unauthorized:
       description: Sessão ausente, expirada ou invalidada.
@@ -511,6 +577,49 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
   schemas:
+    PublicCommitmentInput:
+      type: object
+      required: [title, description, territory_id, responsible_user_id, due_on]
+      properties:
+        title: { type: string, maxLength: 180 }
+        description: { type: string, maxLength: 5000 }
+        territory_id: { type: string, format: uuid }
+        responsible_user_id: { type: string, format: uuid }
+        due_on: { type: string, format: date }
+        public_location_name: { type: string, maxLength: 180 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        location_is_public:
+          type: boolean
+          description: Deve ser true quando coordenadas forem informadas.
+    PublicCommitment:
+      allOf:
+        - $ref: '#/components/schemas/PublicCommitmentInput'
+        - type: object
+          required: [id, status, effective_status, status_source, progress, evidence, history]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [PLANNED, IN_PROGRESS, COMPLETED, CANCELLED] }
+            effective_status: { type: string, enum: [PLANNED, IN_PROGRESS, COMPLETED, CANCELLED, OVERDUE] }
+            status_source: { type: string, enum: [manual, derived_deadline] }
+            progress: { type: integer, minimum: 0, maximum: 100 }
+            evidence: { type: array, items: { type: object } }
+            history: { type: array, items: { type: object } }
+    OperationalMap:
+      type: object
+      required: [geometry_available, boundary, geometry_kind, source, features, unmapped_commitments, warnings]
+      properties:
+        geometry_available: { type: boolean }
+        boundary: { type: [object, 'null'] }
+        geometry_kind: { type: string, const: official_jurisdiction_boundary }
+        source: { type: object }
+        features:
+          type: array
+          items:
+            type: object
+            description: GeoJSON Feature Point de local público confirmado.
+        unmapped_commitments: { type: integer, minimum: 0 }
+        warnings: { type: array, items: { type: string } }
     CoverageProfileInput:
       type: object
       required: [weights, targets, explanation]

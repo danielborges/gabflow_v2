@@ -82,6 +82,21 @@ Chave única lógica: versão + eleição + candidato + território.
 - `valid_from`, `valid_until`
 - `revoked_at`, `revoked_by`
 
+### `public_commitment`
+
+- `id`, `tenant_id`, `mandate_id`, `territory_id`
+- `title`, `description`, `responsible_user_id`, `due_on`
+- `status`, `progress`, `completed_at`
+- `public_location_name`, `latitude`, `longitude`, `location_is_public`
+- `created_by_id`, `updated_by_id`, `created_at`, `updated_at`
+
+Estados manuais: `PLANNED`, `IN_PROGRESS`, `COMPLETED` e `CANCELLED`. O estado
+`OVERDUE` é derivado do prazo e identificado como tal no contrato, sem sobrescrever o
+estado manual.
+
+Evidências ficam em `electoral_commitment_evidence`; cada criação, atualização ou nova
+evidência acrescenta um registro append-only em `electoral_commitment_history`.
+
 ## Estratégia geoespacial
 
 - PostgreSQL/PostGIS.

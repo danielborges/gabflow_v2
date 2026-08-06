@@ -90,14 +90,23 @@ button:disabled { cursor: not-allowed; }
 .loading-screen { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 18px; color: var(--muted); }
 .loading-screen img { width: 220px; }
 .fatal-error { padding: 40px; color: var(--danger); }
-.workspace { width: 100%; max-width: 100vw; height: 100dvh; min-height: 0; display: grid; grid-template-columns: 240px minmax(0, 1fr); overflow: hidden; }
+.workspace { width: 100%; max-width: 100vw; height: 100dvh; min-height: 0; display: grid; grid-template-columns: 264px minmax(0, 1fr); overflow: hidden; }
 .sidebar { position: sticky; top: 0; height: 100dvh; min-height: 0; display: flex; flex-direction: column; padding: 22px 14px; color: #dce8f8; background: var(--navy-950); overflow: hidden; }
 .sidebar-brand { min-height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 18px; }
 .sidebar-brand img { width: 100%; max-width: 190px; height: auto; display: block; }
-.sidebar nav { min-height: 0; display: grid; align-content: start; gap: 4px; overflow: hidden; }
+.sidebar nav { min-height: 0; display: grid; align-content: start; gap: 4px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
 .nav-item { width: 100%; height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 13px; border: 0; border-radius: 6px; color: #b9cae0; background: transparent; text-align: left; }
 .nav-item.active { color: white; background: #1688ef2e; box-shadow: inset 3px 0 var(--cyan-500); }
 .nav-item:disabled:not(.active) { opacity: 0.52; }
+.nav-group { min-width: 0; }
+.nav-group .nav-item > span { flex: 1; white-space: nowrap; }
+.nav-group-chevron { flex: 0 0 auto; transition: transform 160ms ease; }
+.nav-group-chevron.expanded { transform: rotate(180deg); }
+.nav-submenu { display: grid; gap: 2px; margin: 3px 4px 7px 22px; padding: 3px 0 3px 9px; border-left: 1px solid #ffffff26; }
+.nav-submenu button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 33px; padding: 6px 9px; border: 0; border-radius: 6px; background: transparent; color: #9eb3cf; cursor: pointer; font-size: .76rem; text-align: left; }
+.nav-submenu button:hover { background: #ffffff0d; color: #fff; }
+.nav-submenu button.active { background: #1688ef24; color: #fff; font-weight: 750; }
+.nav-submenu button:focus-visible { outline: 2px solid var(--cyan-500); outline-offset: 1px; }
 .sidebar-footer { flex: 0 0 auto; margin-top: auto; display: grid; gap: 14px; }
 .security-note { display: flex; align-items: center; gap: 10px; padding: 14px; border-top: 1px solid #ffffff1f; color: #9fcdbf; font-size: 0.8rem; }
 .content { min-width: 0; width: 100%; max-width: 100%; height: 100dvh; overflow-y: auto; overflow-x: hidden; }
@@ -2027,7 +2036,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .brand-status { display: none; }
   .login-panel { padding: 42px 24px; }
   .workspace { grid-template-columns: 1fr; }
-  .sidebar { position: fixed; z-index: 10; inset: 0 auto 0 0; width: 240px; transform: translateX(-100%); transition: transform 180ms ease; box-shadow: 12px 0 30px #061a4238; }
+  .sidebar { position: fixed; z-index: 10; inset: 0 auto 0 0; width: 264px; transform: translateX(-100%); transition: transform 180ms ease; box-shadow: 12px 0 30px #061a4238; }
   .sidebar-open { transform: translateX(0); }
   .mobile-only { display: inline-grid; }
   .foundation-grid { grid-template-columns: 1fr; }
@@ -2280,7 +2289,8 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .landing-actions .primary-button, .landing-actions .secondary-button, .pricing-card > a { width: 100%; }
   .product-dashboard section, .lead-form, .landing-login-panel .login-form { padding: 18px; }
 }
-.electoral-foundation-page .page-header > svg {
+.electoral-title-icon {
+  flex: 0 0 auto;
   color: var(--primary, #315c4d);
 }
 
@@ -2300,7 +2310,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   flex: 0 0 auto;
 }
 
-.electoral-foundation-card h2 {
+.electoral-foundation-card h2, .electoral-foundation-card h3 {
   margin: 0 0 .4rem;
 }
 
@@ -2328,6 +2338,24 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 }
 
 .electoral-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.electoral-page-header { margin-bottom: 18px; }
+.electoral-page-header h1 { display: flex; align-items: center; gap: 10px; }
+.electoral-workspace-shell { display: block; }
+.electoral-workspace-content { min-width: 0; }
+.electoral-section-heading { padding: 4px 2px 16px; border-bottom: 1px solid var(--line); }
+.electoral-section-heading h2 { margin: 2px 0 4px; color: var(--navy-800); font-size: 1.4rem; }
+.electoral-section-heading > p:last-child { margin: 0; color: var(--muted); }
+.electoral-quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.electoral-quick-actions button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 76px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 11px; background: #fff; color: var(--navy-800); cursor: pointer; text-align: left; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.electoral-quick-actions button:hover { border-color: #88ad9f; box-shadow: 0 8px 20px rgba(25,57,46,.08); transform: translateY(-1px); }
+.electoral-quick-actions button:focus-visible { outline: 3px solid rgba(11,111,194,.28); outline-offset: 2px; }
+.electoral-quick-actions button > span { display: grid; gap: 3px; }
+.electoral-quick-actions button small { color: var(--muted); }
+.electoral-detail-tabs { display: flex; gap: 4px; margin-top: 16px; padding: 4px; width: fit-content; border: 1px solid var(--line); border-radius: 10px; background: #f4f7f9; }
+.electoral-detail-tabs button { min-height: 36px; padding: 7px 14px; border: 0; border-radius: 7px; background: transparent; color: #52627a; cursor: pointer; font-weight: 750; }
+.electoral-detail-tabs button.active { background: #fff; box-shadow: 0 1px 4px rgba(31,42,55,.12); color: var(--navy-800); }
+.electoral-detail-tabs button:focus-visible { outline: 3px solid rgba(11,111,194,.28); outline-offset: 1px; }
+.electoral-empty-guidance { display: grid; gap: 5px; }
 .electoral-analysis-card { margin-top: 18px; padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .electoral-analysis-card > header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
 .electoral-analysis-card h2 { margin: 0; color: var(--navy-800); font-size: 1.15rem; }
@@ -2341,6 +2369,17 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-table-wrap th, .electoral-table-wrap td { padding: 12px 14px; border-top: 1px solid #edf1f5; text-align: left; font-size: .8rem; }
 .electoral-table-wrap th { color: #52627a; background: #f8fafc; font-size: .7rem; text-transform: uppercase; }
 .electoral-table-wrap th button { border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; cursor: pointer; }
+.electoral-table-wrap .mandate-territory-table { min-width: 1120px; table-layout: fixed; }
+.mandate-territory-table th { white-space: nowrap; }
+.mandate-territory-table th:nth-child(1) { width: 210px; }
+.mandate-territory-table th:nth-child(2) { width: 170px; }
+.mandate-territory-table th:nth-child(3),
+.mandate-territory-table th:nth-child(4),
+.mandate-territory-table th:nth-child(5),
+.mandate-territory-table th:nth-child(6),
+.mandate-territory-table th:nth-child(7) { width: 95px; }
+.mandate-territory-table th:nth-child(8) { width: 140px; }
+.mandate-territory-table th:nth-child(9) { width: 95px; }
 .electoral-table-wrap td strong, .electoral-table-wrap td small { display: block; }
 .electoral-table-wrap td small { margin-top: 3px; color: var(--muted); }
 .electoral-empty { margin: 18px 0 0; padding: 18px; border-radius: 8px; background: #f8fafc; color: var(--muted); }
@@ -2372,6 +2411,34 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-context-card { display: grid; gap: 4px; margin: 16px 0; padding: 14px; border-left: 4px solid var(--blue-600); border-radius: 6px; background: #edf6fc; color: var(--navy-800); }
 .electoral-context-card small { color: var(--muted); }
 .electoral-alert-list { margin: 14px 0; padding: 12px 16px 12px 34px; border-radius: 8px; background: #fffaf0; color: #744210; }
+.electoral-commitment-form { display: grid; grid-template-columns: 1.4fr 1fr 1fr .8fr; gap: 12px; align-items: end; }
+.electoral-commitment-form label, .commitment-evidence-form label { display: grid; gap: 6px; color: #42566f; font-size: .76rem; font-weight: 750; }
+.electoral-commitment-form input, .electoral-commitment-form select, .electoral-commitment-form textarea, .commitment-evidence-form input { min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--navy-800); }
+.electoral-commitment-form textarea { min-height: 90px; resize: vertical; }
+.electoral-commitment-form .commitment-description, .electoral-commitment-form fieldset { grid-column: 1 / -1; }
+.electoral-commitment-form fieldset { display: grid; grid-template-columns: 1.5fr .7fr .7fr 1.3fr; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.electoral-commitment-form .commitment-public-check { display: flex; align-items: center; gap: 8px; }
+.electoral-commitment-form .commitment-public-check input { min-height: auto; }
+.electoral-commitment-layout { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(420px, 1.1fr); gap: 18px; margin-top: 22px; }
+.electoral-commitment-list { display: grid; align-content: start; gap: 9px; }
+.electoral-commitment-list h3 { margin: 0 0 4px; color: var(--navy-800); }
+.commitment-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; cursor: pointer; }
+.commitment-row.selected { border-color: var(--blue-600); box-shadow: 0 0 0 2px rgba(11,111,194,.14); }
+.commitment-row > div { display: grid; gap: 3px; }
+.commitment-row span, .commitment-row small { color: var(--muted); }
+.commitment-actions { grid-column: 1 / -1; display: flex !important; grid-auto-flow: column; justify-content: end; gap: 8px !important; }
+.commitment-actions button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #f7fafc; cursor: pointer; }
+.electoral-job-status.status-overdue { background: #fbe5e5; color: #8f2424; }
+.electoral-job-status.status-in_progress { background: #fff1cc; color: #765500; }
+.electoral-job-status.status-planned { background: #e7eef3; color: #42566f; }
+.electoral-job-status.status-completed { background: #dff3e7; color: #17623a; }
+.electoral-operational-map-wrap { min-width: 0; }
+.electoral-operational-map .operational-boundary { fill: #edf6fc; stroke: #537391; stroke-width: 1.5; cursor: default; }
+.electoral-operational-map .commitment-marker { fill: #d97706; stroke: #fff; stroke-width: 2; cursor: pointer; }
+.electoral-operational-map .commitment-marker.selected { fill: #b42318; stroke: var(--navy-800); stroke-width: 3; }
+.commitment-detail { margin-top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #f8fafc; }
+.commitment-detail h3 { margin-top: 0; color: var(--navy-800); }
+.commitment-evidence-form { display: grid; grid-template-columns: 1fr 1.5fr .7fr auto; gap: 10px; align-items: end; margin-top: 12px; }
 .electoral-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; color: var(--muted); font-size: .76rem; }
 
 @media (max-width: 1050px) {
@@ -2380,7 +2447,12 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 }
 
 @media (max-width: 700px) {
-  .electoral-overview-grid, .electoral-search-form, .electoral-result-summary, .electoral-snapshot-form { grid-template-columns: 1fr; }
+  .electoral-quick-actions { grid-template-columns: 1fr; }
+  .electoral-detail-tabs { width: 100%; }
+  .electoral-detail-tabs button { flex: 1; }
+  .electoral-overview-grid, .electoral-search-form, .electoral-result-summary, .electoral-snapshot-form, .electoral-commitment-form, .electoral-commitment-layout, .commitment-evidence-form { grid-template-columns: 1fr; }
+  .electoral-commitment-form .commitment-description, .electoral-commitment-form fieldset { grid-column: auto; }
+  .electoral-commitment-form fieldset { grid-template-columns: 1fr; }
   .electoral-analysis-card > header { align-items: stretch; flex-direction: column; }
 }
 

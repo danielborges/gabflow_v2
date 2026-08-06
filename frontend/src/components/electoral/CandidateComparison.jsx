@@ -9,18 +9,21 @@ const metrics = {
 export function CandidateComparison({ selected, response, loading, onCompare, onRemove, onSave, saved = [], onLoadSaved, onDeleteSaved }) {
   const [metric, setMetric] = useState("votes");
   const [name, setName] = useState("");
-  if (!selected.length) return null;
   return (
     <section className="electoral-analysis-card" aria-labelledby="candidate-comparison-title">
       <header className="electoral-results-header">
         <div><p className="eyebrow">Incremento 3</p><h2 id="candidate-comparison-title">Comparar candidaturas</h2></div>
         <label>Métrica<select value={metric} onChange={(event) => setMetric(event.target.value)}>{Object.entries(metrics).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}</select></label>
       </header>
+      {!selected.length && <div className="electoral-empty electoral-empty-guidance">
+        <strong>Nenhuma candidatura selecionada.</strong>
+        <span>Abra Resultados eleitorais e marque de duas a cinco candidaturas.</span>
+      </div>}
       <div className="electoral-comparison-basket">{selected.map((candidate) => (
         <span key={candidate.id}>{candidate.ballot_name}<button type="button" aria-label={`Remover ${candidate.ballot_name}`} onClick={() => onRemove(candidate.id)}>×</button></span>
       ))}</div>
-      <button className="primary-button" type="button" disabled={selected.length < 2 || loading} onClick={onCompare}>{loading ? "Comparando..." : `Comparar ${selected.length} candidaturas`}</button>
-      {selected.length < 2 && <p className="electoral-empty">Selecione pelo menos duas candidaturas da mesma eleição.</p>}
+      {selected.length > 0 && <button className="primary-button" type="button" disabled={selected.length < 2 || loading} onClick={onCompare}>{loading ? "Comparando..." : `Comparar ${selected.length} candidaturas`}</button>}
+      {selected.length === 1 && <p className="electoral-empty">Selecione pelo menos duas candidaturas da mesma eleição.</p>}
       {response?.items?.length > 0 && <>
         <p className="electoral-method"><strong>Denominador:</strong> {response.denominator.label}.</p>
         <div className="electoral-save-comparison"><label>Nome do comparativo<input value={name} maxLength={160} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Vereadores de Juiz de Fora" /></label><button type="button" className="secondary-button" disabled={!name.trim()} onClick={() => { onSave(name.trim()); setName(""); }}>Salvar comparativo</button></div>

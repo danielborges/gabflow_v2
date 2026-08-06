@@ -74,7 +74,10 @@ def execute_rls_audit(run: RlsAuditRun) -> None:
                       'electoral_report_jobs',
                       'electoral_generated_reports',
                       'electoral_coverage_profiles',
-                      'electoral_mandate_snapshots'
+                      'electoral_mandate_snapshots',
+                      'electoral_public_commitments',
+                      'electoral_commitment_evidence',
+                      'electoral_commitment_history'
                   )
               )
               AND EXISTS (

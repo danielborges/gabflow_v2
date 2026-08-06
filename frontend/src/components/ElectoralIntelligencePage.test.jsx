@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { apiRequest } from "../api";
 import { Workspace } from "./Workspace";
@@ -13,7 +13,7 @@ const electoralAvailability = {
     jurisdicao: "Juiz de Fora/MG",
     status: "active",
   },
-  capacidades: ["consultar_dados_publicos"],
+  capacidades: ["consultar_dados_publicos", "comparar_candidatos"],
   limiarPrivacidade: 10,
   funcionalidades: { catalogo: true },
 };
@@ -136,6 +136,13 @@ beforeEach(() => {
   });
 });
 
+function openElectoralSection(name) {
+  const navigation = screen.getByRole("group", {
+    name: "Submenu Inteligência Eleitoral",
+  });
+  fireEvent.click(within(navigation).getByRole("button", { name }));
+}
+
 it("pesquisa candidatura e exibe resultado territorial com filtros na URL", async () => {
   render(
     <Workspace
@@ -151,6 +158,8 @@ it("pesquisa candidatura e exibe resultado territorial com filtros na URL", asyn
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "Inteligência Eleitoral" }));
+  await screen.findByRole("group", { name: "Submenu Inteligência Eleitoral" });
+  openElectoralSection(/^Resultados eleitorais/);
   const query = await screen.findByLabelText("Nome ou número");
   fireEvent.change(query, { target: { value: "Mauricio Delgado" } });
   fireEvent.click(screen.getByRole("button", { name: "Pesquisar" }));
@@ -185,9 +194,47 @@ it("exibe o catalogo eleitoral somente ao Parlamentar habilitado", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Inteligência Eleitoral" }));
 
   expect(await screen.findByRole("heading", { name: "Catálogo consultável" })).toBeInTheDocument();
+  const pageTitle = screen.getByRole("heading", { name: "Inteligência Eleitoral", level: 1 });
+  expect(pageTitle.querySelector("svg")).toBeInTheDocument();
+  expect(screen.getByText("Módulo de insights eleitorais")).toBeInTheDocument();
+  const electoralMenu = screen.getByRole("button", { name: "Inteligência Eleitoral" });
+  expect(electoralMenu).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(electoralMenu);
+  expect(electoralMenu).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("group", { name: "Submenu Inteligência Eleitoral" })).not.toBeInTheDocument();
+  fireEvent.click(electoralMenu);
   expect(screen.getByText("Juiz de Fora/MG")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Pesquisar candidatura" })).not.toBeInTheDocument();
+  openElectoralSection(/^Resultados eleitorais/);
   expect(screen.getByRole("heading", { name: "Pesquisar candidatura" })).toBeInTheDocument();
   expect(apiRequest).toHaveBeenCalledWith("/api/v1/electoral/disponibilidade");
+});
+
+it("restaura a área de trabalho pela URL sem exibir painéis concorrentes", async () => {
+  window.history.replaceState({}, "", "/?secao=comparisons");
+  render(
+    <Workspace
+      user={{
+        name: "Vereadora Teste",
+        role: "representative",
+        tenant: {
+          name: "Gabinete Teste",
+          modulosHabilitados: ["inteligencia_eleitoral"],
+        },
+      }}
+      onLogout={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Inteligência Eleitoral" }));
+
+  expect(await screen.findByRole("heading", { name: "Comparações" })).toBeInTheDocument();
+  expect(screen.getByText("Nenhuma candidatura selecionada.")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Pesquisar candidatura" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Comparações/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 });
 
 it("exibe histórico e compara duas candidaturas com o mesmo denominador", async () => {
@@ -198,16 +245,22 @@ it("exibe histórico e compara duas candidaturas com o mesmo denominador", async
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "Inteligência Eleitoral" }));
+  await screen.findByRole("group", { name: "Submenu Inteligência Eleitoral" });
+  openElectoralSection(/^Resultados eleitorais/);
   fireEvent.change(await screen.findByLabelText("Nome ou número"), { target: { value: "Mauricio" } });
   fireEvent.click(screen.getByRole("button", { name: "Pesquisar" }));
   fireEvent.click((await screen.findAllByRole("button", { name: "Ver resultado" }))[0]);
+  fireEvent.click(await screen.findByRole("button", { name: "Histórico" }));
   expect(await screen.findByRole("heading", { name: "Histórico da candidatura" })).toBeInTheDocument();
   expect(screen.getByText("O partido mudou entre as eleições.")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Mapa territorial" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Mapa" }));
   expect(screen.getByRole("heading", { name: "Mapa territorial" })).toBeInTheDocument();
 
   const include = screen.getAllByRole("checkbox", { name: "Incluir" });
   fireEvent.click(include[0]);
   fireEvent.click(include[1]);
+  openElectoralSection(/^Comparações/);
   fireEvent.click(screen.getByRole("button", { name: "Comparar 2 candidaturas" }));
   expect(await screen.findByText("275.026")).toBeInTheDocument();
   expect(screen.getAllByText("5.453").length).toBeGreaterThan(0);

@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 import click
 from flask import Flask, current_app
 from sqlalchemy import select
@@ -5,6 +7,7 @@ from sqlalchemy import select
 from app.agency_suggestions import reload_suggested_agencies
 from app.auth.security import hash_password
 from app.default_categories import ensure_default_request_categories
+from app.electoral.commitments import add_evidence, create_commitment, update_commitment
 from app.electoral.geography import (
     IBGE_GEOMETRY_SOURCE,
     IBGE_LOCALITIES_SOURCE,
@@ -19,14 +22,17 @@ from app.electoral.ingestion import (
 )
 from app.extensions import db
 from app.models import (
+    ElectoralPublicCommitment,
     ExternalAgency,
     LegislativeDraft,
+    Mandate,
     RequestCategory,
     Role,
     ServiceRequest,
     Tenant,
     Territory,
     User,
+    UserStatus,
 )
 from app.outbox.worker import run_worker
 from app.rag.operational_memory import (
@@ -266,6 +272,220 @@ def register_commands(app: Flask) -> None:
         reload_suggested_agencies(existing)
         db.session.commit()
         click.echo(f"Seed do tenant {tenant} aplicado para {email}.")
+
+    @app.cli.command("seed-electoral-commitments-demo")
+    @click.option("--tenant", default="gabinete-demo", show_default=True)
+    def seed_electoral_commitments_demo(tenant: str) -> None:
+        """Cria compromissos territoriais inequivocamente sintéticos para homologação."""
+        tenant_item = db.session.execute(
+            select(Tenant).where(Tenant.slug == tenant)
+        ).scalar_one_or_none()
+        if tenant_item is None:
+            raise click.ClickException("Tenant não encontrado.")
+
+        with tenant_context(tenant_item.id):
+            mandate = db.session.execute(
+                select(Mandate).where(
+                    Mandate.tenant_id == tenant_item.id,
+                    Mandate.status == "ACTIVE",
+                )
+            ).scalar_one_or_none()
+            if mandate is None:
+                raise click.ClickException("Mandato ativo não encontrado.")
+
+            representative = db.session.get(User, mandate.representative_user_id)
+            if representative is None or representative.status != UserStatus.ACTIVE:
+                raise click.ClickException("Parlamentar ativo não encontrado.")
+
+            territories = {
+                item.name: item
+                for item in db.session.scalars(
+                    select(Territory).where(
+                        Territory.tenant_id == tenant_item.id,
+                        Territory.active.is_(True),
+                    )
+                )
+            }
+            required_territories = {"Centro", "Zona Norte", "Zona Sul", "Zona Leste"}
+            missing = sorted(required_territories - territories.keys())
+            if missing:
+                raise click.ClickException(
+                    "Territórios necessários não encontrados: " + ", ".join(missing)
+                )
+
+            active_users = list(
+                db.session.scalars(
+                    select(User)
+                    .where(
+                        User.tenant_id == tenant_item.id,
+                        User.status == UserStatus.ACTIVE,
+                    )
+                    .order_by(User.role.desc(), User.name)
+                )
+            )
+            staff = [item for item in active_users if item.role == Role.STAFF]
+            responsibles = staff or [representative]
+            today = date.today()
+            fixtures = [
+                {
+                    "title": "[DEMO] Revitalização participativa da Praça Central",
+                    "description": (
+                        "Cenário sintético para testar compromisso concluído, evidência "
+                        "pública e marcador cartográfico. Não representa ação real do mandato."
+                    ),
+                    "territory": "Centro",
+                    "responsible": representative,
+                    "due_on": today - timedelta(days=45),
+                    "status": "COMPLETED",
+                    "progress": 100,
+                    "location": (
+                        "Parque Halfeld — ponto público demonstrativo",
+                        -21.7595,
+                        -43.3488,
+                    ),
+                    "evidence": (
+                        "[DEMO] Registro fotográfico de homologação",
+                        "https://example.org/gabflow-demo/praca-central",
+                    ),
+                },
+                {
+                    "title": "[DEMO] Rota segura para acesso a serviços públicos",
+                    "description": (
+                        "Cenário sintético em andamento para validar atualização de progresso, "
+                        "responsável e sincronização tabela–mapa."
+                    ),
+                    "territory": "Zona Norte",
+                    "responsible": responsibles[0],
+                    "due_on": today + timedelta(days=35),
+                    "status": "IN_PROGRESS",
+                    "progress": 60,
+                    "location": ("Praça pública — referência demonstrativa", -21.7005, -43.4370),
+                    "evidence": (
+                        "[DEMO] Relatório parcial de vistoria",
+                        "https://example.org/gabflow-demo/rota-segura",
+                    ),
+                },
+                {
+                    "title": "[DEMO] Painel comunitário de acompanhamento de obras",
+                    "description": (
+                        "Cenário sintético planejado para testar prazo futuro e compromisso "
+                        "ainda sem evidência."
+                    ),
+                    "territory": "Zona Sul",
+                    "responsible": responsibles[min(1, len(responsibles) - 1)],
+                    "due_on": today + timedelta(days=90),
+                    "status": "PLANNED",
+                    "progress": 0,
+                    "location": ("Campus público — referência demonstrativa", -21.7766, -43.3722),
+                },
+                {
+                    "title": "[DEMO] Mutirão de escuta sobre mobilidade de bairro",
+                    "description": (
+                        "Cenário sintético propositalmente vencido para validar alertas e o "
+                        "estado derivado de atraso."
+                    ),
+                    "territory": "Zona Leste",
+                    "responsible": responsibles[min(2, len(responsibles) - 1)],
+                    "due_on": today - timedelta(days=15),
+                    "status": "IN_PROGRESS",
+                    "progress": 35,
+                    "location": (
+                        "Equipamento público — referência demonstrativa",
+                        -21.7500,
+                        -43.3250,
+                    ),
+                },
+                {
+                    "title": "[DEMO] Agenda itinerante de prestação de contas",
+                    "description": (
+                        "Cenário sintético sem coordenadas para validar a contagem de itens não "
+                        "mapeados e sua permanência na tabela."
+                    ),
+                    "territory": "Centro",
+                    "responsible": representative,
+                    "due_on": today + timedelta(days=20),
+                    "status": "IN_PROGRESS",
+                    "progress": 20,
+                },
+                {
+                    "title": "[DEMO] Oficina territorial substituída",
+                    "description": (
+                        "Cenário sintético cancelado para testar filtros e exclusão do mapa "
+                        "operacional sem apagar o histórico."
+                    ),
+                    "territory": "Zona Norte",
+                    "responsible": representative,
+                    "due_on": today + timedelta(days=10),
+                    "status": "CANCELLED",
+                    "progress": 0,
+                },
+            ]
+
+            existing_titles = set(
+                db.session.scalars(
+                    select(ElectoralPublicCommitment.title).where(
+                        ElectoralPublicCommitment.tenant_id == tenant_item.id,
+                        ElectoralPublicCommitment.mandate_id == mandate.id,
+                        ElectoralPublicCommitment.title.in_(
+                            [fixture["title"] for fixture in fixtures]
+                        ),
+                    )
+                )
+            )
+            created = 0
+            for fixture in fixtures:
+                if fixture["title"] in existing_titles:
+                    continue
+                payload = {
+                    "title": fixture["title"],
+                    "description": fixture["description"],
+                    "territory_id": str(territories[fixture["territory"]].id),
+                    "responsible_user_id": str(fixture["responsible"].id),
+                    "due_on": fixture["due_on"].isoformat(),
+                }
+                if location := fixture.get("location"):
+                    payload.update(
+                        {
+                            "public_location_name": location[0],
+                            "latitude": location[1],
+                            "longitude": location[2],
+                            "location_is_public": True,
+                        }
+                    )
+                commitment = create_commitment(
+                    tenant_item.id,
+                    mandate.id,
+                    representative.id,
+                    payload,
+                )
+                update_commitment(
+                    commitment,
+                    representative.id,
+                    {
+                        "status": fixture["status"],
+                        "progress": fixture["progress"],
+                    },
+                )
+                if evidence := fixture.get("evidence"):
+                    add_evidence(
+                        commitment,
+                        representative.id,
+                        {
+                            "title": evidence[0],
+                            "description": (
+                                "Evidência exclusivamente sintética para testes funcionais."
+                            ),
+                            "public_url": evidence[1],
+                            "evidence_date": today.isoformat(),
+                        },
+                    )
+                created += 1
+            db.session.commit()
+
+        click.echo(
+            f"Carga DEMO aplicada em {tenant}: {created} criado(s), "
+            f"{len(fixtures) - created} já existente(s)."
+        )
 
     @app.cli.command("seed-platform-admin")
     @click.option("--email", default="platform@gabflow.local")
