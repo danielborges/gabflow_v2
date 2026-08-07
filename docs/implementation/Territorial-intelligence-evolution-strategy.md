@@ -217,6 +217,15 @@ de confiabilidade, para permitir validação e rollback isolados.
 | 6 | `TERR-5.1-06` Cobertura revisada | interface separa território, aproximação, verificação e pendência | 5.1-03/04 |
 | 7 | `TERR-5.1-07` Telemetria minimizada | funil territorial mensurável sem conteúdo pessoal | contrato de eventos |
 | 8 | `TERR-5.2-01` Comparação temporal | período atual e anterior têm denominadores e método | 5.1 concluído |
+| 9 | `TERR-5.2-02` Tabela e detalhe | seleção acessível mostra métricas, causas e qualidade | 5.2-01 |
+| 10 | `TERR-5.2-03` Navegação para casos | grid abre com filtros preservados e autorizados | 5.2-02 |
+| 11 | `TERR-5.2-04` Alertas investigáveis | exemplos, regra e estado de investigação ficam disponíveis | 5.2-03 |
+| 12 | `TERR-5.3-01` Mapa interativo | mapa e tabela compartilham seleção e contrato | 5.2 concluído |
+| 13 | `TERR-5.3-02` Geocodificador governado | localização real, auditável, limitada e revisável | decisão de provedor |
+| 14 | `TERR-5.3-03` Exportação agregada | arquivo reproduz período, filtros, método e supressão | 5.3-01 |
+| 15 | `TERR-5.4-01` Entidade de ação territorial | insight vincula ação, responsável, prazo e evidência | modelo e migração |
+| 16 | `TERR-5.4-02` Integrações operacionais | tarefa, agenda, visita, roteiro e encaminhamento reutilizam serviços existentes | 5.4-01 |
+| 17 | `TERR-5.4-03` Ciclo de vida do alerta | novo, análise, ação, resolvido e descartado são auditáveis | 5.4-01 |
 
 ### Estado do incremento 5.1
 
@@ -257,17 +266,18 @@ Implementação iniciada em 07/08/2026, cobrindo:
 - visões salvas limitadas e isoladas por tenant e usuário, contendo somente filtros permitidos;
 - evento `INVESTIGACAO_INICIADA` integrado ao funil territorial.
 
-O Gate B depende agora de homologação de usabilidade no Gabinete Demonstração e medição do funil
-com usuários reais.
-| 9 | `TERR-5.2-02` Tabela e detalhe | seleção acessível mostra métricas, causas e qualidade | 5.2-01 |
-| 10 | `TERR-5.2-03` Navegação para casos | grid abre com filtros preservados e autorizados | 5.2-02 |
-| 11 | `TERR-5.2-04` Alertas investigáveis | exemplos, regra e estado de investigação ficam disponíveis | 5.2-03 |
-| 12 | `TERR-5.3-01` Mapa interativo | mapa e tabela compartilham seleção e contrato | 5.2 concluído |
-| 13 | `TERR-5.3-02` Geocodificador governado | localização real, auditável, limitada e revisável | decisão de provedor |
-| 14 | `TERR-5.3-03` Exportação agregada | arquivo reproduz período, filtros, método e supressão | 5.3-01 |
-| 15 | `TERR-5.4-01` Entidade de ação territorial | insight vincula ação, responsável, prazo e evidência | modelo e migração |
-| 16 | `TERR-5.4-02` Integrações operacionais | tarefa, agenda, visita, roteiro e encaminhamento reutilizam serviços existentes | 5.4-01 |
-| 17 | `TERR-5.4-03` Ciclo de vida do alerta | novo, análise, ação, resolvido e descartado são auditáveis | 5.4-01 |
+### Homologação e decisão do Gate B
+
+O Gate B foi **aprovado em 07/08/2026** após homologação navegada no Gabinete Demonstração com
+os perfis `ADMIN`, `MANAGER` e `STAFF`. Foram validados comparação temporal, sincronização entre
+mapa, tabela e painel, ordenação, filtros, visão salva isolada por usuário, drill-down com
+contexto preservado e supressão de pontos/exemplos para `STAFF`.
+
+A homologação encontrou e corrigiu a distribuição temporal correlacionada ao território na
+massa sintética e o carregamento relacional em cascata do painel. Após a otimização, 20
+consultas autenticadas apresentaram mediana de 359,3 ms e P95 de 550,2 ms, abaixo do orçamento
+de 1,5 segundo. A evidência completa está em
+`docs/implementation/Territorial-intelligence-gate-b-homologation.md`.
 
 ### Definition of Done por item
 

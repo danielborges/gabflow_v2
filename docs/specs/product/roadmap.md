@@ -153,9 +153,10 @@
 - **Incremento 5.1 — Confiabilidade territorial:** filtros consistentes no PostGIS e no
   fallback, proveniência e confiança da coordenada, validação da jurisdição, privacidade por
   célula e telemetria de produto.
-- **Incremento 5.2 — Exploração acionável:** comparação temporal, tabela territorial,
-  mapa sincronizado, painel de causas, exemplos autorizados e navegação para Solicitações com
-  filtros preservados.
+- **Incremento 5.2 — Exploração acionável — Gate B aprovado em 07/08/2026:** comparação
+  temporal, tabela territorial, mapa sincronizado, painel de causas, exemplos autorizados e
+  navegação para Solicitações com filtros preservados; homologação navegada concluída nos
+  perfis administrativo, gerencial e operacional, com P95 de 550,2 ms.
 - **Incremento 5.3 — Cartografia e qualidade governadas:** mapa interativo, geocodificador
   governado, fila de correção, versionamento da malha e exportação agregada.
 - **Incremento 5.4 — Operação territorial integrada:** criação e acompanhamento de tarefa,

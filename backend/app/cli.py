@@ -57,6 +57,10 @@ from app.rag.operational_memory import (
     enqueue_operational_memory,
 )
 from app.tenant_context import tenant_context
+from app.territorial_homologation import (
+    TerritorialHomologationError,
+    prepare_territorial_homologation_by_slug,
+)
 from app.territory_suggestions import reload_suggested_territories
 
 
@@ -689,6 +693,26 @@ def register_commands(app: Flask) -> None:
         click.echo(
             f"Carga DEMO aplicada em {tenant}: {created} criado(s), "
             f"{len(fixtures) - created} já existente(s)."
+        )
+
+    @app.cli.command("seed-territorial-homologation")
+    @click.option("--tenant", default="gabinete-demo", show_default=True)
+    def seed_territorial_homologation(tenant: str) -> None:
+        """Prepara uma massa sintética repetível para homologação territorial."""
+        try:
+            summary = prepare_territorial_homologation_by_slug(tenant)
+        except TerritorialHomologationError as error:
+            raise click.ClickException(str(error)) from error
+        statuses = ", ".join(
+            f"{status}={total}"
+            for status, total in summary["geocode_statuses"].items()
+        )
+        click.echo(
+            f"Carga territorial aplicada em {summary['tenant']}: "
+            f"solicitações={summary['requests']}, "
+            f"janelaAtual={summary['current_window']}, "
+            f"janelaAnterior={summary['previous_window']}, "
+            f"célulasInsuficientes={summary['insufficient_cells']}, {statuses}."
         )
 
     @app.cli.command("seed-platform-admin")

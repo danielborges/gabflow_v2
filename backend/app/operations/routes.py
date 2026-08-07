@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 
 from app.audit import add_audit
 from app.auth.permissions import roles_required
@@ -389,6 +390,11 @@ def operational_dashboard():
         db.session.execute(
             select(ServiceRequest)
             .where(ServiceRequest.tenant_id == tenant_id)
+            .options(
+                selectinload(ServiceRequest.interactions),
+                selectinload(ServiceRequest.history),
+                selectinload(ServiceRequest.forwardings),
+            )
             .order_by(ServiceRequest.created_at.desc())
         ).scalars()
     )
