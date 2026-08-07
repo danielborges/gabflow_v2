@@ -75,6 +75,50 @@ describe("cadastro de cidadão", () => {
     expect(window.location.search).not.toContain("letraCidadao");
   });
 
+  it("mantém organizações no mesmo padrão de aba, busca, agenda e formulário embutido", async () => {
+    const organization = {
+      id: "org-1",
+      nome: "Associação Bairro Vivo",
+      tipo: "ASSOCIACAO",
+      contatos: [
+        { tipo: "TELEFONE", valor: "31988776655" },
+        { tipo: "EMAIL", valor: "contato@bairrovivo.org" },
+      ],
+      enderecos: [{ endereco: "Rua das Flores, 10" }],
+      territorio: "Centro",
+      observacoes: "Atendimento comunitário",
+      criadaEm: "2026-08-01T10:00:00Z",
+      atualizadaEm: "2026-08-02T11:00:00Z",
+    };
+    apiRequest.mockImplementation((url) => {
+      if (url === "/api/v1/organizacoes") return Promise.resolve({ content: [organization] });
+      if (url === "/api/v1/organizacoes/org-1") return Promise.resolve(organization);
+      if (url.startsWith("/api/v1/cidadaos?")) return Promise.resolve({ content: [], letrasDisponiveis: [], proximoCursor: null });
+      return Promise.resolve({ content: [] });
+    });
+
+    render(<DirectoryPage />);
+
+    const organizationsTab = screen.getByRole("tab", { name: "Organizações" });
+    expect(organizationsTab).toHaveAttribute("aria-selected", "false");
+    fireEvent.click(organizationsTab);
+
+    expect(organizationsTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Cadastros de organizações" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Buscar organizações" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Editar organização Associação Bairro Vivo" })).toBeInTheDocument();
+    expect(screen.getByText("contato@bairrovivo.org · Associação · Centro")).toBeInTheDocument();
+    expect(screen.getByText("(31) 98877-6655")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar organização Associação Bairro Vivo" }));
+    expect(await screen.findByRole("region", { name: "Editar organização" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Editar organização" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Nova organização" }));
+    expect(screen.getByRole("region", { name: "Cadastrar organização" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Cadastrar organização" })).not.toBeInTheDocument();
+  });
+
   it("aplica a máscara e impede o envio de contatos inválidos", async () => {
     render(<DirectoryPage />);
     await waitFor(() => expect(apiRequest).toHaveBeenCalledTimes(3));

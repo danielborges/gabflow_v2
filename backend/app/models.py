@@ -2680,6 +2680,7 @@ class ServiceRequest(db.Model):
     responsible_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    responsible: Mapped[User | None] = relationship(foreign_keys=[responsible_id])
     duplicate_group_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("duplicate_groups.id", ondelete="SET NULL"), index=True
     )

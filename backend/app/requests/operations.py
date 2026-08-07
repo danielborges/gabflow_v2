@@ -42,6 +42,7 @@ from app.models import (
     UserStatus,
 )
 from app.notifications.service import notify_user
+from app.requests.access import request_visibility_filters
 from app.security.encryption import read_plaintext
 from app.security.malware import malware_scan_state
 
@@ -56,7 +57,7 @@ def _service_request(request_id: uuid.UUID, tenant_id: uuid.UUID) -> ServiceRequ
     return db.session.execute(
         select(ServiceRequest).where(
             ServiceRequest.id == request_id,
-            ServiceRequest.tenant_id == tenant_id,
+            *request_visibility_filters(tenant_id),
         )
     ).scalar_one_or_none()
 

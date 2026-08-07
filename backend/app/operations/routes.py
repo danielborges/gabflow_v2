@@ -34,6 +34,7 @@ from app.models import (
     Tenant,
     Territory,
 )
+from app.requests.access import request_visibility_filters
 
 operations_bp = Blueprint("operations", __name__)
 public_bp = Blueprint("public_requests", __name__)
@@ -60,7 +61,7 @@ def _service_request(request_id: uuid.UUID, tenant_id: uuid.UUID) -> ServiceRequ
     return db.session.execute(
         select(ServiceRequest).where(
             ServiceRequest.id == request_id,
-            ServiceRequest.tenant_id == tenant_id,
+            *request_visibility_filters(tenant_id),
         )
     ).scalar_one_or_none()
 
