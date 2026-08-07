@@ -42,15 +42,24 @@ def test_ollama_electoral_provider_uses_schema_and_restricts_citations(monkeypat
                         ],
                         "leiturasEstrategicas": [
                             {
-                                "texto": "A diferenca territorial sugere investigar presenca publica local.",
+                                "texto": (
+                                    "A diferenca territorial sugere investigar "
+                                    "presenca publica local."
+                                ),
                                 "citacaoIds": ["dataset-1"],
                             }
                         ],
                         "recomendacoes": [
                             {
                                 "titulo": "Escuta territorial",
-                                "acao": "Realize encontros publicos para compreender prioridades locais.",
-                                "justificativa": "A diferenca observada merece validacao qualitativa no territorio.",
+                                "acao": (
+                                    "Realize encontros publicos para compreender "
+                                    "prioridades locais."
+                                ),
+                                "justificativa": (
+                                    "A diferenca observada merece validacao qualitativa "
+                                    "no territorio."
+                                ),
                                 "citacaoIds": ["dataset-1"],
                             }
                         ],

@@ -611,10 +611,14 @@ def _comparison_output(analysis: dict, filters: dict) -> dict:
         )
         opponents = [
             item for item in territory["series"]
-            if item["candidate_id"] != reference_id and reference and item["votes"] > reference["votes"]
+            if item["candidate_id"] != reference_id
+            and reference
+            and item["votes"] > reference["votes"]
         ]
         for opponent in opponents:
-            advantages.append((opponent["votes"] - reference["votes"], territory, opponent, reference))
+            advantages.append(
+                (opponent["votes"] - reference["votes"], territory, opponent, reference)
+            )
         if len(ordered) > 1:
             calculations.append(
                 {
@@ -630,7 +634,8 @@ def _comparison_output(analysis: dict, filters: dict) -> dict:
         facts = [
             {
                 "text": (
-                    f"Comparacao territorial usando {reference_name} como candidatura de referencia."
+                    f"Comparacao territorial usando {reference_name} "
+                    "como candidatura de referencia."
                 ),
                 "citation_ids": [citation_id],
             }
