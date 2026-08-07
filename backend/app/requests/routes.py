@@ -28,6 +28,8 @@ from app.models import (
     RequestCategory,
     RequestHistory,
     RequestInteraction,
+    RequestPriority,
+    RequestSource,
     RequestStatus,
     ServiceRequest,
     Territory,
@@ -160,6 +162,13 @@ def list_requests():
     size = min(max(request.args.get("size", default=20, type=int), 1), 100)
     status = request.args.get("status", type=str)
     search = request.args.get("q", type=str)
+    protocol = request.args.get("protocolo", type=str)
+    request_search = request.args.get("solicitacao", type=str)
+    source = request.args.get("origem", type=str)
+    priority = request.args.get("prioridade", type=str)
+    responsible = request.args.get("responsavel", type=str)
+    sort = request.args.get("sort", default="criadaEm", type=str)
+    direction = request.args.get("direction", default="desc", type=str).lower()
 
     filters = request_visibility_filters(tenant_id, user_id)
     if status:
@@ -176,12 +185,55 @@ def list_requests():
                 ServiceRequest.description.ilike(pattern),
             )
         )
+    if protocol and protocol.strip():
+        filters.append(ServiceRequest.protocol.ilike(f"%{protocol.strip()}%"))
+    if request_search and request_search.strip():
+        pattern = f"%{request_search.strip()}%"
+        filters.append(
+            or_(
+                ServiceRequest.title.ilike(pattern),
+                ServiceRequest.description.ilike(pattern),
+                ServiceRequest.category.ilike(pattern),
+            )
+        )
+    if source:
+        try:
+            filters.append(ServiceRequest.source == RequestSource(source.upper()))
+        except ValueError:
+            return jsonify(error="validation_error", message="Origem inválida."), 422
+    if priority:
+        try:
+            filters.append(ServiceRequest.priority == RequestPriority(priority.upper()))
+        except ValueError:
+            return jsonify(error="validation_error", message="Prioridade inválida."), 422
+    if responsible and responsible.strip():
+        filters.append(User.name.ilike(f"%{responsible.strip()}%"))
 
-    total = db.session.execute(select(func.count(ServiceRequest.id)).where(*filters)).scalar_one()
-    items = db.session.execute(
-        select(ServiceRequest)
+    sort_columns = {
+        "protocolo": ServiceRequest.protocol,
+        "solicitacao": ServiceRequest.title,
+        "origem": ServiceRequest.source,
+        "prioridade": ServiceRequest.priority,
+        "status": ServiceRequest.status,
+        "responsavel": User.name,
+        "criadaEm": ServiceRequest.created_at,
+    }
+    if sort not in sort_columns or direction not in {"asc", "desc"}:
+        return jsonify(error="validation_error", message="Ordenação inválida."), 422
+    sort_expression = getattr(sort_columns[sort], direction)().nulls_last()
+
+    base_query = select(ServiceRequest).outerjoin(
+        User, ServiceRequest.responsible_id == User.id
+    ).where(*filters)
+    total = db.session.execute(
+        select(func.count(ServiceRequest.id))
+        .select_from(ServiceRequest)
+        .outerjoin(User, ServiceRequest.responsible_id == User.id)
         .where(*filters)
-        .order_by(ServiceRequest.created_at.desc())
+    ).scalar_one()
+    items = db.session.execute(
+        base_query
+        .order_by(sort_expression, ServiceRequest.created_at.desc(), ServiceRequest.id)
         .offset(page * size)
         .limit(size)
     ).scalars()

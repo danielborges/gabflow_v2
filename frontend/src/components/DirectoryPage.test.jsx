@@ -55,6 +55,7 @@ describe("cadastro de cidadão", () => {
     expect(screen.getByText("(31) 98414-1102")).toBeInTheDocument();
     expect(screen.getByText(/carla\.m@exemplo\.com · Centro · Arquiteta · Prefere contato por e-mail/)).toBeInTheDocument();
     expect(screen.getByLabelText("Cidadão VIP")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Buscar cidadãos" }).closest(".citizen-agenda")).toBeInTheDocument();
 
     fireEvent.click(enabledLetter);
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining("letra=C")));
@@ -105,7 +106,7 @@ describe("cadastro de cidadão", () => {
 
     expect(organizationsTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel", { name: "Cadastros de organizações" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Buscar organizações" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Buscar organizações" }).closest(".organization-agenda")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Editar organização Associação Bairro Vivo" })).toBeInTheDocument();
     expect(screen.getByText("contato@bairrovivo.org · Associação · Centro")).toBeInTheDocument();
     expect(screen.getByText("(31) 98877-6655")).toBeInTheDocument();

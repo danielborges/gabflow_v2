@@ -208,57 +208,52 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
       </nav>
 
       <section className="directory-tab-panel" role="tabpanel" aria-label={tab === "citizens" ? "Cadastros de cidadãos" : "Cadastros de organizações"}>
-        <div className="directory-tab-toolbar">
-          <label className="toolbar-search">
-            <Search size={18} />
-            {tab === "citizens" ? (
-              <input aria-label="Buscar cidadãos" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Nome ou nome social" />
-            ) : (
-              <input aria-label="Buscar organizações" value={organizationQuery} onChange={(event) => changeOrganizationQuery(event.target.value)} placeholder="Nome, tipo, contato ou território" />
-            )}
-          </label>
-        </div>
-
         {tab === "citizens" ? (
           <section className="directory-list citizen-directory-layout">
           <div className="citizen-agenda" aria-label="Agenda de cidadãos">
             <AlphabetBar entityPlural="cidadãos" availableLetters={availableLetters} selectedLetter={selectedLetter} onChange={changeLetter} />
-            <div className="citizen-agenda-content">
-              {loading ? <div className="table-message">Carregando cadastros...</div> : citizens.length === 0 ? (
-                <div className="empty-state request-empty"><div className="empty-icon"><UserRound size={27} /></div><h2>Nenhum cadastro encontrado</h2><p>{selectedLetter ? `Não há resultados para a letra ${selectedLetter} com os filtros atuais.` : "Use “Novo cidadão” para iniciar o diretório."}</p></div>
-              ) : groupCitizens(citizens).map(([letter, citizensInGroup]) => (
-                <section className="citizen-letter-group" key={letter} aria-labelledby={`letter-${letter}`}>
-                  <h2 id={`letter-${letter}`}>{letter}</h2>
-                  {citizensInGroup.map((item) => {
-                    const summary = citizenCardSummary(item);
-                    return <article
-                      key={item.id}
-                      className={`citizen-agenda-item ${selectedCitizen?.id === item.id ? "selected" : ""}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => editCitizen(item)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          editCitizen(item);
-                        }
-                      }}
-                      aria-label={`Editar cidadão ${item.nome}`}
-                    >
-                      <div className="citizen-card-primary">
-                        <strong>{item.nomeSocial || item.nome}</strong>
-                        {item.nomeSocial && item.nomeSocial !== item.nome && <span>Nome civil: {item.nome}</span>}
-                        <small>{summary.details.join(" · ") || "Cadastro sem informações complementares"}</small>
-                      </div>
-                      <div className="citizen-card-contact">
-                        {item.vip && <Star className="vip-star" size={17} fill="currentColor" aria-label="Cidadão VIP" />}
-                        <strong>{summary.phone || "Sem telefone"}</strong>
-                      </div>
-                    </article>;
-                  })}
-                </section>
-              ))}
-              {nextCursor && <button type="button" className="secondary-button directory-load-more" onClick={loadMoreCitizens} disabled={loadingMore}>{loadingMore ? "Carregando..." : "Carregar mais cidadãos"}</button>}
+            <div className="citizen-agenda-main">
+              <label className="toolbar-search citizen-agenda-search">
+                <Search size={18} />
+                <input aria-label="Buscar cidadãos" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Nome ou nome social" />
+              </label>
+              <div className="citizen-agenda-content">
+                {loading ? <div className="table-message">Carregando cadastros...</div> : citizens.length === 0 ? (
+                  <div className="empty-state request-empty"><div className="empty-icon"><UserRound size={27} /></div><h2>Nenhum cadastro encontrado</h2><p>{selectedLetter ? `Não há resultados para a letra ${selectedLetter} com os filtros atuais.` : "Use “Novo cidadão” para iniciar o diretório."}</p></div>
+                ) : groupCitizens(citizens).map(([letter, citizensInGroup]) => (
+                  <section className="citizen-letter-group" key={letter} aria-labelledby={`letter-${letter}`}>
+                    <h2 id={`letter-${letter}`}>{letter}</h2>
+                    {citizensInGroup.map((item) => {
+                      const summary = citizenCardSummary(item);
+                      return <article
+                        key={item.id}
+                        className={`citizen-agenda-item ${selectedCitizen?.id === item.id ? "selected" : ""}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => editCitizen(item)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            editCitizen(item);
+                          }
+                        }}
+                        aria-label={`Editar cidadão ${item.nome}`}
+                      >
+                        <div className="citizen-card-primary">
+                          <strong>{item.nomeSocial || item.nome}</strong>
+                          {item.nomeSocial && item.nomeSocial !== item.nome && <span>Nome civil: {item.nome}</span>}
+                          <small>{summary.details.join(" · ") || "Cadastro sem informações complementares"}</small>
+                        </div>
+                        <div className="citizen-card-contact">
+                          {item.vip && <Star className="vip-star" size={17} fill="currentColor" aria-label="Cidadão VIP" />}
+                          <strong>{summary.phone || "Sem telefone"}</strong>
+                        </div>
+                      </article>;
+                    })}
+                  </section>
+                ))}
+                {nextCursor && <button type="button" className="secondary-button directory-load-more" onClick={loadMoreCitizens} disabled={loadingMore}>{loadingMore ? "Carregando..." : "Carregar mais cidadãos"}</button>}
+              </div>
             </div>
           </div>
           <div className="citizen-detail-region">
@@ -273,34 +268,40 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
           <section className="directory-list citizen-directory-layout organization-directory-layout">
             <div className="citizen-agenda organization-agenda" aria-label="Agenda de organizações">
               <AlphabetBar entityPlural="organizações" availableLetters={organizationAvailableLetters} selectedLetter={selectedOrganizationLetter} onChange={changeOrganizationLetter} />
-              <div className="citizen-agenda-content">
-                {loading ? <div className="table-message">Carregando cadastros...</div> : organizationItems.length === 0 ? (
-                  <div className="empty-state request-empty"><div className="empty-icon"><Building2 size={27} /></div><h2>Nenhuma organização encontrada</h2><p>{selectedOrganizationLetter ? `Não há resultados para a letra ${selectedOrganizationLetter} com os filtros atuais.` : "Use “Nova organização” para iniciar o diretório."}</p></div>
-                ) : groupOrganizations(organizationItems).map(([letter, organizationsInGroup]) => (
-                  <section className="citizen-letter-group" key={letter} aria-labelledby={`organization-letter-${letter}`}>
-                    <h2 id={`organization-letter-${letter}`}>{letter}</h2>
-                    {organizationsInGroup.map((item) => {
-                      const summary = organizationCardSummary(item);
-                      return <article
-                        key={item.id}
-                        className={`citizen-agenda-item organization-agenda-item ${selectedOrganization?.id === item.id ? "selected" : ""}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => editOrganization(item)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            editOrganization(item);
-                          }
-                        }}
-                        aria-label={`Editar organização ${item.nome}`}
-                      >
-                        <div className="citizen-card-primary"><strong>{item.nome}</strong><small>{summary.details.join(" · ") || "Cadastro sem informações complementares"}</small></div>
-                        <div className="citizen-card-contact"><strong>{summary.phone || "Sem telefone"}</strong></div>
-                      </article>;
-                    })}
-                  </section>
-                ))}
+              <div className="citizen-agenda-main">
+                <label className="toolbar-search citizen-agenda-search">
+                  <Search size={18} />
+                  <input aria-label="Buscar organizações" value={organizationQuery} onChange={(event) => changeOrganizationQuery(event.target.value)} placeholder="Nome, tipo, contato ou território" />
+                </label>
+                <div className="citizen-agenda-content">
+                  {loading ? <div className="table-message">Carregando cadastros...</div> : organizationItems.length === 0 ? (
+                    <div className="empty-state request-empty"><div className="empty-icon"><Building2 size={27} /></div><h2>Nenhuma organização encontrada</h2><p>{selectedOrganizationLetter ? `Não há resultados para a letra ${selectedOrganizationLetter} com os filtros atuais.` : "Use “Nova organização” para iniciar o diretório."}</p></div>
+                  ) : groupOrganizations(organizationItems).map(([letter, organizationsInGroup]) => (
+                    <section className="citizen-letter-group" key={letter} aria-labelledby={`organization-letter-${letter}`}>
+                      <h2 id={`organization-letter-${letter}`}>{letter}</h2>
+                      {organizationsInGroup.map((item) => {
+                        const summary = organizationCardSummary(item);
+                        return <article
+                          key={item.id}
+                          className={`citizen-agenda-item organization-agenda-item ${selectedOrganization?.id === item.id ? "selected" : ""}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => editOrganization(item)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              editOrganization(item);
+                            }
+                          }}
+                          aria-label={`Editar organização ${item.nome}`}
+                        >
+                          <div className="citizen-card-primary"><strong>{item.nome}</strong><small>{summary.details.join(" · ") || "Cadastro sem informações complementares"}</small></div>
+                          <div className="citizen-card-contact"><strong>{summary.phone || "Sem telefone"}</strong></div>
+                        </article>;
+                      })}
+                    </section>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="citizen-detail-region organization-detail-region">
