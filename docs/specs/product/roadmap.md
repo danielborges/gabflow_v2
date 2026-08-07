@@ -143,12 +143,27 @@
 
 ## Release 5 — Inteligência territorial
 
-- Geocodificação.
-- Mapa de calor.
-- Tendências por tema, região e período.
-- Alertas de recorrência.
-- Planejamento de visitas.
-- Relatórios do mandato.
+- **Base entregue:** geocodificação aproximada, mapa de calor, tendências por tema,
+  região e período, alertas de recorrência, filtros operacionais e relatórios do mandato.
+- **Revisão de produto:** a base atual é predominantemente descritiva; a evolução deve
+  priorizar confiança, drill-down e conversão do insight em ação rastreável.
+
+### Evolução planejada — Inteligência territorial acionável
+
+- **Incremento 5.1 — Confiabilidade territorial:** filtros consistentes no PostGIS e no
+  fallback, proveniência e confiança da coordenada, validação da jurisdição, privacidade por
+  célula e telemetria de produto.
+- **Incremento 5.2 — Exploração acionável:** comparação temporal, tabela territorial,
+  mapa sincronizado, painel de causas, exemplos autorizados e navegação para Solicitações com
+  filtros preservados.
+- **Incremento 5.3 — Cartografia e qualidade governadas:** mapa interativo, geocodificador
+  governado, fila de correção, versionamento da malha e exportação agregada.
+- **Incremento 5.4 — Operação territorial integrada:** criação e acompanhamento de tarefa,
+  agenda, visita, roteiro ou encaminhamento a partir de território e alerta.
+- **Incremento 5.5 — Inteligência avançada:** cobertura de visitas, relação com atuação do
+  mandato e previsão com incerteza, condicionadas a gates de qualidade, privacidade e adoção.
+
+Plano detalhado: [`Territorial-intelligence-evolution-strategy.md`](../../implementation/Territorial-intelligence-evolution-strategy.md).
 
 ## Release 6 — Ecossistema e canais
 

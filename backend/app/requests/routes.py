@@ -32,6 +32,7 @@ from app.models import (
     RequestSource,
     RequestStatus,
     ServiceRequest,
+    Tenant,
     Territory,
     User,
     UserStatus,
@@ -94,6 +95,16 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
         "endereco": service_request.address,
         "latitude": service_request.latitude,
         "longitude": service_request.longitude,
+        "qualidadeGeografica": {
+            "origem": service_request.geocode_source,
+            "metodo": service_request.geocode_method,
+            "confianca": service_request.geocode_confidence,
+            "verificada": service_request.geocode_verified,
+            "status": service_request.geocode_status,
+            "atualizadaEm": (
+                service_request.geocoded_at.isoformat() if service_request.geocoded_at else None
+            ),
+        },
         "responsavelId": (
             str(service_request.responsible_id) if service_request.responsible_id else None
         ),
@@ -167,6 +178,12 @@ def list_requests():
     source = request.args.get("origem", type=str)
     priority = request.args.get("prioridade", type=str)
     responsible = request.args.get("responsavel", type=str)
+    category = request.args.get("categoria", type=str)
+    territory_id = request.args.get("territorioId", type=str)
+    agency_id = request.args.get("orgaoId", type=str)
+    starts_on = request.args.get("inicio", type=str)
+    ends_on = request.args.get("fim", type=str)
+    without_territory = str(request.args.get("semTerritorio", "")).lower() == "true"
     sort = request.args.get("sort", default="criadaEm", type=str)
     direction = request.args.get("direction", default="desc", type=str).lower()
 
@@ -208,6 +225,39 @@ def list_requests():
             return jsonify(error="validation_error", message="Prioridade inválida."), 422
     if responsible and responsible.strip():
         filters.append(User.name.ilike(f"%{responsible.strip()}%"))
+    if category and category.strip():
+        filters.append(ServiceRequest.category == category.strip())
+    try:
+        if starts_on:
+            start_date = datetime.fromisoformat(starts_on).date()
+            filters.append(
+                ServiceRequest.created_at
+                >= datetime.combine(start_date, datetime.min.time(), tzinfo=UTC)
+            )
+        if ends_on:
+            end_date = datetime.fromisoformat(ends_on).date() + timedelta(days=1)
+            filters.append(
+                ServiceRequest.created_at
+                < datetime.combine(end_date, datetime.min.time(), tzinfo=UTC)
+            )
+        territory_uuid = uuid.UUID(territory_id) if territory_id else None
+        agency_uuid = uuid.UUID(agency_id) if agency_id else None
+    except ValueError:
+        return jsonify(error="validation_error", message="Filtro territorial inválido."), 422
+    if starts_on and ends_on and start_date > datetime.fromisoformat(ends_on).date():
+        return jsonify(error="validation_error", message="Período territorial inválido."), 422
+    if territory_uuid:
+        territory = _tenant_entity(Territory, territory_uuid, tenant_id)
+        if territory is None:
+            return jsonify(error="validation_error", message="Território inválido."), 422
+        filters.append(ServiceRequest.territory_id == territory_uuid)
+    elif without_territory:
+        filters.append(ServiceRequest.territory_id.is_(None))
+    if agency_uuid:
+        agency = _tenant_entity(ExternalAgency, agency_uuid, tenant_id)
+        if agency is None:
+            return jsonify(error="validation_error", message="Órgão inválido."), 422
+        filters.append(ServiceRequest.agency_id == agency_uuid)
 
     sort_columns = {
         "protocolo": ServiceRequest.protocol,
@@ -301,6 +351,18 @@ def create_request():
         public_access_key_hash=hashlib.sha256(public_key.encode()).hexdigest(),
         **values,
     )
+    if service_request.latitude is not None and service_request.longitude is not None:
+        tenant = db.session.get(Tenant, tenant_id)
+        service_request.geocode_source = "REQUEST_FORM"
+        service_request.geocode_method = "MANUAL_INPUT"
+        service_request.geocode_confidence = 0.8
+        service_request.geocode_verified = False
+        service_request.geocode_status = (
+            "OUTSIDE_JURISDICTION"
+            if _outside_jurisdiction_bounds(service_request, tenant)
+            else "APPROXIMATE"
+        )
+        service_request.geocoded_at = now
     if category:
         service_request.category = category.name
     db.session.add(service_request)
@@ -328,6 +390,25 @@ def create_request():
     response = _serialize(service_request, include_details=True)
     response["chaveAcompanhamento"] = public_key
     return jsonify(response), 201
+
+
+def _outside_jurisdiction_bounds(
+    service_request: ServiceRequest, tenant: Tenant | None
+) -> bool:
+    bounds = tenant.jurisdiction_bounds if tenant else None
+    if not isinstance(bounds, dict):
+        return False
+    try:
+        return not (
+            float(bounds["minLatitude"])
+            <= float(service_request.latitude)
+            <= float(bounds["maxLatitude"])
+            and float(bounds["minLongitude"])
+            <= float(service_request.longitude)
+            <= float(bounds["maxLongitude"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 @requests_bp.get("/solicitacoes/<uuid:request_id>")

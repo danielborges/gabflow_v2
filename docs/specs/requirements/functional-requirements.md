@@ -95,11 +95,23 @@
 - **RF-080** Exibir volume por status, categoria, bairro, canal e período. **Implementado na Release 5.**
 - **RF-081** Exibir tempo médio de triagem, primeira resposta e resolução. **Implementado parcialmente na Release 5 com primeira resposta, encaminhamento, encerramento e resolução.**
 - **RF-082** Exibir taxa de reabertura e reincidência. **Implementado na Release 5 com contagem de reaberturas e alertas de reincidência.**
-- **RF-083** Exibir mapa de calor. **Implementado na Release 5.**
-- **RF-084** Permitir filtros e exportação. **Filtros implementados na Release 5; exportação pendente.**
+- **RF-083** Exibir mapa de calor. **Base implementada na Release 5; consistência integral dos filtros, interação e drill-down planejados para os incrementos 5.1 e 5.2.**
+- **RF-084** Permitir filtros e exportação. **Filtros básicos implementados na Release 5; contrato analítico único e exportação agregada permanecem planejados para 5.1 e 5.3.**
 - **RF-085** Gerar relatório mensal do mandato. **Implementado na Release 5.**
 - **RF-086** Exibir indicadores por órgão destinatário. **Implementado na Release 5.**
 - **RF-087** Exibir solicitações sem retorno ou próximas do prazo. **Implementado na Release 5 para prazos, retornos e fila prioritária.**
+- **RF-TERR-001** Aplicar o mesmo contexto de tenant, período, comparação, categoria, canal, território, órgão, status, prioridade e responsável a todas as métricas, rankings, pontos e células do painel territorial.
+- **RF-TERR-002** Diferenciar território identificado, coordenada aproximada e coordenada verificada, expondo fonte, método, confiança e data de atualização sem tratar aproximação como verificação.
+- **RF-TERR-003** Validar coordenadas contra a jurisdição configurada e encaminhar endereços não resolvidos, ambíguos ou externos para revisão autorizada.
+- **RF-TERR-004** Permitir selecionar território, hotspot ou alerta e abrir as solicitações subjacentes autorizadas com período e filtros preservados. **Implementado no incremento 5.2 para território, hotspot e exemplos autorizados.**
+- **RF-TERR-005** Exibir comparação com período anterior equivalente, incluindo base, janela, método, tamanho da amostra e estado de amostra insuficiente. **Implementado no incremento 5.2.**
+- **RF-TERR-006** Disponibilizar tabela territorial acessível e funcionalmente equivalente ao mapa, com volume, atraso, solução, tempos, tendência e qualidade do dado. **Implementado no incremento 5.2.**
+- **RF-TERR-007** Permitir criar tarefa, agenda, visita, roteiro ou encaminhamento a partir de um território ou alerta, preservando proveniência, responsável, prazo, estado e evidência.
+- **RF-TERR-008** Controlar o ciclo de vida de alertas territoriais nos estados novo, em análise, com ação, resolvido e descartado com justificativa.
+- **RF-TERR-009** Restringir agregados, exemplos, protocolos, pontos e exportações por permissão e limiar de privacidade calculado no menor recorte retornado.
+- **RF-TERR-010** Permitir salvar visões territoriais e configurar notificações por território, tema, severidade e frequência sem registrar conteúdo pessoal na telemetria. **Visões salvas implementadas no incremento 5.2; notificações permanecem no 5.4.**
+- **RF-TERR-011** Exportar somente dados territoriais agregados e autorizados, incluindo período, filtros, método, qualidade e regras de supressão.
+- **RF-TERR-012** Registrar telemetria minimizada do funil de abertura, filtragem, investigação e ação para medir utilidade da feature sem armazenar termos, protocolos ou coordenadas.
 
 ## Administração
 

@@ -88,7 +88,7 @@ const attachmentMimeTypes = [
 ];
 const maximumAttachmentBytes = 15 * 1024 * 1024;
 
-export function RequestsPage({ user, initialSearch = "", initialCitizenId, initialRequestId, onInitialContextConsumed }) {
+export function RequestsPage({ user, initialSearch = "", initialFilters, initialCitizenId, initialRequestId, onInitialContextConsumed, onInitialFiltersConsumed }) {
   const readOnly = user?.role === "representative";
   const canDistribute = user?.role === "admin" || user?.role === "representative" || user?.chefeGabinete === true;
   const [items, setItems] = useState([]);
@@ -111,6 +111,7 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
   const [showCreate, setShowCreate] = useState(false);
   const [createCitizenId, setCreateCitizenId] = useState("");
   const [selected, setSelected] = useState(null);
+  const [territorialFilters, setTerritorialFilters] = useState({});
 
   useEffect(() => {
     if (initialSearch) {
@@ -118,6 +119,16 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
       setColumnFilters((current) => ({ ...current, protocolo: initialSearch }));
     }
   }, [initialSearch]);
+
+  useEffect(() => {
+    if (!initialFilters) return;
+    setPage(0);
+    setTerritorialFilters(initialFilters);
+    if (initialFilters.canal) {
+      setColumnFilters((current) => ({ ...current, origem: initialFilters.canal }));
+    }
+    onInitialFiltersConsumed?.();
+  }, [initialFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialCitizenId && !readOnly) {
@@ -141,6 +152,10 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
     Object.entries(columnFilters).forEach(([key, value]) => {
       if (value.trim()) params.set(key, value.trim());
     });
+    Object.entries(territorialFilters).forEach(([key, value]) => {
+      if (!value || key === "canal") return;
+      params.set(key, String(value));
+    });
     try {
       const data = await apiRequest(`/api/v1/solicitacoes?${params}`);
       setItems(data.content || []);
@@ -151,7 +166,7 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
     } finally {
       setLoading(false);
     }
-  }, [columnFilters, page, pageSize, sort, status]);
+  }, [columnFilters, page, pageSize, sort, status, territorialFilters]);
 
   const loadReferences = useCallback(async () => {
     try {
@@ -221,6 +236,10 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
       </section>
 
       <section className="request-list" aria-live="polite">
+        {Object.keys(territorialFilters).length > 0 && <div className="territorial-request-context">
+          <span><strong>Recorte territorial aplicado</strong><small>{territorialFilterSummary(territorialFilters)}</small></span>
+          <button className="secondary-button compact" onClick={() => { setTerritorialFilters({}); setColumnFilters((current) => ({ ...current, origem: "" })); }}>Limpar recorte</button>
+        </div>}
         <div className="request-grid-summary">
           <span>{loading ? "Consultando solicitações..." : `${totalElements} ${totalElements === 1 ? "registro" : "registros"}`}</span>
           <label>
@@ -2134,4 +2153,15 @@ function entityEntries(entities = {}) {
       .filter(Boolean)
       .map((item) => [labels[key] || key, String(item)]);
   });
+}
+
+function territorialFilterSummary(filters) {
+  const parts = [];
+  if (filters.inicio && filters.fim) parts.push(`${filters.inicio} a ${filters.fim}`);
+  if (filters.categoria) parts.push(filters.categoria);
+  if (filters.canal) parts.push(filters.canal);
+  if (filters.territorioId) parts.push("território selecionado");
+  if (filters.semTerritorio) parts.push("sem território");
+  if (filters.orgaoId) parts.push("órgão selecionado");
+  return parts.join(" · ") || "Filtros preservados da Inteligência Territorial";
 }

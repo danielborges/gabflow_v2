@@ -125,11 +125,13 @@ Especificação evolutiva do diretório: `features/cadastro-cidadaos-organizacoe
 - Identificação de precedentes.
 
 ### Fase 4 — Inteligência territorial e estratégica
-- Mapas de calor.
-- Tendências.
-- Demandas reincidentes.
-- Alertas de anomalia.
-- Planejamento de visitas e ações.
+- Base de mapas de calor, tendências, recorrências e alertas entregue na Release 5.
+- Confiabilidade territorial e proveniência das coordenadas antes de novas inferências.
+- Exploração com comparação temporal e acesso aos casos subjacentes.
+- Conversão de hotspots e alertas em tarefas, agenda, visitas e encaminhamentos rastreáveis.
+- Cartografia governada, qualidade cadastral e inteligência avançada condicionadas a gates.
+
+Estratégia vigente: [`Territorial-intelligence-evolution-strategy.md`](../implementation/Territorial-intelligence-evolution-strategy.md).
 
 ## Convenções
 

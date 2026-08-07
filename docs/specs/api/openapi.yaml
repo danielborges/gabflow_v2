@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GabFlow API
-  version: 0.7.0
+  version: 0.9.0
   description: API principal para gestão de gabinetes municipais.
 servers:
   - url: https://api.gabflow.example/api/v1
@@ -212,16 +212,13 @@ paths:
           name: status
           schema:
             type: string
-        - in: query
-          name: categoriaId
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: bairroId
-          schema:
-            type: string
-            format: uuid
+        - { in: query, name: categoria, schema: { type: string } }
+        - { in: query, name: origem, schema: { type: string } }
+        - { in: query, name: territorioId, schema: { type: string, format: uuid } }
+        - { in: query, name: semTerritorio, schema: { type: boolean } }
+        - { in: query, name: orgaoId, schema: { type: string, format: uuid } }
+        - { in: query, name: inicio, schema: { type: string, format: date } }
+        - { in: query, name: fim, schema: { type: string, format: date } }
         - in: query
           name: page
           schema:
@@ -242,6 +239,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SolicitacaoPage"
+        "422": { $ref: "#/components/responses/ValidationError" }
     post:
       summary: Cria uma solicitação
       operationId: criarSolicitacao
@@ -484,9 +482,67 @@ paths:
         "403": { description: Chave inválida }
   /painel/operacional:
     get:
-      summary: Retorna indicadores e fila prioritária do tenant
+      summary: Retorna indicadores, fila e inteligência territorial do tenant
+      parameters:
+        - { in: query, name: inicio, schema: { type: string, format: date } }
+        - { in: query, name: fim, schema: { type: string, format: date } }
+        - { in: query, name: categoria, schema: { type: string } }
+        - { in: query, name: canal, schema: { type: string } }
+        - { in: query, name: territorioId, schema: { type: string, format: uuid } }
+        - { in: query, name: orgaoId, schema: { type: string, format: uuid } }
+        - in: query
+          name: granularidade
+          schema: { type: string, enum: [dia, mes], default: dia }
       responses:
-        "200": { description: Painel operacional }
+        "200":
+          description: Painel com o mesmo recorte aplicado a métricas, hotspots, pontos e heatmap
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/geocodificar:
+    post:
+      summary: Geocodifica pendências usando a jurisdição governada do tenant
+      responses:
+        "200": { description: Resultado do processamento territorial }
+        "422":
+          description: Jurisdição não configurada ou entrada territorial inválida
+  /painel/territorial/metricas-fluxo:
+    post:
+      summary: Registra telemetria minimizada da jornada territorial
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evento]
+              properties:
+                evento:
+                  type: string
+                  enum: [ABA_ABERTA, FILTRO_APLICADO, INVESTIGACAO_INICIADA, ACAO_INICIADA]
+                quantidadeFiltros:
+                  type: integer
+                  minimum: 0
+                  maximum: 7
+      responses:
+        "204": { description: Evento registrado sem PII }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/visoes:
+    get:
+      summary: Lista as visões territoriais salvas pelo usuário autenticado
+      responses:
+        "200": { description: Visões do usuário no tenant atual }
+    post:
+      summary: Salva ou atualiza uma visão territorial sem conteúdo pessoal
+      responses:
+        "201": { description: Visão salva }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/visoes/{id}:
+    delete:
+      summary: Remove uma visão territorial do usuário autenticado
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204": { description: Visão removida }
+        "404": { description: Visão não encontrada para o usuário e tenant }
   /anexos/{id}/download:
     get:
       summary: Baixa um anexo por token temporário assinado

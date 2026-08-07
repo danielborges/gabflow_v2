@@ -49,6 +49,29 @@ describe("RequestsPage", () => {
     });
   });
 
+  it("preserva o recorte recebido da inteligência territorial", async () => {
+    const consumed = vi.fn();
+    render(<RequestsPage
+      initialFilters={{
+        inicio: "2026-07-09",
+        fim: "2026-08-07",
+        territorioId: "territory-1",
+        canal: "WHATSAPP",
+      }}
+      onInitialFiltersConsumed={consumed}
+    />);
+    expect(await screen.findByText("Recorte territorial aplicado")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiRequest.mock.calls.some(([url]) => {
+        const value = String(url);
+        return value.includes("territorioId=territory-1")
+          && value.includes("inicio=2026-07-09")
+          && value.includes("origem=WHATSAPP");
+      })).toBe(true);
+    });
+    expect(consumed).toHaveBeenCalled();
+  });
+
   it("abre o formulário de nova solicitação", () => {
     render(<RequestsPage />);
     fireEvent.click(screen.getByRole("button", { name: "Nova solicitação" }));

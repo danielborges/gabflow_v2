@@ -5,6 +5,7 @@ from calendar import monthrange
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from math import cos, pi, sin
+from statistics import median
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
@@ -32,7 +33,9 @@ from app.models import (
     ServiceRequest,
     TaskStatus,
     Tenant,
+    TerritorialSavedView,
     Territory,
+    User,
 )
 from app.requests.access import request_visibility_filters
 
@@ -389,8 +392,13 @@ def operational_dashboard():
             .order_by(ServiceRequest.created_at.desc())
         ).scalars()
     )
-    filters = _dashboard_filters(request.args)
+    try:
+        filters = _dashboard_filters(request.args)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
     items = _apply_dashboard_filters(all_items, filters)
+    comparison_filters = _comparison_dashboard_filters(filters)
+    comparison_items = _apply_dashboard_filters(all_items, comparison_filters)
     open_items = [item for item in items if item.status not in CLOSED_STATUSES]
     overdue = [item for item in open_items if item.due_at and _utc(item.due_at) < now]
     near_due = [
@@ -411,6 +419,19 @@ def operational_dashboard():
             select(ExternalAgency).where(ExternalAgency.tenant_id == tenant_id)
         ).scalars()
     }
+    responsible_names = {
+        item.id: item.name
+        for item in db.session.execute(
+            select(User).where(User.tenant_id == tenant_id)
+        ).scalars()
+    }
+    if filters["territorioId"] and filters["territorioId"] not in territory_names:
+        return (
+            jsonify(error="validation_error", message="TerritÃ³rio invÃ¡lido para o gabinete."),
+            422,
+        )
+    if filters["orgaoId"] and filters["orgaoId"] not in agency_names:
+        return jsonify(error="validation_error", message="Ã“rgÃ£o invÃ¡lido para o gabinete."), 422
     tenant = db.session.get(Tenant, tenant_id)
     filtered_request_ids = {item.id for item in items}
     pending_tasks = list(db.session.execute(
@@ -516,9 +537,26 @@ def operational_dashboard():
             for item in active_returns[:10]
         ],
         territorial=_territorial_dashboard(
-            tenant_id, tenant, items, open_items, overdue, territory_names
+            tenant_id,
+            tenant,
+            items,
+            open_items,
+            overdue,
+            territory_names,
+            agency_names,
+            responsible_names,
+            filters,
+            comparison_filters,
+            comparison_items,
+            can_view_points=get_jwt().get("role") in {"admin", "manager"},
         ),
-        alertasDemanda=_demand_alerts(items, now, overdue, territory_names),
+        alertasDemanda=_demand_alerts(
+            items,
+            now,
+            overdue,
+            territory_names,
+            can_view_examples=get_jwt().get("role") in {"admin", "manager"},
+        ),
     )
 
 
@@ -613,14 +651,122 @@ def monthly_mandate_report():
         evidencias=_monthly_evidence(
             touched_items, starts_at, ends_at, territory_names, agency_names
         ),
-        alertas=_demand_alerts(touched_items, ends_at, overdue, territory_names),
+        alertas=_demand_alerts(
+            touched_items,
+            ends_at,
+            overdue,
+            territory_names,
+            can_view_examples=get_jwt().get("role") in {"admin", "manager"},
+        ),
     )
+
+
+@operations_bp.get("/painel/territorial/visoes")
+@jwt_required()
+def list_territorial_saved_views():
+    tenant_id, user_id = _context()
+    items = db.session.execute(
+        select(TerritorialSavedView)
+        .where(
+            TerritorialSavedView.tenant_id == tenant_id,
+            TerritorialSavedView.user_id == user_id,
+        )
+        .order_by(TerritorialSavedView.name)
+    ).scalars()
+    return jsonify(content=[_saved_view_data(item) for item in items])
+
+
+@operations_bp.post("/painel/territorial/visoes")
+@jwt_required()
+def save_territorial_view():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("nome", "")).strip()
+    if not 2 <= len(name) <= 80:
+        return (
+            jsonify(
+                error="validation_error", message="Informe um nome entre 2 e 80 caracteres."
+            ),
+            422,
+        )
+    try:
+        filters = _dashboard_filters(payload.get("filtros") or {})
+        _validate_dashboard_entity_filters(tenant_id, filters)
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    item = db.session.execute(
+        select(TerritorialSavedView).where(
+            TerritorialSavedView.tenant_id == tenant_id,
+            TerritorialSavedView.user_id == user_id,
+            TerritorialSavedView.name == name,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        count = db.session.execute(
+            select(TerritorialSavedView).where(
+                TerritorialSavedView.tenant_id == tenant_id,
+                TerritorialSavedView.user_id == user_id,
+            )
+        ).scalars().all()
+        if len(count) >= 10:
+            return (
+                jsonify(
+                    error="validation_error", message="Limite de 10 visões salvas atingido."
+                ),
+                422,
+            )
+        item = TerritorialSavedView(tenant_id=tenant_id, user_id=user_id, name=name)
+        db.session.add(item)
+    item.filters = _serialize_dashboard_filters(filters)
+    db.session.flush()
+    add_audit(
+        tenant_id,
+        user_id,
+        "territorial.saved_view.saved",
+        "territorial_saved_view",
+        item.id,
+        after={"nome": name, "camposFiltro": sorted(item.filters)},
+    )
+    db.session.commit()
+    return jsonify(_saved_view_data(item)), 201
+
+
+@operations_bp.delete("/painel/territorial/visoes/<uuid:view_id>")
+@jwt_required()
+def delete_territorial_saved_view(view_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.execute(
+        select(TerritorialSavedView).where(
+            TerritorialSavedView.id == view_id,
+            TerritorialSavedView.tenant_id == tenant_id,
+            TerritorialSavedView.user_id == user_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Visão territorial não encontrada."), 404
+    add_audit(
+        tenant_id,
+        user_id,
+        "territorial.saved_view.deleted",
+        "territorial_saved_view",
+        item.id,
+        before={"nome": item.name},
+    )
+    db.session.delete(item)
+    db.session.commit()
+    return "", 204
 
 
 @operations_bp.post("/painel/territorial/geocodificar")
 @roles_required("admin", "manager", "staff")
 def geocode_pending_requests():
     tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    if not _has_jurisdiction_reference(tenant):
+        return jsonify(
+            error="jurisdiction_not_configured",
+            message="Configure o centro ou os limites da jurisdiÃ§Ã£o antes de geocodificar.",
+        ), 422
     territory_names = {
         item.id: item.name
         for item in db.session.execute(
@@ -641,9 +787,31 @@ def geocode_pending_requests():
         reference = _geocode_reference(item, territory_names)
         if not reference:
             continue
-        latitude, longitude = _local_coordinates(reference)
+        latitude, longitude = _local_coordinates(reference, tenant)
+        if (
+            not _coordinates_in_jurisdiction(latitude, longitude, tenant)
+            and tenant.jurisdiction_center_latitude is not None
+            and tenant.jurisdiction_center_longitude is not None
+            and _coordinates_in_jurisdiction(
+                tenant.jurisdiction_center_latitude,
+                tenant.jurisdiction_center_longitude,
+                tenant,
+            )
+        ):
+            latitude = tenant.jurisdiction_center_latitude
+            longitude = tenant.jurisdiction_center_longitude
         item.latitude = latitude
         item.longitude = longitude
+        item.geocode_source = "TENANT_JURISDICTION"
+        item.geocode_method = "LOCAL_APPROXIMATE"
+        item.geocode_confidence = 0.45
+        item.geocode_verified = False
+        item.geocode_status = (
+            "APPROXIMATE"
+            if _coordinates_in_jurisdiction(latitude, longitude, tenant)
+            else "OUTSIDE_JURISDICTION"
+        )
+        item.geocoded_at = datetime.now(UTC)
         item.history.append(
             RequestHistory(
                 tenant_id=tenant_id,
@@ -653,6 +821,7 @@ def geocode_pending_requests():
                     "latitude": {"antes": None, "depois": latitude},
                     "longitude": {"antes": None, "depois": longitude},
                     "metodo": {"antes": None, "depois": "LOCAL_APROXIMADO"},
+                    "statusGeografico": {"antes": "UNRESOLVED", "depois": item.geocode_status},
                 },
             )
         )
@@ -676,6 +845,38 @@ def geocode_pending_requests():
         pendentes=max(len(items) - len(updated), 0),
         metodo="LOCAL_APROXIMADO",
     )
+
+
+@operations_bp.post("/painel/territorial/metricas-fluxo")
+@jwt_required()
+def record_territorial_flow_metric():
+    tenant_id, user_id = _context()
+    payload = request.get_json(silent=True) or {}
+    metric = str(payload.get("evento", "")).upper()
+    allowed = {
+        "ABA_ABERTA",
+        "FILTRO_APLICADO",
+        "INVESTIGACAO_INICIADA",
+        "ACAO_INICIADA",
+    }
+    if metric not in allowed:
+        return jsonify(error="validation_error", message="Evento territorial invÃ¡lido."), 422
+    try:
+        filter_count = int(payload.get("quantidadeFiltros", 0))
+    except (TypeError, ValueError):
+        return jsonify(error="validation_error", message="Quantidade de filtros invÃ¡lida."), 422
+    if not 0 <= filter_count <= 7:
+        return jsonify(error="validation_error", message="Quantidade de filtros invÃ¡lida."), 422
+    add_audit(
+        tenant_id,
+        user_id,
+        f"territorial.flow.{metric.lower()}",
+        "territorial_flow",
+        None,
+        after={"quantidadeFiltros": filter_count},
+    )
+    db.session.commit()
+    return "", 204
 
 
 @public_bp.get("/publico/solicitacoes/<protocol>")
@@ -717,11 +918,25 @@ def _territorial_dashboard(
     open_items: list[ServiceRequest],
     overdue: list[ServiceRequest],
     territory_names: dict,
+    agency_names: dict,
+    responsible_names: dict,
+    filters: dict,
+    comparison_filters: dict,
+    comparison_items: list[ServiceRequest],
+    can_view_points: bool = False,
 ) -> dict:
-    geocoded = [
+    coordinate_items = [
         item for item in items if item.latitude is not None and item.longitude is not None
     ]
+    geocoded = [
+        item for item in coordinate_items if _location_status(item) in {"APPROXIMATE", "VERIFIED"}
+    ]
     coverage = round((len(geocoded) / len(items)) * 100, 1) if items else 0
+    identified = sum(item.territory_id is not None for item in items)
+    approximate = sum(_location_status(item) == "APPROXIMATE" for item in items)
+    verified = sum(_location_status(item) == "VERIFIED" for item in items)
+    ambiguous = sum(_location_status(item) == "AMBIGUOUS" for item in items)
+    outside = sum(_location_status(item) == "OUTSIDE_JURISDICTION" for item in items)
     overdue_ids = {item.id for item in overdue}
     open_ids = {item.id for item in open_items}
     territory_metrics: dict[str, dict] = {}
@@ -730,6 +945,7 @@ def _territorial_dashboard(
         metric = territory_metrics.setdefault(
             name,
             {
+                "id": str(item.territory_id) if item.territory_id else None,
                 "nome": name,
                 "total": 0,
                 "abertas": 0,
@@ -737,6 +953,8 @@ def _territorial_dashboard(
                 "geocodificadas": 0,
                 "latitude": None,
                 "longitude": None,
+                "somaLatitude": 0.0,
+                "somaLongitude": 0.0,
             },
         )
         metric["total"] += 1
@@ -744,16 +962,15 @@ def _territorial_dashboard(
         metric["atrasadas"] += int(item.id in overdue_ids)
         if item.latitude is not None and item.longitude is not None:
             metric["geocodificadas"] += 1
-            metric["latitude"] = (
-                item.latitude
-                if metric["latitude"] is None
-                else round((metric["latitude"] + item.latitude) / 2, 6)
+            metric["somaLatitude"] += item.latitude
+            metric["somaLongitude"] += item.longitude
+            metric["latitude"] = round(metric["somaLatitude"] / metric["geocodificadas"], 6)
+            metric["longitude"] = round(
+                metric["somaLongitude"] / metric["geocodificadas"], 6
             )
-            metric["longitude"] = (
-                item.longitude
-                if metric["longitude"] is None
-                else round((metric["longitude"] + item.longitude) / 2, 6)
-            )
+    for metric in territory_metrics.values():
+        metric.pop("somaLatitude", None)
+        metric.pop("somaLongitude", None)
     points = [
         {
             "id": str(item.id),
@@ -762,9 +979,11 @@ def _territorial_dashboard(
             "status": item.status.value,
             "categoria": item.category,
             "territorio": territory_names.get(item.territory_id, "Sem território"),
+            "territorioId": str(item.territory_id) if item.territory_id else None,
             "latitude": item.latitude,
             "longitude": item.longitude,
             "atrasada": item.id in overdue_ids,
+            "qualidade": _location_status(item),
         }
         for item in geocoded
     ]
@@ -773,27 +992,295 @@ def _territorial_dashboard(
         key=lambda item: (item["abertas"], item["atrasadas"], item["total"]),
         reverse=True,
     )
-    private_points = _privacy_points(points, territory_metrics)
+    cell_safe_points = _privacy_points(points)
+    private_points = cell_safe_points if can_view_points else []
     private_hotspots = [
         item for item in hotspots if item["total"] >= MIN_ANALYTICS_GROUP_SIZE
     ]
-    postgis = _postgis_heatmap(tenant_id)
-    heatmap = postgis if postgis is not None else _local_heatmap(private_points)
+    postgis = _postgis_heatmap(tenant_id, {item.id for item in geocoded})
+    heatmap = postgis if postgis is not None else _local_heatmap(cell_safe_points)
+    comparison = _territorial_comparison(
+        items,
+        comparison_items,
+        overdue_ids,
+        territory_names,
+        agency_names,
+        responsible_names,
+        filters,
+        comparison_filters,
+        can_view_points,
+    )
     return {
         "metodo": "POSTGIS" if postgis is not None else "LOCAL_APROXIMADO",
+        "versaoMetodo": "5.2",
+        "geradoEm": datetime.now(UTC).isoformat(),
+        "filtrosAplicados": {
+            "inicio": filters["inicio"].isoformat() if filters["inicio"] else None,
+            "fim": filters["fim"].isoformat() if filters["fim"] else None,
+            "categoria": filters["categoria"],
+            "canal": filters["canal"],
+            "territorioId": str(filters["territorioId"]) if filters["territorioId"] else None,
+            "orgaoId": str(filters["orgaoId"]) if filters["orgaoId"] else None,
+            "granularidade": filters["granularidade"],
+        },
         "jurisdicao": _jurisdiction_data(tenant),
         "coberturaPercentual": coverage,
         "geocodificadas": len(geocoded),
-        "semCoordenadas": max(len(items) - len(geocoded), 0),
+        "semCoordenadas": max(len(items) - len(coordinate_items), 0),
+        "qualidadeDados": {
+            "total": len(items),
+            "territorioIdentificado": identified,
+            "territorioIdentificadoPercentual": (
+                round((identified / len(items)) * 100, 1) if items else 0
+            ),
+            "coordenadasAproximadas": approximate,
+            "coordenadasVerificadas": verified,
+            "coordenadasAmbiguas": ambiguous,
+            "foraDaJurisdicao": outside,
+            "semCoordenadas": max(len(items) - len(coordinate_items), 0),
+        },
         "privacidade": {
             "minimoPorGrupo": MIN_ANALYTICS_GROUP_SIZE,
             "pontosSuprimidos": max(len(points) - len(private_points), 0),
             "hotspotsSuprimidos": max(len(hotspots) - len(private_hotspots), 0),
+            "visualizacaoPontosPermitida": can_view_points,
         },
         "pontos": private_points[:200],
         "hotspots": private_hotspots[:8],
         "heatmap": heatmap,
+        "comparacao": comparison["resumo"],
+        "tabelaTerritorial": comparison["territorios"],
     }
+
+
+def _territorial_comparison(
+    items: list[ServiceRequest],
+    comparison_items: list[ServiceRequest],
+    overdue_ids: set[uuid.UUID],
+    territory_names: dict,
+    agency_names: dict,
+    responsible_names: dict,
+    filters: dict,
+    comparison_filters: dict,
+    can_view_examples: bool,
+) -> dict:
+    current_groups = _group_requests_by_territory(items, territory_names)
+    comparison_groups = _group_requests_by_territory(comparison_items, territory_names)
+    alert_items = _recurrent_demands(
+        items,
+        datetime.now(UTC),
+        overdue_ids,
+        territory_names,
+        can_view_examples,
+    )
+    alerts_by_territory: dict[str, list[dict]] = {}
+    for alert in alert_items:
+        alerts_by_territory.setdefault(alert["territorio"], []).append(alert)
+
+    rows = []
+    for key, current_group in current_groups.items():
+        if len(current_group) < MIN_ANALYTICS_GROUP_SIZE:
+            continue
+        previous_group = comparison_groups.get(key, [])
+        current_metrics = _territorial_period_metrics(current_group, overdue_ids)
+        comparison_cutoff = datetime.combine(
+            comparison_filters["fim"] + timedelta(days=1), datetime.min.time(), tzinfo=UTC
+        )
+        previous_overdue_ids = {
+            item.id
+            for item in previous_group
+            if item.status not in CLOSED_STATUSES
+            and item.due_at
+            and _utc(item.due_at) < comparison_cutoff
+        }
+        previous_metrics = _territorial_period_metrics(
+            previous_group, previous_overdue_ids
+        )
+        comparison_available = len(previous_group) >= MIN_ANALYTICS_GROUP_SIZE
+        territory_id = current_group[0].territory_id
+        territory_name = _territory_name(current_group[0], territory_names)
+        request_filters = {
+            "inicio": filters["inicio"].isoformat(),
+            "fim": filters["fim"].isoformat(),
+            "categoria": filters["categoria"],
+            "canal": filters["canal"],
+            "orgaoId": str(filters["orgaoId"]) if filters["orgaoId"] else None,
+            "territorioId": str(territory_id) if territory_id else None,
+            "semTerritorio": territory_id is None,
+        }
+        rows.append(
+            {
+                "id": str(territory_id) if territory_id else "sem-territorio",
+                "nome": territory_name,
+                **current_metrics,
+                "estadoQualidade": (
+                    "BAIXA_QUALIDADE"
+                    if current_metrics["qualidadeGeograficaPercentual"] < 70
+                    else "ADEQUADA"
+                ),
+                "tendencia": _territorial_trend(
+                    current_metrics["total"],
+                    previous_metrics["total"] if comparison_available else None,
+                ),
+                "comparacao": {
+                    "estado": (
+                        "DISPONIVEL"
+                        if comparison_available
+                        else "SEM_COMPARACAO"
+                        if not previous_group
+                        else "AMOSTRA_INSUFICIENTE"
+                    ),
+                    "amostraAtual": len(current_group),
+                    "amostraAnterior": len(previous_group),
+                    "metricasAnteriores": previous_metrics if comparison_available else None,
+                    "variacaoVolumePercentual": _percent_change(
+                        current_metrics["total"], previous_metrics["total"]
+                    ) if comparison_available else None,
+                    "variacaoAtrasoPontosPercentuais": round(
+                        current_metrics["percentualAtraso"]
+                        - previous_metrics["percentualAtraso"],
+                        1,
+                    ) if comparison_available else None,
+                    "variacaoSolucaoPontosPercentuais": round(
+                        current_metrics["taxaSolucao"] - previous_metrics["taxaSolucao"],
+                        1,
+                    ) if comparison_available else None,
+                    "variacaoPrimeiraRespostaPercentual": _percent_change(
+                        current_metrics["tempoMedianoPrimeiraRespostaHoras"],
+                        previous_metrics["tempoMedianoPrimeiraRespostaHoras"],
+                    ) if comparison_available else None,
+                    "variacaoResolucaoPercentual": _percent_change(
+                        current_metrics["tempoMedianoResolucaoHoras"],
+                        previous_metrics["tempoMedianoResolucaoHoras"],
+                    ) if comparison_available else None,
+                },
+                "detalhes": {
+                    "categorias": _counter(
+                        item.category or "Sem categoria" for item in current_group
+                    ),
+                    "orgaos": _counter(
+                        agency_names.get(item.agency_id, "Sem órgão") for item in current_group
+                    ),
+                    "responsaveis": _counter(
+                        responsible_names.get(item.responsible_id, "Fila geral")
+                        for item in current_group
+                    ),
+                    "alertas": alerts_by_territory.get(territory_name, []),
+                    "amostra": [
+                        {
+                            "id": str(item.id),
+                            "protocolo": item.protocol,
+                            "titulo": item.title or "Sem título",
+                            "status": item.status.value,
+                        }
+                        for item in sorted(
+                            current_group, key=lambda request_item: _utc(request_item.created_at),
+                            reverse=True,
+                        )[:3]
+                    ] if can_view_examples else [],
+                },
+                "filtroSolicitacoes": {
+                    key: value for key, value in request_filters.items() if value is not None
+                },
+            }
+        )
+
+    rows.sort(key=lambda row: (row["total"], row["atrasadas"]), reverse=True)
+    current_total = len(items)
+    previous_total = len(comparison_items)
+    return {
+        "resumo": {
+            "periodoAtual": {
+                "inicio": filters["inicio"].isoformat(),
+                "fim": filters["fim"].isoformat(),
+                "amostra": current_total,
+            },
+            "periodoAnterior": {
+                "inicio": comparison_filters["inicio"].isoformat(),
+                "fim": comparison_filters["fim"].isoformat(),
+                "amostra": previous_total,
+            },
+            "metodo": "JANELAS_EQUIVALENTES",
+            "metodologia": (
+                "Coortes de solicitações criadas em janelas equivalentes; desfechos e tempos "
+                "consideram o estado conhecido no momento da consulta."
+            ),
+            "estado": (
+                "DISPONIVEL"
+                if current_total >= MIN_ANALYTICS_GROUP_SIZE
+                and previous_total >= MIN_ANALYTICS_GROUP_SIZE
+                else "SEM_COMPARACAO"
+                if previous_total == 0
+                else "AMOSTRA_INSUFICIENTE"
+            ),
+            "variacaoVolumePercentual": (
+                _percent_change(current_total, previous_total)
+                if previous_total >= MIN_ANALYTICS_GROUP_SIZE
+                else None
+            ),
+        },
+        "territorios": rows,
+    }
+
+
+def _group_requests_by_territory(
+    items: list[ServiceRequest], territory_names: dict
+) -> dict[str, list[ServiceRequest]]:
+    groups: dict[str, list[ServiceRequest]] = {}
+    for item in items:
+        key = str(item.territory_id) if item.territory_id else "sem-territorio"
+        groups.setdefault(key, []).append(item)
+    return groups
+
+
+def _territorial_period_metrics(
+    items: list[ServiceRequest], overdue_ids: set[uuid.UUID]
+) -> dict:
+    total = len(items)
+    overdue_total = sum(item.id in overdue_ids for item in items)
+    solved_total = sum(
+        item.status in {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA} for item in items
+    )
+    first_response_hours = []
+    resolution_hours = []
+    geocoded = 0
+    for item in items:
+        first_response = _first_citizen_response_at(item)
+        if first_response:
+            first_response_hours.append(_hours_between(item.created_at, first_response))
+        for closed_at, closed_status in _closure_events(item):
+            if closed_status in {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA}:
+                resolution_hours.append(_hours_between(item.created_at, closed_at))
+        geocoded += int(_location_status(item) in {"APPROXIMATE", "VERIFIED"})
+    return {
+        "total": total,
+        "atrasadas": overdue_total,
+        "solucionadas": solved_total,
+        "percentualAtraso": round((overdue_total / total) * 100, 1) if total else 0,
+        "taxaSolucao": round((solved_total / total) * 100, 1) if total else 0,
+        "tempoMedianoPrimeiraRespostaHoras": _median(first_response_hours),
+        "tempoMedianoResolucaoHoras": _median(resolution_hours),
+        "qualidadeGeograficaPercentual": round((geocoded / total) * 100, 1) if total else 0,
+    }
+
+
+def _median(values: list[float]) -> float | None:
+    return round(float(median(values)), 1) if values else None
+
+
+def _percent_change(current: float | int | None, previous: float | int | None) -> float | None:
+    if current is None or previous in {None, 0}:
+        return None
+    return round(((current - previous) / previous) * 100, 1)
+
+
+def _territorial_trend(current: int, previous: int | None) -> str:
+    if previous is None:
+        return "SEM_COMPARACAO"
+    variation = _percent_change(current, previous)
+    if variation is None or abs(variation) < 5:
+        return "ESTAVEL"
+    return "CRESCIMENTO" if variation > 0 else "REDUCAO"
 
 
 def _jurisdiction_data(tenant: Tenant | None) -> dict | None:
@@ -817,9 +1304,13 @@ def _jurisdiction_data(tenant: Tenant | None) -> dict | None:
     }
 
 
-def _postgis_heatmap(tenant_id: uuid.UUID) -> list[dict] | None:
+def _postgis_heatmap(
+    tenant_id: uuid.UUID, request_ids: set[uuid.UUID]
+) -> list[dict] | None:
     if db.engine.dialect.name != "postgresql":
         return None
+    if not request_ids:
+        return []
     try:
         enabled = db.session.execute(
             text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')")
@@ -830,6 +1321,7 @@ def _postgis_heatmap(tenant_id: uuid.UUID) -> list[dict] | None:
             text(
                 """
                 SELECT
+                    t.id AS territorio_id,
                     COALESCE(t.name, 'Sem território') AS territorio,
                     ROUND(
                         ST_Y(ST_Centroid(ST_Collect(sr.location_geography::geometry)))::numeric,
@@ -846,14 +1338,19 @@ def _postgis_heatmap(tenant_id: uuid.UUID) -> list[dict] | None:
                 FROM service_requests sr
                 LEFT JOIN territories t ON t.id = sr.territory_id
                 WHERE sr.tenant_id = CAST(:tenant_id AS uuid)
+                  AND sr.id = ANY(CAST(:request_ids AS uuid[]))
                   AND sr.location_geography IS NOT NULL
-                GROUP BY territorio, ST_SnapToGrid(sr.location_geography::geometry, 0.01)
+                GROUP BY t.id, territorio, ST_SnapToGrid(sr.location_geography::geometry, 0.01)
                 HAVING COUNT(*) >= :min_group_size
                 ORDER BY total DESC, abertas DESC
                 LIMIT 20
                 """
             ),
-            {"tenant_id": str(tenant_id), "min_group_size": MIN_ANALYTICS_GROUP_SIZE},
+            {
+                "tenant_id": str(tenant_id),
+                "request_ids": "{" + ",".join(str(item) for item in request_ids) + "}",
+                "min_group_size": MIN_ANALYTICS_GROUP_SIZE,
+            },
         ).mappings()
     except SQLAlchemyError:
         db.session.rollback()
@@ -861,6 +1358,7 @@ def _postgis_heatmap(tenant_id: uuid.UUID) -> list[dict] | None:
 
     return [
         {
+            "territorioId": str(row["territorio_id"]) if row["territorio_id"] else None,
             "territorio": row["territorio"],
             "latitude": float(row["latitude"]),
             "longitude": float(row["longitude"]),
@@ -881,6 +1379,7 @@ def _local_heatmap(points: list[dict]) -> list[dict]:
         cell = cells.setdefault(
             key,
             {
+                "territorioId": point.get("territorioId"),
                 "territorio": point["territorio"],
                 "latitude": latitude,
                 "longitude": longitude,
@@ -899,11 +1398,25 @@ def _local_heatmap(points: list[dict]) -> list[dict]:
     )[:20]
 
 
-def _privacy_points(points: list[dict], territory_metrics: dict[str, dict]) -> list[dict]:
+def _privacy_points(points: list[dict]) -> list[dict]:
+    cells = Counter(
+        (
+            point["territorio"],
+            round(float(point["latitude"]), 2),
+            round(float(point["longitude"]), 2),
+        )
+        for point in points
+    )
     return [
         point
         for point in points
-        if territory_metrics.get(point["territorio"], {}).get("total", 0)
+        if cells[
+            (
+                point["territorio"],
+                round(float(point["latitude"]), 2),
+                round(float(point["longitude"]), 2),
+            )
+        ]
         >= MIN_ANALYTICS_GROUP_SIZE
     ]
 
@@ -913,10 +1426,13 @@ def _demand_alerts(
     now: datetime,
     overdue: list[ServiceRequest],
     territory_names: dict,
+    can_view_examples: bool = False,
 ) -> dict:
     overdue_ids = {item.id for item in overdue}
     return {
-        "reincidencias": _recurrent_demands(items, now, overdue_ids, territory_names),
+        "reincidencias": _recurrent_demands(
+            items, now, overdue_ids, territory_names, can_view_examples
+        ),
         "crescimentosAnormais": _anomalous_growth(items, now, territory_names),
         "regras": {
             "reincidencia": {
@@ -939,6 +1455,7 @@ def _recurrent_demands(
     now: datetime,
     overdue_ids: set,
     territory_names: dict,
+    can_view_examples: bool,
 ) -> list[dict]:
     starts_at = now - timedelta(days=RECURRENCE_WINDOW_DAYS)
     groups: dict[tuple[str, str, str], list[ServiceRequest]] = {}
@@ -974,7 +1491,7 @@ def _recurrent_demands(
                         "titulo": item.title or "Sem título",
                     }
                     for item in sorted_group[:3]
-                ],
+                ] if can_view_examples else [],
                 "regra": (
                     f"{len(group)} demandas em {RECURRENCE_WINDOW_DAYS} dias no mesmo recorte"
                 ),
@@ -1162,15 +1679,117 @@ def _geocode_reference(item: ServiceRequest, territory_names: dict) -> str | Non
     return reference or None
 
 
-def _local_coordinates(reference: str) -> tuple[float, float]:
+def _has_jurisdiction_reference(tenant: Tenant | None) -> bool:
+    if tenant is None:
+        return False
+    bounds = tenant.jurisdiction_bounds or {}
+    has_bounds = all(
+        isinstance(bounds.get(key), int | float)
+        for key in ("minLatitude", "maxLatitude", "minLongitude", "maxLongitude")
+    )
+    return has_bounds or (
+        tenant.jurisdiction_center_latitude is not None
+        and tenant.jurisdiction_center_longitude is not None
+    )
+
+
+def _local_coordinates(reference: str, tenant: Tenant) -> tuple[float, float]:
     digest = hashlib.sha256(reference.encode("utf-8")).hexdigest()
     seed_a = int(digest[:8], 16) / 0xFFFFFFFF
     seed_b = int(digest[8:16], 16) / 0xFFFFFFFF
+    bounds = tenant.jurisdiction_bounds or {}
+    if all(
+        isinstance(bounds.get(key), int | float)
+        for key in ("minLatitude", "maxLatitude", "minLongitude", "maxLongitude")
+    ):
+        latitude = bounds["minLatitude"] + (
+            bounds["maxLatitude"] - bounds["minLatitude"]
+        ) * (0.2 + seed_a * 0.6)
+        longitude = bounds["minLongitude"] + (
+            bounds["maxLongitude"] - bounds["minLongitude"]
+        ) * (0.2 + seed_b * 0.6)
+        return round(latitude, 6), round(longitude, 6)
     angle = seed_a * 2 * pi
-    radius = 0.012 + seed_b * 0.038
-    latitude = -21.7619 + sin(angle) * radius
-    longitude = -43.3496 + cos(angle) * radius
+    radius = 0.005 + seed_b * 0.02
+    latitude = float(tenant.jurisdiction_center_latitude) + sin(angle) * radius
+    longitude = float(tenant.jurisdiction_center_longitude) + cos(angle) * radius
     return round(latitude, 6), round(longitude, 6)
+
+
+def _coordinates_in_jurisdiction(
+    latitude: float, longitude: float, tenant: Tenant | None
+) -> bool:
+    if tenant is None:
+        return False
+    bounds = tenant.jurisdiction_bounds or {}
+    if all(
+        isinstance(bounds.get(key), int | float)
+        for key in ("minLatitude", "maxLatitude", "minLongitude", "maxLongitude")
+    ) and not (
+        bounds["minLatitude"] <= latitude <= bounds["maxLatitude"]
+        and bounds["minLongitude"] <= longitude <= bounds["maxLongitude"]
+    ):
+        return False
+    polygons = _jurisdiction_polygons(tenant.jurisdiction_geojson)
+    return not polygons or any(_point_in_ring(longitude, latitude, ring) for ring in polygons)
+
+
+def _jurisdiction_polygons(geojson: dict | None) -> list[list]:
+    if not isinstance(geojson, dict):
+        return []
+    geometries = []
+    if geojson.get("type") == "FeatureCollection":
+        geometries = [
+            feature.get("geometry", {})
+            for feature in geojson.get("features", [])
+            if isinstance(feature, dict)
+        ]
+    elif geojson.get("type") == "Feature":
+        geometries = [geojson.get("geometry", {})]
+    else:
+        geometries = [geojson]
+    rings = []
+    for geometry in geometries:
+        coordinates = geometry.get("coordinates", []) if isinstance(geometry, dict) else []
+        if geometry.get("type") == "Polygon" and coordinates:
+            rings.append(coordinates[0])
+        elif geometry.get("type") == "MultiPolygon":
+            rings.extend(polygon[0] for polygon in coordinates if polygon)
+    return rings
+
+
+def _point_in_ring(longitude: float, latitude: float, ring: list) -> bool:
+    inside = False
+    if len(ring) < 3:
+        return False
+    previous = ring[-1]
+    for current in ring:
+        if not (
+            isinstance(current, list | tuple)
+            and isinstance(previous, list | tuple)
+            and len(current) >= 2
+            and len(previous) >= 2
+        ):
+            previous = current
+            continue
+        x1, y1 = float(previous[0]), float(previous[1])
+        x2, y2 = float(current[0]), float(current[1])
+        crosses = (y1 > latitude) != (y2 > latitude)
+        if crosses and longitude < (x2 - x1) * (latitude - y1) / (y2 - y1) + x1:
+            inside = not inside
+        previous = current
+    return inside
+
+
+def _location_status(item: ServiceRequest) -> str:
+    if item.geocode_verified:
+        return "VERIFIED"
+    status = str(item.geocode_status or "").upper()
+    if status and status != "UNRESOLVED":
+        return status
+    if item.latitude is not None and item.longitude is not None:
+        return "APPROXIMATE"
+    return "UNRESOLVED"
 
 
 def _counter(values) -> list[dict]:
@@ -1201,11 +1820,18 @@ def _private_counter(values) -> dict:
 def _dashboard_filters(args) -> dict:
     start = _parse_dashboard_date(args.get("inicio"))
     end = _parse_dashboard_date(args.get("fim"))
+    if start is None and end is None:
+        end = datetime.now(UTC).date()
+        start = end - timedelta(days=29)
+    elif start is None:
+        start = end - timedelta(days=29)
+    elif end is None:
+        end = datetime.now(UTC).date()
     if start and end and start > end:
-        start, end = end, start
+        raise ValueError("A data inicial nÃ£o pode ser posterior Ã  data final.")
     granularity = str(args.get("granularidade") or "dia").lower()
     if granularity not in {"dia", "mes"}:
-        granularity = "dia"
+        raise ValueError("Granularidade invÃ¡lida.")
     return {
         "inicio": start,
         "fim": end,
@@ -1217,13 +1843,66 @@ def _dashboard_filters(args) -> dict:
     }
 
 
+def _comparison_dashboard_filters(filters: dict) -> dict:
+    window_days = (filters["fim"] - filters["inicio"]).days + 1
+    comparison_end = filters["inicio"] - timedelta(days=1)
+    comparison_start = comparison_end - timedelta(days=window_days - 1)
+    return {
+        **filters,
+        "inicio": comparison_start,
+        "fim": comparison_end,
+    }
+
+
+def _serialize_dashboard_filters(filters: dict) -> dict:
+    return {
+        "inicio": filters["inicio"].isoformat(),
+        "fim": filters["fim"].isoformat(),
+        "categoria": filters["categoria"] or "",
+        "canal": filters["canal"] or "",
+        "territorioId": str(filters["territorioId"]) if filters["territorioId"] else "",
+        "orgaoId": str(filters["orgaoId"]) if filters["orgaoId"] else "",
+        "granularidade": filters["granularidade"],
+    }
+
+
+def _saved_view_data(item: TerritorialSavedView) -> dict:
+    return {
+        "id": str(item.id),
+        "nome": item.name,
+        "filtros": item.filters,
+        "criadaEm": item.created_at.isoformat(),
+        "atualizadaEm": item.updated_at.isoformat(),
+    }
+
+
+def _validate_dashboard_entity_filters(tenant_id: uuid.UUID, filters: dict) -> None:
+    if filters["territorioId"]:
+        territory = db.session.execute(
+            select(Territory.id).where(
+                Territory.id == filters["territorioId"], Territory.tenant_id == tenant_id
+            )
+        ).scalar_one_or_none()
+        if territory is None:
+            raise ValueError("Território inválido para o gabinete.")
+    if filters["orgaoId"]:
+        agency = db.session.execute(
+            select(ExternalAgency.id).where(
+                ExternalAgency.id == filters["orgaoId"],
+                ExternalAgency.tenant_id == tenant_id,
+            )
+        ).scalar_one_or_none()
+        if agency is None:
+            raise ValueError("Órgão inválido para o gabinete.")
+
+
 def _parse_dashboard_date(value):
     if not value:
         return None
     try:
         return datetime.fromisoformat(str(value)).date()
-    except ValueError:
-        return None
+    except ValueError as error:
+        raise ValueError("Data de filtro invÃ¡lida.") from error
 
 
 def _optional_uuid(value) -> uuid.UUID | None:
@@ -1231,8 +1910,8 @@ def _optional_uuid(value) -> uuid.UUID | None:
         return None
     try:
         return uuid.UUID(str(value))
-    except ValueError:
-        return None
+    except ValueError as error:
+        raise ValueError("Identificador de filtro invÃ¡lido.") from error
 
 
 def _apply_dashboard_filters(items: list[ServiceRequest], filters: dict) -> list[ServiceRequest]:

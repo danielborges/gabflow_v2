@@ -2657,6 +2657,14 @@ class ServiceRequest(db.Model):
     address: Mapped[str | None] = mapped_column(String(500))
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
+    geocode_source: Mapped[str | None] = mapped_column(String(80))
+    geocode_method: Mapped[str | None] = mapped_column(String(40))
+    geocode_confidence: Mapped[float | None] = mapped_column(Float)
+    geocode_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    geocode_status: Mapped[str] = mapped_column(
+        String(30), default="UNRESOLVED", nullable=False, index=True
+    )
+    geocoded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     category: Mapped[str | None] = mapped_column(String(100), index=True)
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("request_categories.id", ondelete="SET NULL"), index=True
@@ -2727,6 +2735,29 @@ class ServiceRequest(db.Model):
         back_populates="request",
         cascade="all, delete-orphan",
         order_by="ScheduledReturn.scheduled_at",
+    )
+
+
+class TerritorialSavedView(db.Model):
+    __tablename__ = "territorial_saved_views"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
 
