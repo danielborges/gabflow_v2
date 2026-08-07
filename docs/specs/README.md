@@ -77,7 +77,9 @@ gabflow-spec-driven/
 │   ├── ADR-006-geospatial-analytics.md
 │   ├── ADR-007-hierarchical-rag.md
 │   ├── ADR-008-operational-knowledge-projections.md
-│   └── ADR-009-controlled-feedback-learning.md
+│   ├── ADR-009-controlled-feedback-learning.md
+│   ├── ADR-010-assisted-whatsapp-email-identity.md
+│   └── ADR-011-governed-geospatial-provider.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md

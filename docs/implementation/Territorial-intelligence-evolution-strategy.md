@@ -146,6 +146,16 @@ Para cada território elegível, apresentar:
 
 **Duração indicativa:** 2 a 3 sprints.
 
+**Decisão provisória de stack:** Geoapify + MapLibre GL JS + PostgreSQL/PostGIS, condicionada à
+prova comparativa descrita em
+[`Territorial-geocoding-quality-proof.md`](Territorial-geocoding-quality-proof.md) e formalizada
+no [`ADR-011`](../specs/adr/ADR-011-governed-geospatial-provider.md). O adaptador permanece
+intercambiável e a aprovação não autoriza o Geoapify em produção antes do Gate C.
+
+O adaptador canônico e o executor reproduzível do benchmark foram implementados, incluindo os
+quatro candidatos, checksum do dataset, métricas segmentadas, repetição de estabilidade e CLI.
+Permanece pendente formar e revisar a amostra real antes de executar a prova externa.
+
 **Entregas**
 
 - mapa interativo com polígonos oficiais, agrupamento de pontos e camadas configuráveis;
@@ -160,7 +170,11 @@ Para cada território elegível, apresentar:
 - toda coordenada possui fonte e nível de confiança consultáveis;
 - correções administrativas são auditadas e recalculam agregados afetados;
 - mapa, tabela e exportação usam o mesmo contrato analítico;
-- nenhuma exportação inclui ponto ou protocolo sem autorização explícita.
+- nenhuma exportação inclui ponto ou protocolo sem autorização explícita;
+- benchmark de 500 a 1.000 endereços compara Geoapify, Google, Mapbox e Geocode Earth;
+- acerto municipal é de pelo menos 95%, com metas segmentadas de logradouro, número, bairro e
+  jurisdição atendidas;
+- retenção, suboperadores, LGPD, SLA, atribuições e custo recebem aprovação formal.
 
 ### Incremento 5.4 — Operação territorial integrada
 
@@ -221,11 +235,13 @@ de confiabilidade, para permitir validação e rollback isolados.
 | 10 | `TERR-5.2-03` Navegação para casos | grid abre com filtros preservados e autorizados | 5.2-02 |
 | 11 | `TERR-5.2-04` Alertas investigáveis | exemplos, regra e estado de investigação ficam disponíveis | 5.2-03 |
 | 12 | `TERR-5.3-01` Mapa interativo | mapa e tabela compartilham seleção e contrato | 5.2 concluído |
-| 13 | `TERR-5.3-02` Geocodificador governado | localização real, auditável, limitada e revisável | decisão de provedor |
-| 14 | `TERR-5.3-03` Exportação agregada | arquivo reproduz período, filtros, método e supressão | 5.3-01 |
-| 15 | `TERR-5.4-01` Entidade de ação territorial | insight vincula ação, responsável, prazo e evidência | modelo e migração |
-| 16 | `TERR-5.4-02` Integrações operacionais | tarefa, agenda, visita, roteiro e encaminhamento reutilizam serviços existentes | 5.4-01 |
-| 17 | `TERR-5.4-03` Ciclo de vida do alerta | novo, análise, ação, resolvido e descartado são auditáveis | 5.4-01 |
+| 13 | `TERR-5.3-02` Adaptador intercambiável | contrato canônico isola domínio e credenciais do fornecedor | ADR-011 |
+| 14 | `TERR-5.3-03` Prova comparativa | 500–1.000 endereços medem precisão, latência, custo e governança | 5.3-02 |
+| 15 | `TERR-5.3-04` Geocodificador governado | localização real, auditável, limitada e revisável | provedor aprovado na prova |
+| 16 | `TERR-5.3-05` Exportação agregada | arquivo reproduz período, filtros, método e supressão | 5.3-01 |
+| 17 | `TERR-5.4-01` Entidade de ação territorial | insight vincula ação, responsável, prazo e evidência | modelo e migração |
+| 18 | `TERR-5.4-02` Integrações operacionais | tarefa, agenda, visita, roteiro e encaminhamento reutilizam serviços existentes | 5.4-01 |
+| 19 | `TERR-5.4-03` Ciclo de vida do alerta | novo, análise, ação, resolvido e descartado são auditáveis | 5.4-01 |
 
 ### Estado do incremento 5.1
 
@@ -297,8 +313,8 @@ de 1,5 segundo. A evidência completa está em
   baseline de uso coletando dados.
 - **Gate B — fim de 5.2:** usuários conseguem chegar do sinal aos casos e a conversão em
   investigação pode ser medida.
-- **Gate C — fim de 5.3:** qualidade cartográfica e exportação atendem requisitos operacionais e
-  de proteção de dados.
+- **Gate C — fim de 5.3:** benchmark atende metas segmentadas, fornecedor e termos são aprovados,
+  e qualidade cartográfica/exportação atendem requisitos operacionais e de proteção de dados.
 - **Gate D — fim de 5.4:** ações territoriais têm responsável, prazo, evidência e resultado.
 - **Gate E — entrada em 5.5:** somente após Gates A–D e revisão explícita de privacidade,
   metodologia e ganho de produto.

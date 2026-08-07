@@ -1,3 +1,4 @@
+import math
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -36,6 +37,12 @@ from app.electoral.territorial_ingestion import (
     official_section_archive_url,
 )
 from app.extensions import db
+from app.geocoding.benchmark import (
+    load_benchmark_dataset,
+    run_benchmark,
+    write_benchmark_report,
+)
+from app.geocoding.providers import PROVIDER_NAMES, provider_from_environment
 from app.models import (
     ElectoralDatasetVersion,
     ElectoralPublicCommitment,
@@ -93,6 +100,26 @@ def _sync_electoral_identities(year: int, uf: str) -> None:
     finally:
         if path is not None:
             path.unlink(missing_ok=True)
+
+
+def _parse_provider_costs(values: tuple[str, ...]) -> dict[str, float]:
+    costs: dict[str, float] = {}
+    valid_names = {name.replace("-", "_") for name in PROVIDER_NAMES}
+    for value in values:
+        name, separator, raw_cost = value.partition("=")
+        normalized_name = name.strip().lower().replace("-", "_")
+        if not separator or normalized_name not in valid_names:
+            raise ValueError("Custo invalido; use PROVIDER=VALUE com um provedor selecionavel.")
+        try:
+            cost = float(raw_cost.strip())
+        except ValueError as error:
+            raise ValueError(f"Custo invalido para {name.strip()}.") from error
+        if not math.isfinite(cost) or cost < 0:
+            raise ValueError(f"Custo invalido para {name.strip()}.")
+        if normalized_name in costs:
+            raise ValueError(f"Custo duplicado para {name.strip()}.")
+        costs[normalized_name] = cost
+    return costs
 
 
 def register_commands(app: Flask) -> None:
@@ -713,6 +740,95 @@ def register_commands(app: Flask) -> None:
             f"janelaAtual={summary['current_window']}, "
             f"janelaAnterior={summary['previous_window']}, "
             f"célulasInsuficientes={summary['insufficient_cells']}, {statuses}."
+        )
+
+    @app.cli.command("geocoding-benchmark")
+    @click.option(
+        "--dataset",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+        required=True,
+        help="CSV anonimizado com a verdade de referência.",
+    )
+    @click.option(
+        "--output",
+        type=click.Path(dir_okay=False, path_type=Path),
+        required=True,
+        help="Arquivo JSON que receberá o relatório reproduzível.",
+    )
+    @click.option(
+        "--provider",
+        "provider_names",
+        type=click.Choice(PROVIDER_NAMES, case_sensitive=False),
+        multiple=True,
+        default=PROVIDER_NAMES,
+        show_default=True,
+    )
+    @click.option(
+        "--bbox",
+        required=True,
+        help="Jurisdição no formato minLon,minLat,maxLon,maxLat.",
+    )
+    @click.option("--country", default="BR", show_default=True)
+    @click.option("--timeout-seconds", type=click.FloatRange(min=1), default=12, show_default=True)
+    @click.option("--delay-ms", type=click.IntRange(min=0), default=250, show_default=True)
+    @click.option(
+        "--cost-per-thousand",
+        "provider_costs",
+        multiple=True,
+        metavar="PROVIDER=VALUE",
+        help="Custo contratual por mil consultas; pode ser repetido por provedor.",
+    )
+    @click.option(
+        "--repeat-fraction",
+        type=click.FloatRange(min=0, max=1),
+        default=0.1,
+        show_default=True,
+    )
+    @click.option(
+        "--allow-small-sample",
+        is_flag=True,
+        help="Permite menos de 500 casos somente para smoke test.",
+    )
+    def geocoding_benchmark(
+        dataset: Path,
+        output: Path,
+        provider_names: tuple[str, ...],
+        bbox: str,
+        country: str,
+        timeout_seconds: float,
+        delay_ms: int,
+        provider_costs: tuple[str, ...],
+        repeat_fraction: float,
+        allow_small_sample: bool,
+    ) -> None:
+        """Compara provedores sem persistir payload bruto ou credenciais."""
+        try:
+            bbox_values = tuple(float(value.strip()) for value in bbox.split(","))
+            if len(bbox_values) != 4:
+                raise ValueError
+            loaded = load_benchmark_dataset(dataset, allow_small_sample=allow_small_sample)
+            providers = tuple(
+                provider_from_environment(name, timeout_seconds=timeout_seconds)
+                for name in provider_names
+            )
+            costs = _parse_provider_costs(provider_costs)
+            report = run_benchmark(
+                loaded,
+                providers,
+                jurisdiction_bbox=bbox_values,
+                country_code=country,
+                delay_ms=delay_ms,
+                repeat_fraction=repeat_fraction,
+                cost_per_thousand=costs,
+            )
+            write_benchmark_report(report, output)
+        except (OSError, ValueError) as error:
+            raise click.ClickException(str(error)) from error
+        approved = [item["provider"] for item in report["providers"] if item["approved"]]
+        click.echo(
+            f"Benchmark concluído: casos={len(loaded.cases)}, "
+            f"checksum={loaded.checksum}, aprovados={','.join(approved) or 'nenhum'}, "
+            f"relatório={output}."
         )
 
     @app.cli.command("seed-platform-admin")
