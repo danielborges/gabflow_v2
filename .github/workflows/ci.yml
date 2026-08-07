@@ -81,20 +81,6 @@ jobs:
   postgres:
     name: PostgreSQL migrations and integration tests
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgis/postgis:17-3.5-alpine
-        env:
-          POSTGRES_DB: gabflow_ci
-          POSTGRES_USER: gabflow
-          POSTGRES_PASSWORD: gabflow-ci-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U gabflow -d gabflow_ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
 
     defaults:
       run:
@@ -111,6 +97,47 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Start PostgreSQL with PostGIS and pgvector
+        run: |
+          docker build --file Dockerfile.db --tag gabflow-ci-db .
+          docker run --detach \
+            --name gabflow-ci-postgres \
+            --publish 5432:5432 \
+            --env POSTGRES_DB=gabflow_ci \
+            --env POSTGRES_USER=gabflow \
+            --env POSTGRES_PASSWORD=gabflow-ci-password \
+            --health-cmd "pg_isready -U gabflow -d gabflow_ci" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            gabflow-ci-db
+          for attempt in {1..30}; do
+            status="$(docker inspect --format='{{.State.Health.Status}}' gabflow-ci-postgres)"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              break
+            fi
+            sleep 2
+          done
+          docker logs gabflow-ci-postgres
+          exit 1
+
+      - name: Bootstrap PostgreSQL application roles
+        run: |
+          docker exec --interactive gabflow-ci-postgres \
+            psql -U gabflow -d gabflow_ci \
+            -v database_name=gabflow_ci \
+            -v migrator_role=gabflow \
+            -v app_role=gabflow_app \
+            -v app_password=gabflow-app-ci-password \
+            -v worker_role=gabflow_worker \
+            -v worker_password=gabflow-worker-ci-password \
+            -v backup_role=gabflow_backup \
+            -v backup_password=gabflow-backup-ci-password \
+            < db-bootstrap-roles.sql
 
       - name: Set up Python
         uses: actions/setup-python@v6

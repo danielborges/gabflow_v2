@@ -89,6 +89,7 @@ export function Workspace({ user, onLogout }) {
   ));
   const [requestSearch, setRequestSearch] = useState("");
   const [requestContext, setRequestContext] = useState(null);
+  const [requestFilters, setRequestFilters] = useState(null);
   const [assistedReviewId, setAssistedReviewId] = useState(() => (
     new URLSearchParams(window.location.search).get("revisaoCanal")
   ));
@@ -149,6 +150,13 @@ export function Workspace({ user, onLogout }) {
 
   function openCitizenRequest(request) {
     setRequestContext({ citizenId: null, requestId: request.id });
+    setActiveView("requests");
+    syncViewQuery("requests");
+    setMenuOpen(false);
+  }
+
+  function openTerritorialRequests(filters = null) {
+    setRequestFilters(filters);
     setActiveView("requests");
     syncViewQuery("requests");
     setMenuOpen(false);
@@ -275,7 +283,7 @@ export function Workspace({ user, onLogout }) {
         </header>
 
         {activeView === "requests" && isModuleEnabled("solicitacoes") && (
-          <RequestsPage user={user} initialSearch={requestSearch} initialCitizenId={requestContext?.citizenId} initialRequestId={requestContext?.requestId} onInitialContextConsumed={() => setRequestContext(null)} />
+          <RequestsPage user={user} initialSearch={requestSearch} initialFilters={requestFilters} initialCitizenId={requestContext?.citizenId} initialRequestId={requestContext?.requestId} onInitialContextConsumed={() => setRequestContext(null)} onInitialFiltersConsumed={() => setRequestFilters(null)} />
         )}
         {activeView === "agenda" && isModuleEnabled("agenda") && <AgendaPage />}
         {activeView === "oversight" && isModuleEnabled("fiscalizacao") && <OversightPage />}
@@ -296,7 +304,7 @@ export function Workspace({ user, onLogout }) {
         {activeView === "rag" && isModuleEnabled("rag") && <RagKnowledgeBasePage />}
         {activeView === "admin" && user.role === "admin" && <AdministrationPage />}
         {activeView === "privacy" && ["admin", "manager"].includes(user.role) && isModuleEnabled("privacidade") && <PrivacyGovernancePage />}
-        {activeView === "overview" && <OperationalDashboard onOpenRequests={() => openView("requests")} />}
+        {activeView === "overview" && <OperationalDashboard onOpenRequests={openTerritorialRequests} />}
       </main>
     </div>
   );

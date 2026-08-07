@@ -159,10 +159,21 @@ describe("OperationalDashboard", () => {
           coberturaPercentual: 50,
           geocodificadas: 1,
           semCoordenadas: 1,
+          qualidadeDados: {
+            total: 2,
+            territorioIdentificado: 1,
+            territorioIdentificadoPercentual: 50,
+            coordenadasAproximadas: 1,
+            coordenadasVerificadas: 0,
+            coordenadasAmbiguas: 0,
+            foraDaJurisdicao: 0,
+            semCoordenadas: 1,
+          },
           privacidade: {
             minimoPorGrupo: 3,
             pontosSuprimidos: 1,
             hotspotsSuprimidos: 1,
+            visualizacaoPontosPermitida: true,
           },
           hotspots: [{ nome: "Centro", total: 2, abertas: 2, atrasadas: 1 }],
           heatmap: [{
@@ -184,11 +195,46 @@ describe("OperationalDashboard", () => {
             longitude: -43.3496,
             atrasada: true,
           }],
+          comparacao: {
+            periodoAtual: { inicio: "2026-07-09", fim: "2026-08-07", amostra: 4 },
+            periodoAnterior: { inicio: "2026-06-09", fim: "2026-07-08", amostra: 3 },
+            metodo: "JANELAS_EQUIVALENTES",
+            estado: "DISPONIVEL",
+            variacaoVolumePercentual: 33.3,
+          },
+          tabelaTerritorial: [{
+            id: "territory-1",
+            nome: "Centro",
+            total: 4,
+            atrasadas: 1,
+            solucionadas: 2,
+            percentualAtraso: 25,
+            taxaSolucao: 50,
+            tempoMedianoPrimeiraRespostaHoras: 2.5,
+            tempoMedianoResolucaoHoras: 12,
+            qualidadeGeograficaPercentual: 75,
+            tendencia: "CRESCIMENTO",
+            comparacao: {
+              estado: "DISPONIVEL",
+              variacaoVolumePercentual: 33.3,
+              variacaoAtrasoPontosPercentuais: 5,
+              variacaoSolucaoPontosPercentuais: 10,
+            },
+            detalhes: {
+              categorias: [{ nome: "Saúde", total: 3 }],
+              orgaos: [{ nome: "Secretaria de Saúde", total: 3 }],
+              responsaveis: [{ nome: "Equipe A", total: 3 }],
+              alertas: [],
+              amostra: [{ id: "1", protocolo: "GF-2026-000001", titulo: "Demanda urgente", status: "NOVA" }],
+            },
+            filtroSolicitacoes: { inicio: "2026-07-09", fim: "2026-08-07", territorioId: "territory-1" },
+          }],
         },
       };
     });
 
-    render(<OperationalDashboard onOpenRequests={() => {}} />);
+    const onOpenRequests = vi.fn();
+    render(<OperationalDashboard onOpenRequests={onOpenRequests} />);
     await waitFor(() => expect(screen.getByText("Demanda urgente")).toBeInTheDocument());
     expect(screen.getByText("Atrasadas")).toBeInTheDocument();
     expect(screen.getByLabelText("Categoria")).toBeInTheDocument();
@@ -222,8 +268,15 @@ describe("OperationalDashboard", () => {
     expect(screen.getByText("Mapa de calor")).toBeInTheDocument();
     expect(screen.getByLabelText("Mapa visual de calor territorial")).toBeInTheDocument();
     expect(screen.getByText("2 demanda(s)")).toBeInTheDocument();
-    expect(screen.getByText("50%")).toBeInTheDocument();
-    expect(screen.getByText("GF-2026-000001")).toBeInTheDocument();
+    expect(screen.getAllByText("50%").length).toBeGreaterThan(0);
+    expect(screen.getByText("território identificado")).toBeInTheDocument();
+    expect(screen.getByText("coordenadas aproximadas")).toBeInTheDocument();
+    expect(screen.getAllByText("GF-2026-000001").length).toBeGreaterThan(0);
+    expect(screen.getByText("Tabela territorial")).toBeInTheDocument();
+    expect(screen.getByText("Comparação temporal")).toBeInTheDocument();
+    expect(screen.getByText("Crescimento")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Ver solicitações" })[0]);
+    expect(onOpenRequests).toHaveBeenCalledWith(expect.objectContaining({ territorioId: "territory-1" }));
 
     fireEvent.click(screen.getByRole("button", { name: /Geocodificar/ }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(

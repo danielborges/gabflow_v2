@@ -21,6 +21,55 @@ describe("RequestsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Nenhuma solicitação encontrada")).toBeInTheDocument();
     });
+    expect(screen.queryByRole("textbox", { name: "Buscar solicitações" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Filtrar por status" })).not.toBeInTheDocument();
+  });
+
+  it("leva a busca global por solicitação para o filtro visível de protocolo", async () => {
+    apiRequest.mockResolvedValue({
+      content: [{
+        id: "req-search",
+        protocolo: "GF-2026-000321",
+        titulo: "Solicitação localizada",
+        categoria: "Atendimento",
+        origem: "PRESENCIAL",
+        prioridade: "MEDIA",
+        status: "NOVA",
+        criadaEm: "2026-08-07T12:00:00Z",
+      }],
+      page: 0,
+      size: 25,
+      totalElements: 1,
+      totalPages: 1,
+    });
+    render(<RequestsPage initialSearch="GF-2026-000321" />);
+    expect(await screen.findByRole("textbox", { name: "Filtrar protocolo" })).toHaveValue("GF-2026-000321");
+    await waitFor(() => {
+      expect(apiRequest.mock.calls.some(([url]) => String(url).includes("protocolo=GF-2026-000321"))).toBe(true);
+    });
+  });
+
+  it("preserva o recorte recebido da inteligência territorial", async () => {
+    const consumed = vi.fn();
+    render(<RequestsPage
+      initialFilters={{
+        inicio: "2026-07-09",
+        fim: "2026-08-07",
+        territorioId: "territory-1",
+        canal: "WHATSAPP",
+      }}
+      onInitialFiltersConsumed={consumed}
+    />);
+    expect(await screen.findByText("Recorte territorial aplicado")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiRequest.mock.calls.some(([url]) => {
+        const value = String(url);
+        return value.includes("territorioId=territory-1")
+          && value.includes("inicio=2026-07-09")
+          && value.includes("origem=WHATSAPP");
+      })).toBe(true);
+    });
+    expect(consumed).toHaveBeenCalled();
   });
 
   it("abre o formulário de nova solicitação", () => {
@@ -103,6 +152,53 @@ describe("RequestsPage", () => {
     render(<RequestsPage user={{ role: "staff", chefeGabinete: false }} />);
     await screen.findByText("Iluminação pública");
     expect(screen.queryByRole("columnheader", { name: "Responsável" })).not.toBeInTheDocument();
+  });
+
+  it("pagina, ordena, filtra colunas e altera a quantidade de registros", async () => {
+    apiRequest.mockImplementation((url) => {
+      if (String(url).startsWith("/api/v1/solicitacoes?")) {
+        return Promise.resolve({
+          content: [{
+            id: "req-grid",
+            protocolo: "GF-2026-000321",
+            titulo: "Reparo de iluminação",
+            categoria: "Iluminação pública",
+            origem: "WHATSAPP",
+            prioridade: "ALTA",
+            status: "TRIAGEM",
+            responsavel: "Maria Operacional",
+            criadaEm: "2026-08-07T12:00:00Z",
+          }],
+          page: new URL(`http://local${url}`).searchParams.get("page") === "1" ? 1 : 0,
+          size: Number(new URL(`http://local${url}`).searchParams.get("size")),
+          totalElements: 51,
+          totalPages: 3,
+        });
+      }
+      return Promise.resolve({ content: [] });
+    });
+
+    render(<RequestsPage user={{ role: "admin" }} />);
+
+    expect(await screen.findByText("51 registros")).toBeInTheDocument();
+    const requestCalls = () => apiRequest.mock.calls.filter(([url]) => String(url).startsWith("/api/v1/solicitacoes?"));
+    expect(requestCalls().at(-1)[0]).toContain("size=25");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Registros por página" }), { target: { value: "10" } });
+    await waitFor(() => expect(requestCalls().at(-1)[0]).toContain("size=10"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Protocolo" }));
+    await waitFor(() => {
+      expect(requestCalls().at(-1)[0]).toContain("sort=protocolo");
+      expect(requestCalls().at(-1)[0]).toContain("direction=asc");
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Filtrar protocolo" }), { target: { value: "000321" } });
+    await waitFor(() => expect(requestCalls().at(-1)[0]).toContain("protocolo=000321"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Próxima página" }));
+    await waitFor(() => expect(requestCalls().at(-1)[0]).toContain("page=1"));
+    expect(screen.getByText("Página 2 de 3")).toBeInTheDocument();
   });
 
   it("permite distribuir no formulário somente para administrador, parlamentar ou chefe", () => {

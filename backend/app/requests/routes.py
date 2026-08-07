@@ -28,8 +28,11 @@ from app.models import (
     RequestCategory,
     RequestHistory,
     RequestInteraction,
+    RequestPriority,
+    RequestSource,
     RequestStatus,
     ServiceRequest,
+    Tenant,
     Territory,
     User,
     UserStatus,
@@ -92,6 +95,16 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
         "endereco": service_request.address,
         "latitude": service_request.latitude,
         "longitude": service_request.longitude,
+        "qualidadeGeografica": {
+            "origem": service_request.geocode_source,
+            "metodo": service_request.geocode_method,
+            "confianca": service_request.geocode_confidence,
+            "verificada": service_request.geocode_verified,
+            "status": service_request.geocode_status,
+            "atualizadaEm": (
+                service_request.geocoded_at.isoformat() if service_request.geocoded_at else None
+            ),
+        },
         "responsavelId": (
             str(service_request.responsible_id) if service_request.responsible_id else None
         ),
@@ -160,6 +173,19 @@ def list_requests():
     size = min(max(request.args.get("size", default=20, type=int), 1), 100)
     status = request.args.get("status", type=str)
     search = request.args.get("q", type=str)
+    protocol = request.args.get("protocolo", type=str)
+    request_search = request.args.get("solicitacao", type=str)
+    source = request.args.get("origem", type=str)
+    priority = request.args.get("prioridade", type=str)
+    responsible = request.args.get("responsavel", type=str)
+    category = request.args.get("categoria", type=str)
+    territory_id = request.args.get("territorioId", type=str)
+    agency_id = request.args.get("orgaoId", type=str)
+    starts_on = request.args.get("inicio", type=str)
+    ends_on = request.args.get("fim", type=str)
+    without_territory = str(request.args.get("semTerritorio", "")).lower() == "true"
+    sort = request.args.get("sort", default="criadaEm", type=str)
+    direction = request.args.get("direction", default="desc", type=str).lower()
 
     filters = request_visibility_filters(tenant_id, user_id)
     if status:
@@ -176,12 +202,88 @@ def list_requests():
                 ServiceRequest.description.ilike(pattern),
             )
         )
+    if protocol and protocol.strip():
+        filters.append(ServiceRequest.protocol.ilike(f"%{protocol.strip()}%"))
+    if request_search and request_search.strip():
+        pattern = f"%{request_search.strip()}%"
+        filters.append(
+            or_(
+                ServiceRequest.title.ilike(pattern),
+                ServiceRequest.description.ilike(pattern),
+                ServiceRequest.category.ilike(pattern),
+            )
+        )
+    if source:
+        try:
+            filters.append(ServiceRequest.source == RequestSource(source.upper()))
+        except ValueError:
+            return jsonify(error="validation_error", message="Origem inválida."), 422
+    if priority:
+        try:
+            filters.append(ServiceRequest.priority == RequestPriority(priority.upper()))
+        except ValueError:
+            return jsonify(error="validation_error", message="Prioridade inválida."), 422
+    if responsible and responsible.strip():
+        filters.append(User.name.ilike(f"%{responsible.strip()}%"))
+    if category and category.strip():
+        filters.append(ServiceRequest.category == category.strip())
+    try:
+        if starts_on:
+            start_date = datetime.fromisoformat(starts_on).date()
+            filters.append(
+                ServiceRequest.created_at
+                >= datetime.combine(start_date, datetime.min.time(), tzinfo=UTC)
+            )
+        if ends_on:
+            end_date = datetime.fromisoformat(ends_on).date() + timedelta(days=1)
+            filters.append(
+                ServiceRequest.created_at
+                < datetime.combine(end_date, datetime.min.time(), tzinfo=UTC)
+            )
+        territory_uuid = uuid.UUID(territory_id) if territory_id else None
+        agency_uuid = uuid.UUID(agency_id) if agency_id else None
+    except ValueError:
+        return jsonify(error="validation_error", message="Filtro territorial inválido."), 422
+    if starts_on and ends_on and start_date > datetime.fromisoformat(ends_on).date():
+        return jsonify(error="validation_error", message="Período territorial inválido."), 422
+    if territory_uuid:
+        territory = _tenant_entity(Territory, territory_uuid, tenant_id)
+        if territory is None:
+            return jsonify(error="validation_error", message="Território inválido."), 422
+        filters.append(ServiceRequest.territory_id == territory_uuid)
+    elif without_territory:
+        filters.append(ServiceRequest.territory_id.is_(None))
+    if agency_uuid:
+        agency = _tenant_entity(ExternalAgency, agency_uuid, tenant_id)
+        if agency is None:
+            return jsonify(error="validation_error", message="Órgão inválido."), 422
+        filters.append(ServiceRequest.agency_id == agency_uuid)
 
-    total = db.session.execute(select(func.count(ServiceRequest.id)).where(*filters)).scalar_one()
-    items = db.session.execute(
-        select(ServiceRequest)
+    sort_columns = {
+        "protocolo": ServiceRequest.protocol,
+        "solicitacao": ServiceRequest.title,
+        "origem": ServiceRequest.source,
+        "prioridade": ServiceRequest.priority,
+        "status": ServiceRequest.status,
+        "responsavel": User.name,
+        "criadaEm": ServiceRequest.created_at,
+    }
+    if sort not in sort_columns or direction not in {"asc", "desc"}:
+        return jsonify(error="validation_error", message="Ordenação inválida."), 422
+    sort_expression = getattr(sort_columns[sort], direction)().nulls_last()
+
+    base_query = select(ServiceRequest).outerjoin(
+        User, ServiceRequest.responsible_id == User.id
+    ).where(*filters)
+    total = db.session.execute(
+        select(func.count(ServiceRequest.id))
+        .select_from(ServiceRequest)
+        .outerjoin(User, ServiceRequest.responsible_id == User.id)
         .where(*filters)
-        .order_by(ServiceRequest.created_at.desc())
+    ).scalar_one()
+    items = db.session.execute(
+        base_query
+        .order_by(sort_expression, ServiceRequest.created_at.desc(), ServiceRequest.id)
         .offset(page * size)
         .limit(size)
     ).scalars()
@@ -249,6 +351,18 @@ def create_request():
         public_access_key_hash=hashlib.sha256(public_key.encode()).hexdigest(),
         **values,
     )
+    if service_request.latitude is not None and service_request.longitude is not None:
+        tenant = db.session.get(Tenant, tenant_id)
+        service_request.geocode_source = "REQUEST_FORM"
+        service_request.geocode_method = "MANUAL_INPUT"
+        service_request.geocode_confidence = 0.8
+        service_request.geocode_verified = False
+        service_request.geocode_status = (
+            "OUTSIDE_JURISDICTION"
+            if _outside_jurisdiction_bounds(service_request, tenant)
+            else "APPROXIMATE"
+        )
+        service_request.geocoded_at = now
     if category:
         service_request.category = category.name
     db.session.add(service_request)
@@ -276,6 +390,25 @@ def create_request():
     response = _serialize(service_request, include_details=True)
     response["chaveAcompanhamento"] = public_key
     return jsonify(response), 201
+
+
+def _outside_jurisdiction_bounds(
+    service_request: ServiceRequest, tenant: Tenant | None
+) -> bool:
+    bounds = tenant.jurisdiction_bounds if tenant else None
+    if not isinstance(bounds, dict):
+        return False
+    try:
+        return not (
+            float(bounds["minLatitude"])
+            <= float(service_request.latitude)
+            <= float(bounds["maxLatitude"])
+            and float(bounds["minLongitude"])
+            <= float(service_request.longitude)
+            <= float(bounds["maxLongitude"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 @requests_bp.get("/solicitacoes/<uuid:request_id>")

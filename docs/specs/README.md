@@ -77,7 +77,9 @@ gabflow-spec-driven/
 │   ├── ADR-006-geospatial-analytics.md
 │   ├── ADR-007-hierarchical-rag.md
 │   ├── ADR-008-operational-knowledge-projections.md
-│   └── ADR-009-controlled-feedback-learning.md
+│   ├── ADR-009-controlled-feedback-learning.md
+│   ├── ADR-010-assisted-whatsapp-email-identity.md
+│   └── ADR-011-governed-geospatial-provider.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md
@@ -125,11 +127,13 @@ Especificação evolutiva do diretório: `features/cadastro-cidadaos-organizacoe
 - Identificação de precedentes.
 
 ### Fase 4 — Inteligência territorial e estratégica
-- Mapas de calor.
-- Tendências.
-- Demandas reincidentes.
-- Alertas de anomalia.
-- Planejamento de visitas e ações.
+- Base de mapas de calor, tendências, recorrências e alertas entregue na Release 5.
+- Confiabilidade territorial e proveniência das coordenadas antes de novas inferências.
+- Exploração com comparação temporal e acesso aos casos subjacentes.
+- Conversão de hotspots e alertas em tarefas, agenda, visitas e encaminhamentos rastreáveis.
+- Cartografia governada, qualidade cadastral e inteligência avançada condicionadas a gates.
+
+Estratégia vigente: [`Territorial-intelligence-evolution-strategy.md`](../implementation/Territorial-intelligence-evolution-strategy.md).
 
 ## Convenções
 

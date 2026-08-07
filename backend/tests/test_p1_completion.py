@@ -1,9 +1,11 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.auth.security import hash_password
 from app.extensions import db
-from app.models import AuditLog, ServiceRequest, Tenant
+from app.models import AuditLog, Role, ServiceRequest, Tenant, User
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -154,6 +156,19 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     )
     assert empty.json["indicadores"]["total"] == 0
 
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        tenant.jurisdiction_name = "Juiz de Fora/MG"
+        tenant.jurisdiction_center_latitude = -21.7619
+        tenant.jurisdiction_center_longitude = -43.3496
+        tenant.jurisdiction_bounds = {
+            "minLatitude": -21.92,
+            "maxLatitude": -21.58,
+            "minLongitude": -43.58,
+            "maxLongitude": -43.17,
+        }
+        db.session.commit()
+
     geocoded = post(client, "/api/v1/painel/territorial/geocodificar", csrf, {})
     assert geocoded.status_code == 200
     assert geocoded.json["geocodificadas"] == 1
@@ -167,12 +182,17 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert territorial["privacidade"]["pontosSuprimidos"] == 1
     assert territorial["metodo"] == "LOCAL_APROXIMADO"
     assert territorial["heatmap"] == []
+    assert territorial["qualidadeDados"]["coordenadasAproximadas"] == 1
+    assert territorial["qualidadeDados"]["coordenadasVerificadas"] == 0
 
     with app.app_context():
         item = db.session.execute(select(ServiceRequest)).scalar_one()
         assert item.latitude is not None
         assert item.longitude is not None
         assert item.impact == "ALTO"
+        assert item.geocode_source == "TENANT_JURISDICTION"
+        assert item.geocode_method == "LOCAL_APPROXIMATE"
+        assert item.geocode_status == "APPROXIMATE"
 
 
 def test_dashboard_detects_recurrent_and_anomalous_demands(client):
@@ -223,6 +243,162 @@ def test_dashboard_detects_recurrent_and_anomalous_demands(client):
     assert anomaly["baseSemanal"] == 0
     assert anomaly["fatorCrescimento"] is None
     assert alerts["regras"]["reincidencia"]["minimoDemandas"] == 3
+    assert dashboard.json["territorial"]["qualidadeDados"]["coordenadasAproximadas"] == 3
+    assert len(dashboard.json["territorial"]["pontos"]) == 3
+    assert dashboard.json["territorial"]["heatmap"][0]["total"] == 3
+
+    empty_slice = client.get(
+        "/api/v1/painel/operacional", query_string={"canal": "EMAIL"}
+    )
+    assert empty_slice.status_code == 200
+    assert empty_slice.json["territorial"]["hotspots"] == []
+    assert empty_slice.json["territorial"]["heatmap"] == []
+    assert empty_slice.json["territorial"]["pontos"] == []
+
+
+def test_territorial_filters_geocoding_guard_and_minimal_telemetry(app, client):
+    _, csrf = login(client)
+
+    invalid_date = client.get(
+        "/api/v1/painel/operacional", query_string={"inicio": "data-invalida"}
+    )
+    assert invalid_date.status_code == 422
+
+    invalid_territory = client.get(
+        "/api/v1/painel/operacional", query_string={"territorioId": str(uuid.uuid4())}
+    )
+    assert invalid_territory.status_code == 422
+
+    geocode = post(client, "/api/v1/painel/territorial/geocodificar", csrf, {})
+    assert geocode.status_code == 422
+    assert geocode.json["error"] == "jurisdiction_not_configured"
+
+    metric = post(
+        client,
+        "/api/v1/painel/territorial/metricas-fluxo",
+        csrf,
+        {"evento": "FILTRO_APLICADO", "quantidadeFiltros": 2},
+    )
+    assert metric.status_code == 204
+    with app.app_context():
+        audit = db.session.execute(
+            select(AuditLog).where(AuditLog.entity_type == "territorial_flow")
+        ).scalar_one()
+        assert audit.action == "territorial.flow.filtro_aplicado"
+        assert audit.after == {"quantidadeFiltros": 2}
+
+
+def test_territorial_points_follow_role_privacy(app, client):
+    _, csrf = login(client)
+    for index in range(3):
+        created = post(
+            client,
+            "/api/v1/solicitacoes",
+            csrf,
+            {
+                "origem": "PRESENCIAL",
+                "titulo": f"Ponto territorial {index}",
+                "descricao": "Demanda agrupada para validaÃ§Ã£o de privacidade.",
+                "latitude": -21.762,
+                "longitude": -43.315,
+            },
+        )
+        assert created.status_code == 201
+
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        db.session.add(
+            User(
+                tenant_id=tenant.id,
+                name="Equipe territorial",
+                email="territorial@teste.local",
+                password_hash=hash_password(PASSWORD),
+                role=Role.STAFF,
+            )
+        )
+        db.session.commit()
+
+    staff_client = app.test_client()
+    response = staff_client.post(
+        "/api/v1/auth/login",
+        json={
+            "tenant": "gabinete-a",
+            "email": "territorial@teste.local",
+            "password": PASSWORD,
+        },
+    )
+    assert response.status_code == 200
+    staff_dashboard = staff_client.get("/api/v1/painel/operacional").json
+    territorial = staff_dashboard["territorial"]
+    assert territorial["pontos"] == []
+    assert territorial["heatmap"][0]["total"] == 3
+    assert territorial["privacidade"]["visualizacaoPontosPermitida"] is False
+    assert territorial["versaoMetodo"] == "5.2"
+    assert territorial["filtrosAplicados"]["granularidade"] == "dia"
+    assert territorial["geradoEm"]
+    assert staff_dashboard["alertasDemanda"]["reincidencias"][0]["exemplos"] == []
+
+
+def test_territorial_exploration_compares_windows_and_preserves_grid_filters(app, client):
+    _, csrf = login(client)
+    territory = post(client, "/api/v1/admin/territorios", csrf, {"nome": "Centro Sul"}).json
+    created_ids = []
+    for index in range(6):
+        created = post(
+            client,
+            "/api/v1/solicitacoes",
+            csrf,
+            {
+                "origem": "WHATSAPP",
+                "titulo": f"Demanda comparável {index}",
+                "descricao": "Demanda para comparação territorial entre janelas.",
+                "territorioId": territory["id"],
+                "latitude": -21.762,
+                "longitude": -43.315,
+            },
+        )
+        assert created.status_code == 201
+        created_ids.append(uuid.UUID(created.json["id"]))
+
+    with app.app_context():
+        previous_items = db.session.execute(
+            select(ServiceRequest).where(ServiceRequest.id.in_(created_ids[:3]))
+        ).scalars()
+        for item in previous_items:
+            item.created_at = datetime.now(UTC) - timedelta(days=35)
+        db.session.commit()
+
+    dashboard = client.get("/api/v1/painel/operacional")
+    assert dashboard.status_code == 200
+    territorial = dashboard.json["territorial"]
+    assert territorial["comparacao"]["metodo"] == "JANELAS_EQUIVALENTES"
+    assert territorial["comparacao"]["estado"] == "DISPONIVEL"
+    assert territorial["comparacao"]["periodoAtual"]["amostra"] == 3
+    assert territorial["comparacao"]["periodoAnterior"]["amostra"] == 3
+    row = territorial["tabelaTerritorial"][0]
+    assert row["nome"] == "Centro Sul"
+    assert row["total"] == 3
+    assert row["comparacao"]["estado"] == "DISPONIVEL"
+    assert row["comparacao"]["variacaoVolumePercentual"] == 0
+    assert len(row["detalhes"]["amostra"]) == 3
+
+    filtered_grid = client.get(
+        "/api/v1/solicitacoes",
+        query_string={**row["filtroSolicitacoes"], "page": 0, "size": 10},
+    )
+    assert filtered_grid.status_code == 200
+    assert filtered_grid.json["totalElements"] == 3
+
+    saved = post(
+        client,
+        "/api/v1/painel/territorial/visoes",
+        csrf,
+        {"nome": "Centro Sul — WhatsApp", "filtros": row["filtroSolicitacoes"]},
+    )
+    assert saved.status_code == 201
+    assert saved.json["filtros"]["territorioId"] == territory["id"]
+    views = client.get("/api/v1/painel/territorial/visoes")
+    assert [item["nome"] for item in views.json["content"]] == ["Centro Sul — WhatsApp"]
 
 
 def test_tenant_jurisdiction_can_be_configured_and_feeds_dashboard(app, client, monkeypatch):

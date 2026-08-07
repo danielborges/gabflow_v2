@@ -93,6 +93,43 @@ def test_protocol_is_sequential_per_tenant(client):
     assert second.json["protocolo"] == "GF-2026-000002"
 
 
+def test_list_supports_pagination_column_search_and_sorting(client):
+    csrf = login(client)
+    create_request(client, csrf, "Terceira solicitação")
+    create_request(client, csrf, "Primeira solicitação")
+    create_request(client, csrf, "Segunda solicitação")
+
+    first_page = client.get(
+        "/api/v1/solicitacoes?size=2&page=0&sort=solicitacao&direction=asc"
+    )
+    assert first_page.status_code == 200
+    assert first_page.json["size"] == 2
+    assert first_page.json["page"] == 0
+    assert first_page.json["totalElements"] == 3
+    assert first_page.json["totalPages"] == 2
+    assert [item["titulo"] for item in first_page.json["content"]] == [
+        "Primeira solicitação",
+        "Segunda solicitação",
+    ]
+
+    second_page = client.get(
+        "/api/v1/solicitacoes?size=2&page=1&sort=solicitacao&direction=asc"
+    )
+    assert [item["titulo"] for item in second_page.json["content"]] == [
+        "Terceira solicitação"
+    ]
+
+    filtered = client.get(
+        "/api/v1/solicitacoes?solicitacao=segunda&origem=WHATSAPP&prioridade=MEDIA"
+    )
+    assert filtered.status_code == 200
+    assert filtered.json["totalElements"] == 1
+    assert filtered.json["content"][0]["titulo"] == "Segunda solicitação"
+
+    invalid_sort = client.get("/api/v1/solicitacoes?sort=campo-inexistente")
+    assert invalid_sort.status_code == 422
+
+
 def test_rejects_closing_without_reason(client):
     csrf = login(client)
     created = create_request(client, csrf)

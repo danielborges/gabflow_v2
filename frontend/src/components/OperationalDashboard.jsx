@@ -32,9 +32,11 @@ const statusLabels = {
   CANCELADA: "Cancelada",
 };
 
+const defaultPeriod = dashboardDefaultPeriod();
+const emptyTerritorialRows = [];
 const defaultDashboardFilters = {
-  inicio: "",
-  fim: "",
+  inicio: defaultPeriod.inicio,
+  fim: defaultPeriod.fim,
   categoria: "",
   canal: "",
   territorioId: "",
@@ -48,6 +50,9 @@ export function OperationalDashboard({ onOpenRequests }) {
   const [geocoding, setGeocoding] = useState(false);
   const [activePanel, setActivePanel] = useState("operation");
   const [filters, setFilters] = useState(defaultDashboardFilters);
+  const [savedViews, setSavedViews] = useState([]);
+  const [savedViewName, setSavedViewName] = useState("");
+  const [savedViewError, setSavedViewError] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -66,10 +71,17 @@ export function OperationalDashboard({ onOpenRequests }) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    apiRequest("/api/v1/painel/territorial/visoes")
+      .then((response) => setSavedViews(response.content || []))
+      .catch(() => setSavedViews([]));
+  }, []);
+
   async function geocodePending() {
     setGeocoding(true);
     setError("");
     try {
+      recordTerritorialMetric("ACAO_INICIADA", filters);
       await apiRequest("/api/v1/painel/territorial/geocodificar", { method: "POST" });
       await load();
     } catch (requestError) {
@@ -77,6 +89,41 @@ export function OperationalDashboard({ onOpenRequests }) {
     } finally {
       setGeocoding(false);
     }
+  }
+
+  function openTerritorialPanel() {
+    setActivePanel("territorial");
+    recordTerritorialMetric("ABA_ABERTA", filters);
+  }
+
+  function changeFilters(nextFilters) {
+    setFilters(nextFilters);
+    if (activePanel === "territorial") {
+      recordTerritorialMetric("FILTRO_APLICADO", nextFilters);
+    }
+  }
+
+  async function saveCurrentView() {
+    if (!savedViewName.trim()) return;
+    setSavedViewError("");
+    try {
+      const saved = await apiRequest("/api/v1/painel/territorial/visoes", {
+        method: "POST",
+        body: JSON.stringify({ nome: savedViewName.trim(), filtros: filters }),
+      });
+      setSavedViews((current) => [
+        ...current.filter((item) => item.id !== saved.id),
+        saved,
+      ].sort((left, right) => left.nome.localeCompare(right.nome)));
+      setSavedViewName("");
+    } catch (requestError) {
+      setSavedViewError(requestError.message);
+    }
+  }
+
+  function investigateTerritory(requestFilters) {
+    recordTerritorialMetric("INVESTIGACAO_INICIADA", filters);
+    onOpenRequests?.(requestFilters);
   }
 
   if (error) return <p className="form-error dashboard-error">{error}</p>;
@@ -106,7 +153,7 @@ export function OperationalDashboard({ onOpenRequests }) {
       <DashboardFilters
         filters={filters}
         options={data.filtros?.opcoes}
-        onChange={setFilters}
+        onChange={changeFilters}
         onClear={() => setFilters(defaultDashboardFilters)}
       />
       <section className="metric-grid">
@@ -121,7 +168,7 @@ export function OperationalDashboard({ onOpenRequests }) {
         <button className={activePanel === "operation" ? "active" : ""} onClick={() => setActivePanel("operation")}>
           Operação
         </button>
-        <button className={activePanel === "territorial" ? "active" : ""} onClick={() => setActivePanel("territorial")}>
+        <button className={activePanel === "territorial" ? "active" : ""} onClick={openTerritorialPanel}>
           Inteligência territorial
         </button>
         <button className={activePanel === "report" ? "active" : ""} onClick={() => setActivePanel("report")}>
@@ -133,7 +180,7 @@ export function OperationalDashboard({ onOpenRequests }) {
           <OperationalMetricsPanel metrics={data.metricasOperacionais} />
           <PrivacyAggregationNotice summary={data.privacidadeAgregacao} />
           <DemandAlertsPanel alerts={data.alertasDemanda} />
-          <header><div><h2>Fila prioritária</h2><p>Demandas abertas ordenadas por atraso e prazo.</p></div><button className="secondary-button" onClick={onOpenRequests}>Ver solicitações</button></header>
+          <header><div><h2>Fila prioritária</h2><p>Demandas abertas ordenadas por atraso e prazo.</p></div><button className="secondary-button" onClick={() => onOpenRequests?.()}>Ver solicitações</button></header>
           {data.filaPrioritaria.length === 0 ? <p className="muted-copy">Nenhuma demanda aberta.</p> : (
             <div className="priority-queue">
               {data.filaPrioritaria.map((item) => (
@@ -168,7 +215,22 @@ export function OperationalDashboard({ onOpenRequests }) {
         </div>
       </section>}
       {activePanel === "territorial" && (
-        <TerritorialWorkspace data={data} busy={geocoding} onGeocode={geocodePending} />
+        <>
+          <TerritorialSavedViews
+            items={savedViews}
+            name={savedViewName}
+            error={savedViewError}
+            onNameChange={setSavedViewName}
+            onApply={(view) => changeFilters({ ...defaultDashboardFilters, ...view.filtros })}
+            onSave={saveCurrentView}
+          />
+          <TerritorialWorkspace
+            data={data}
+            busy={geocoding}
+            onGeocode={geocodePending}
+            onInvestigate={investigateTerritory}
+          />
+        </>
       )}
       {activePanel === "report" && <MonthlyMandateReport />}
     </>
@@ -176,7 +238,7 @@ export function OperationalDashboard({ onOpenRequests }) {
 }
 
 function DashboardFilters({ filters, options = {}, onChange, onClear }) {
-  const update = (key, value) => onChange((current) => ({ ...current, [key]: value }));
+  const update = (key, value) => onChange({ ...filters, [key]: value });
   const hasActiveFilters = Object.values(filters).some((value) => value && value !== "dia");
   return (
     <section className="dashboard-filter-panel">
@@ -222,17 +284,136 @@ function PrivacyAggregationNotice({ summary }) {
   );
 }
 
-function TerritorialWorkspace({ data, busy, onGeocode }) {
+function TerritorialSavedViews({ items, name, error, onNameChange, onApply, onSave }) {
+  return (
+    <section className="territorial-saved-views">
+      <label>
+        Visão salva
+        <select defaultValue="" onChange={(event) => {
+          const view = items.find((item) => item.id === event.target.value);
+          if (view) onApply(view);
+        }}>
+          <option value="">Selecionar visão</option>
+          {items.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}
+        </select>
+      </label>
+      <label>
+        Nome da visão
+        <input value={name} maxLength="80" onChange={(event) => onNameChange(event.target.value)} placeholder="Ex.: Saúde — últimos 30 dias" />
+      </label>
+      <button className="secondary-button compact" disabled={name.trim().length < 2} onClick={onSave}>Salvar visão</button>
+      {error && <p className="form-error">{error}</p>}
+    </section>
+  );
+}
+
+function TerritorialWorkspace({ data, busy, onGeocode, onInvestigate }) {
+  const rows = data.territorial?.tabelaTerritorial || emptyTerritorialRows;
+  const [selectedId, setSelectedId] = useState(rows[0]?.id || null);
+  const [sort, setSort] = useState({ key: "total", direction: "desc" });
+  useEffect(() => {
+    if (!rows.some((item) => item.id === selectedId)) setSelectedId(rows[0]?.id || null);
+  }, [rows, selectedId]);
+  const selected = rows.find((item) => item.id === selectedId) || null;
+  const sortedRows = [...rows].sort((left, right) => {
+    const leftValue = left[sort.key] ?? -Infinity;
+    const rightValue = right[sort.key] ?? -Infinity;
+    const result = typeof leftValue === "string"
+      ? leftValue.localeCompare(rightValue)
+      : Number(leftValue) - Number(rightValue);
+    return sort.direction === "asc" ? result : -result;
+  });
+  function changeSort(key) {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "desc" ? "asc" : "desc",
+    }));
+  }
   return (
     <section className="territorial-workspace">
-      <TerritorialPanel data={data.territorial} busy={busy} onGeocode={onGeocode} expanded />
+      <div className="territorial-exploration-main">
+        <TerritorialComparisonSummary comparison={data.territorial?.comparacao} />
+        <TerritorialPanel
+          data={data.territorial}
+          busy={busy}
+          onGeocode={onGeocode}
+          selectedTerritoryId={selectedId}
+          onSelectTerritory={setSelectedId}
+          expanded
+        />
+        <TerritorialTable
+          rows={sortedRows}
+          selectedId={selectedId}
+          sort={sort}
+          onSort={changeSort}
+          onSelect={setSelectedId}
+          onInvestigate={onInvestigate}
+        />
+      </div>
       <aside className="territorial-support">
-        <Breakdown title="Por território" items={data.porTerritorio} />
-        <Breakdown title="Por categoria" items={data.porCategoria} />
-        <DemandAlertsPanel alerts={data.alertasDemanda} />
+        <TerritorialInvestigationPanel item={selected} onInvestigate={onInvestigate} />
       </aside>
     </section>
   );
+}
+
+function TerritorialComparisonSummary({ comparison }) {
+  if (!comparison) return null;
+  const available = comparison.estado === "DISPONIVEL";
+  return <section className={`territorial-comparison-summary ${available ? "" : "insufficient"}`}>
+    <div><strong>Comparação temporal</strong><span>{comparison.metodo === "JANELAS_EQUIVALENTES" ? "Janelas equivalentes" : comparison.metodo}</span></div>
+    <div><strong>{formatPeriodRange(comparison.periodoAtual)}</strong><span>{comparison.periodoAtual?.amostra || 0} solicitações atuais</span></div>
+    <div><strong>{formatPeriodRange(comparison.periodoAnterior)}</strong><span>{comparison.periodoAnterior?.amostra || 0} solicitações anteriores</span></div>
+    <div><strong>{available ? formatVariation(comparison.variacaoVolumePercentual) : "Amostra insuficiente"}</strong><span>variação de volume</span></div>
+  </section>;
+}
+
+function TerritorialTable({ rows, selectedId, sort, onSort, onSelect, onInvestigate }) {
+  const headers = [
+    ["nome", "Território"], ["total", "Volume"], ["percentualAtraso", "Atraso"],
+    ["taxaSolucao", "Solução"], ["tempoMedianoPrimeiraRespostaHoras", "1ª resposta"],
+    ["tempoMedianoResolucaoHoras", "Resolução"], ["tendencia", "Tendência"],
+  ];
+  return <section className="territorial-table-panel">
+    <header><div><h2>Tabela territorial</h2><p>Alternativa acessível ao mapa, com o mesmo recorte e seleção.</p></div></header>
+    {!rows.length ? <p className="muted-copy">Amostra insuficiente para comparar territórios.</p> : <div className="table-scroll">
+      <table className="territorial-table">
+        <thead><tr>{headers.map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.direction : "none"}><button onClick={() => onSort(key)}>{label}</button></th>)}<th>Ação</th></tr></thead>
+        <tbody>{rows.map((item) => <tr key={item.id} className={item.id === selectedId ? "selected" : ""} tabIndex="0" onClick={() => onSelect(item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(item.id); }}>
+          <td><strong>{item.nome}</strong><small>{formatPercent(item.qualidadeGeograficaPercentual)} com localização</small></td>
+          <td>{item.total}</td><td>{formatPercent(item.percentualAtraso)}</td><td>{formatPercent(item.taxaSolucao)}</td>
+          <td>{formatHours(item.tempoMedianoPrimeiraRespostaHoras)}</td><td>{formatHours(item.tempoMedianoResolucaoHoras)}</td>
+          <td><TrendBadge item={item} /></td>
+          <td><button className="secondary-button compact" onClick={(event) => { event.stopPropagation(); onInvestigate(item.filtroSolicitacoes); }}>Ver solicitações</button></td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </section>;
+}
+
+function TrendBadge({ item }) {
+  if (item.comparacao?.estado !== "DISPONIVEL") return <span className="trend-badge neutral">Sem base</span>;
+  const labels = { CRESCIMENTO: "Crescimento", REDUCAO: "Redução", ESTAVEL: "Estável" };
+  return <span className={`trend-badge ${item.tendencia.toLowerCase()}`}>{labels[item.tendencia] || "Sem comparação"}</span>;
+}
+
+function TerritorialInvestigationPanel({ item, onInvestigate }) {
+  if (!item) return <section className="territorial-investigation-panel"><h2>Detalhamento</h2><p className="muted-copy">Selecione um território no mapa ou na tabela.</p></section>;
+  const comparison = item.comparacao || {};
+  return <section className="territorial-investigation-panel">
+    <header><div><h2>{item.nome}</h2><p>{item.total} solicitações no período</p></div></header>
+    {item.estadoQualidade === "BAIXA_QUALIDADE" && <p className="territorial-quality-state">Baixa qualidade geográfica: interprete o recorte com cautela.</p>}
+    {comparison.estado === "DISPONIVEL" ? <div className="territorial-comparison-grid">
+      <span><strong>{formatVariation(comparison.variacaoVolumePercentual)}</strong><small>volume</small></span>
+      <span><strong>{formatPoints(comparison.variacaoAtrasoPontosPercentuais)}</strong><small>atraso</small></span>
+      <span><strong>{formatPoints(comparison.variacaoSolucaoPontosPercentuais)}</strong><small>solução</small></span>
+    </div> : <p className="territorial-sample-state">{comparison.estado === "SEM_COMPARACAO" ? "Não há registros na janela anterior equivalente." : `Amostra anterior insuficiente (${comparison.amostraAnterior || 0} registros).`}</p>}
+    <Breakdown title="Categorias" items={item.detalhes?.categorias || []} />
+    <Breakdown title="Órgãos" items={item.detalhes?.orgaos || []} />
+    <Breakdown title="Responsáveis" items={item.detalhes?.responsaveis || []} />
+    <section className="territorial-examples"><h3>Exemplos autorizados</h3>{item.detalhes?.amostra?.length ? item.detalhes.amostra.map((request) => <article key={request.id}><strong>{request.protocolo}</strong><span>{request.titulo}</span></article>) : <p className="muted-copy">Sem exemplos disponíveis para seu perfil.</p>}</section>
+    <button className="primary-button" onClick={() => onInvestigate(item.filtroSolicitacoes)}>Ver solicitações</button>
+  </section>;
 }
 
 function MonthlyMandateReport() {
@@ -464,12 +645,13 @@ function DemandAlertList({ title, icon: Icon, empty, items, renderItem }) {
   );
 }
 
-function TerritorialPanel({ data, busy, onGeocode, expanded = false }) {
+function TerritorialPanel({ data, busy, onGeocode, selectedTerritoryId, onSelectTerritory, expanded = false }) {
   const points = data?.pontos || [];
   const hotspots = data?.hotspots || [];
   const heatmap = data?.heatmap || [];
   const jurisdiction = data?.jurisdicao;
   const privacy = data?.privacidade;
+  const quality = data?.qualidadeDados || {};
   const hasSuppressedTerritorialData = Boolean(
     privacy?.pontosSuprimidos || privacy?.hotspotsSuprimidos,
   );
@@ -488,8 +670,11 @@ function TerritorialPanel({ data, busy, onGeocode, expanded = false }) {
       </header>
       <div className="territorial-coverage">
         <MapPin size={18} />
-        <span><strong>{formatPercent(data?.coberturaPercentual)}</strong><small>cobertura geográfica</small></span>
-        <span><strong>{data?.semCoordenadas || 0}</strong><small>sem coordenadas</small></span>
+        <span><strong>{formatPercent(quality.territorioIdentificadoPercentual)}</strong><small>território identificado</small></span>
+        <span><strong>{quality.coordenadasAproximadas || 0}</strong><small>coordenadas aproximadas</small></span>
+        <span><strong>{quality.coordenadasVerificadas || 0}</strong><small>coordenadas verificadas</small></span>
+        <span><strong>{quality.semCoordenadas || 0}</strong><small>sem coordenadas</small></span>
+        <span><strong>{(quality.coordenadasAmbiguas || 0) + (quality.foraDaJurisdicao || 0)}</strong><small>exigem revisão</small></span>
       </div>
       {jurisdiction && <div className="territorial-jurisdiction">
         <strong>{jurisdiction.nome}</strong>
@@ -512,7 +697,7 @@ function TerritorialPanel({ data, busy, onGeocode, expanded = false }) {
       </div>
       <div className="territorial-heatmap">
         <h3>Mapa de calor</h3>
-        <TerritorialHeatmapMap cells={heatmap} points={points} jurisdiction={jurisdiction} expanded={expanded} />
+        <TerritorialHeatmapMap cells={heatmap} points={points} jurisdiction={jurisdiction} selectedTerritoryId={selectedTerritoryId} onSelectTerritory={onSelectTerritory} expanded={expanded} />
         {heatmap.length ? heatmap.slice(0, visibleLimit).map((item) => (
           <article key={`${item.territorio}-${item.latitude}-${item.longitude}`}>
             <span>{item.territorio}</span>
@@ -528,13 +713,17 @@ function TerritorialPanel({ data, busy, onGeocode, expanded = false }) {
             <Navigation size={14} />
             <span><strong>{item.protocolo}</strong><small>{item.territorio} · {coordinateLabel(item)}</small></span>
           </article>
-        )) : <p className="muted-copy">Nenhuma solicitação com coordenadas.</p>}
+        )) : <p className="muted-copy">
+          {privacy?.visualizacaoPontosPermitida === false
+            ? "Seu perfil visualiza apenas dados agregados por célula territorial."
+            : "Nenhuma solicitação em uma célula com agregação segura."}
+        </p>}
       </div>
     </section>
   );
 }
 
-function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, expanded = false }) {
+function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, expanded = false }) {
   const geojsonCoordinates = extractGeojsonCoordinates(jurisdiction?.geojson);
   const coordinates = [...cells, ...points].filter(hasCoordinates);
   const mapCoordinates = coordinates.length ? coordinates : geojsonCoordinates;
@@ -588,7 +777,16 @@ function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, e
           <path className="territorial-map-road" d="M46 178 C76 126 121 123 162 83 S232 45 294 38" />
           <path className="territorial-map-road" d="M18 108 C72 102 113 139 158 132 S242 85 304 94" />
         {projectedCells.map((item) => (
-          <g key={`${item.territorio}-${item.latitude}-${item.longitude}`}>
+          <g
+            key={`${item.territorio}-${item.latitude}-${item.longitude}`}
+            className={item.territorioId === selectedTerritoryId ? "selected" : ""}
+            role="button"
+            tabIndex="0"
+            onClick={() => onSelectTerritory?.(item.territorioId || "sem-territorio")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") onSelectTerritory?.(item.territorioId || "sem-territorio");
+            }}
+          >
             <circle
               className="territorial-map-heat"
               cx={item.x}
@@ -624,6 +822,45 @@ function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, e
 function Breakdown({ title, items, labelFormatter = (value) => value }) {
   const maximum = Math.max(...items.map((item) => item.total), 1);
   return <section className="breakdown"><h2>{title}</h2>{items.length === 0 ? <p className="muted-copy">Sem dados.</p> : items.slice(0, 6).map((item) => <div key={item.nome}><span>{labelFormatter(item.nome)}</span><strong>{item.total}</strong><i style={{ width: `${(item.total / maximum) * 100}%` }} /></div>)}</section>;
+}
+
+function dashboardDefaultPeriod() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - 29);
+  return { inicio: dateInputValue(start), fim: dateInputValue(end) };
+}
+
+function dateInputValue(value) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatPeriodRange(period) {
+  if (!period?.inicio || !period?.fim) return "Período indisponível";
+  return `${formatDate(`${period.inicio}T12:00:00`)} – ${formatDate(`${period.fim}T12:00:00`)}`;
+}
+
+function formatVariation(value) {
+  if (value === null || value === undefined) return "Sem base";
+  return `${value > 0 ? "+" : ""}${formatNumber(value)}%`;
+}
+
+function formatPoints(value) {
+  if (value === null || value === undefined) return "Sem base";
+  return `${value > 0 ? "+" : ""}${formatNumber(value)} p.p.`;
+}
+
+function recordTerritorialMetric(event, filters = {}) {
+  const quantidadeFiltros = Object.entries(filters).filter(
+    ([key, value]) => value && !(key === "granularidade" && value === "dia"),
+  ).length;
+  apiRequest("/api/v1/painel/territorial/metricas-fluxo", {
+    method: "POST",
+    body: JSON.stringify({ evento: event, quantidadeFiltros }),
+  }).catch(() => {});
 }
 
 function statusLabel(value) {

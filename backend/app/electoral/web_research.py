@@ -20,7 +20,9 @@ class ElectoralWebSource:
     published_at: str | None
 
 
-def research_electoral_context(question: str, analysis: dict) -> tuple[list[ElectoralWebSource], dict]:
+def research_electoral_context(
+    question: str, analysis: dict
+) -> tuple[list[ElectoralWebSource], dict]:
     if not current_app.config["ELECTORAL_WEB_RESEARCH_ENABLED"]:
         return [], {"enabled": False, "applied": False, "resultCount": 0}
 
@@ -72,7 +74,9 @@ def _research_queries(question: str, analysis: dict) -> list[str]:
     queries = []
     for name in names[:2]:
         prefix = " ".join(filter(None, (f'"{name}"', f'"{place}"' if place else "")))
-        queries.extend((f"{prefix} eleicoes campanha propostas", f"{prefix} vereador atuacao noticias"))
+        queries.extend(
+            (f"{prefix} eleicoes campanha propostas", f"{prefix} vereador atuacao noticias")
+        )
     if place:
         queries.append(f'"{place}" perfil socioeconomico bairros IBGE')
     return list(dict.fromkeys(query[:300] for query in queries if query.strip()))[:5]

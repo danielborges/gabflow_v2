@@ -1,5 +1,10 @@
 # Release 5 - Inteligencia territorial
 
+> **Revisao de produto:** a Release 5 permanece como registro da base entregue. A avaliacao
+> posterior identificou que o painel ainda e predominantemente descritivo e requer uma evolucao
+> orientada a confiabilidade, investigacao e acao. O plano vigente esta em
+> [`Territorial-intelligence-evolution-strategy.md`](Territorial-intelligence-evolution-strategy.md).
+
 ## Escopo entregue
 
 | Spec | Implementacao |
@@ -7,7 +12,7 @@
 | RF-080 | Painel operacional com volume por status, categoria, territorio, orgao, canal e periodo, com filtros por data, categoria, canal, territorio e orgao |
 | RF-081 | Metricas de tempo ate primeira resposta, primeiro encaminhamento, encerramento e resolucao |
 | RF-082 | Reaberturas contabilizadas e alertas de reincidencia por categoria, territorio e celula geografica |
-| RF-083 | Mapa de calor territorial com pontos geocodificados, hotspots e limites da jurisdicao |
+| RF-083 | Base do mapa de calor territorial com pontos geocodificados, hotspots e limites da jurisdicao; interacao e drill-down permanecem planejados |
 | RF-085 | Relatorio mensal do mandato com resumo, destaques, indicadores agregados e evidencias rastreaveis por protocolo |
 | RF-086 | Indicadores por orgao destinatario no painel e no relatorio mensal |
 | RF-087 | Fila prioritaria com demandas atrasadas, proximas do prazo, sem responsavel, aguardando orgao e retornos pendentes |
@@ -55,6 +60,20 @@
 
 ## Limites desta entrega
 
+- o heatmap PostGIS atual nao compartilha integralmente o mesmo contexto de filtros das demais
+  agregacoes; a unificacao e criterio de aceite do incremento 5.1;
+- a metrica de cobertura atual indica presenca de coordenadas, mas ainda nao diferencia origem,
+  aproximacao, verificacao, confianca e validade dentro da jurisdicao;
+- o fallback local gera coordenadas aproximadas e nao deve ser usado como fonte cartografica
+  verificada nem como solucao definitiva para outros municipios ou estados;
+- hotspots, pontos e alertas ainda nao oferecem drill-down consistente para as solicitacoes nem
+  criacao de tarefa, agenda, visita, roteiro ou encaminhamento;
+- a privacidade territorial precisa ser refinada para o menor recorte retornado e para permissoes
+  distintas de agregado, exemplo e ponto individual;
+- o mapa atual e uma representacao visual estatica; tabela equivalente, selecao, camadas,
+  navegacao e exportacao permanecem planejadas;
+- o painel nao possui telemetria de produto suficiente para medir adocao, investigacao e
+  conversao em acao;
 - RF-084 esta parcialmente coberto por filtros; exportacao de dashboard ainda depende de uma entrega especifica.
 - RA-016 depende de um modelo explicito de agrupamento por evento urbano, alem da reincidencia por local ja entregue.
 - RA-017 e RA-018 dependem da consolidacao analitica entre solicitacoes e producao legislativa.
@@ -62,6 +81,19 @@
 - RA-021, RA-022 e RA-023 ainda exigem metricas dedicadas de taxa de solucao por tema, qualidade cadastral e carga por equipe.
 - RA-024 nao foi implementado; previsao de volume com faixa de incerteza deve entrar como incremento posterior.
 - A geocodificacao local e aproximada e deve ser substituida ou calibrada por provedor geocodificador governado quando houver requisito de precisao cartografica.
+
+## Direcao aprovada para evolucao
+
+1. **5.1 Confiabilidade territorial:** filtros, proveniencia, qualidade, jurisdicao, privacidade e
+   telemetria.
+2. **5.2 Exploracao acionavel:** comparacao temporal, tabela, painel territorial e navegacao para
+   os casos subjacentes.
+3. **5.3 Cartografia e qualidade governadas:** mapa interativo, geocodificador, fila de revisao e
+   exportacao agregada.
+4. **5.4 Operacao integrada:** tarefas, agenda, visitas, roteiros, encaminhamentos e ciclo de vida
+   do alerta.
+5. **5.5 Inteligencia avancada:** cobertura, atuacao do mandato e previsao com incerteza somente
+   apos os gates de qualidade, privacidade e adocao.
 
 ## Validacao
 

@@ -13,3 +13,4 @@ frontend/dist/
 .vscode/
 *.log
 *.db
+!backend/Dockerfile.db

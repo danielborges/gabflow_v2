@@ -29,13 +29,18 @@ def test_web_research_builds_context_and_filters_unsafe_results(app, monkeypatch
                     {
                         "title": "Perfil público e atuação territorial",
                         "url": "https://example.org/noticia",
-                        "content": "A reportagem descreve agenda pública e presença territorial da candidatura.",
+                        "content": (
+                            "A reportagem descreve agenda pública e presença "
+                            "territorial da candidatura."
+                        ),
                         "engine": "duckduckgo",
                     },
                     {
                         "title": "Endereço interno",
                         "url": "http://127.0.0.1/private",
-                        "content": "Este resultado interno não pode ser exposto como fonte pública.",
+                        "content": (
+                            "Este resultado interno não pode ser exposto como fonte pública."
+                        ),
                     },
                 ]
             }

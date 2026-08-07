@@ -1,11 +1,15 @@
 import {
   AudioLines,
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
+  ArrowUpDown,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
-  Filter,
   Link2,
   RotateCcw,
   ScanText,
@@ -48,6 +52,16 @@ const statuses = [
   ["CANCELADA", "Cancelada"],
 ];
 
+const priorities = [
+  ["", "Todas as prioridades"],
+  ["BAIXA", "Baixa"],
+  ["MEDIA", "Média"],
+  ["ALTA", "Alta"],
+  ["CRITICA", "Crítica"],
+];
+
+const pageSizes = [10, 25, 50, 100];
+
 const emptyReferences = {
   categories: [],
   citizens: [],
@@ -74,22 +88,47 @@ const attachmentMimeTypes = [
 ];
 const maximumAttachmentBytes = 15 * 1024 * 1024;
 
-export function RequestsPage({ user, initialSearch = "", initialCitizenId, initialRequestId, onInitialContextConsumed }) {
+export function RequestsPage({ user, initialSearch = "", initialFilters, initialCitizenId, initialRequestId, onInitialContextConsumed, onInitialFiltersConsumed }) {
   const readOnly = user?.role === "representative";
   const canDistribute = user?.role === "admin" || user?.role === "representative" || user?.chefeGabinete === true;
   const [items, setItems] = useState([]);
   const [references, setReferences] = useState(emptyReferences);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [sort, setSort] = useState({ key: "criadaEm", direction: "desc" });
+  const [columnFilters, setColumnFilters] = useState({
+    protocolo: "",
+    solicitacao: "",
+    origem: "",
+    prioridade: "",
+    responsavel: "",
+  });
   const [showCreate, setShowCreate] = useState(false);
   const [createCitizenId, setCreateCitizenId] = useState("");
   const [selected, setSelected] = useState(null);
+  const [territorialFilters, setTerritorialFilters] = useState({});
 
   useEffect(() => {
-    if (initialSearch) setSearch(initialSearch);
+    if (initialSearch) {
+      setPage(0);
+      setColumnFilters((current) => ({ ...current, protocolo: initialSearch }));
+    }
   }, [initialSearch]);
+
+  useEffect(() => {
+    if (!initialFilters) return;
+    setPage(0);
+    setTerritorialFilters(initialFilters);
+    if (initialFilters.canal) {
+      setColumnFilters((current) => ({ ...current, origem: initialFilters.canal }));
+    }
+    onInitialFiltersConsumed?.();
+  }, [initialFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialCitizenId && !readOnly) {
@@ -103,18 +142,31 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ size: "50" });
+    const params = new URLSearchParams({
+      page: String(page),
+      size: String(pageSize),
+      sort: sort.key,
+      direction: sort.direction,
+    });
     if (status) params.set("status", status);
-    if (search.trim()) params.set("q", search.trim());
+    Object.entries(columnFilters).forEach(([key, value]) => {
+      if (value.trim()) params.set(key, value.trim());
+    });
+    Object.entries(territorialFilters).forEach(([key, value]) => {
+      if (!value || key === "canal") return;
+      params.set(key, String(value));
+    });
     try {
       const data = await apiRequest(`/api/v1/solicitacoes?${params}`);
-      setItems(data.content);
+      setItems(data.content || []);
+      setTotalElements(data.totalElements ?? data.content?.length ?? 0);
+      setTotalPages(data.totalPages ?? (data.content?.length ? 1 : 0));
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setLoading(false);
     }
-  }, [search, status]);
+  }, [columnFilters, page, pageSize, sort, status, territorialFilters]);
 
   const loadReferences = useCallback(async () => {
     try {
@@ -157,6 +209,19 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
     setSelected(details);
   }
 
+  function changeColumnFilter(name, value) {
+    setPage(0);
+    setColumnFilters((current) => ({ ...current, [name]: value }));
+  }
+
+  function changeSort(key) {
+    setPage(0);
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  }
+
   return (
     <>
       <section className="page-heading request-heading">
@@ -170,26 +235,24 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
         </button>}
       </section>
 
-      <section className="request-toolbar" aria-label="Filtros de solicitações">
-        <label className="toolbar-search">
-          <Search size={18} aria-hidden="true" />
-          <input
-            aria-label="Buscar solicitações"
-            placeholder="Protocolo, título ou descrição"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <label className="select-wrap">
-          <Filter size={17} aria-hidden="true" />
-          <select aria-label="Filtrar por status" value={status} onChange={(event) => setStatus(event.target.value)}>
-            {statuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-          <ChevronDown size={16} aria-hidden="true" />
-        </label>
-      </section>
-
       <section className="request-list" aria-live="polite">
+        {Object.keys(territorialFilters).length > 0 && <div className="territorial-request-context">
+          <span><strong>Recorte territorial aplicado</strong><small>{territorialFilterSummary(territorialFilters)}</small></span>
+          <button className="secondary-button compact" onClick={() => { setTerritorialFilters({}); setColumnFilters((current) => ({ ...current, origem: "" })); }}>Limpar recorte</button>
+        </div>}
+        <div className="request-grid-summary">
+          <span>{loading ? "Consultando solicitações..." : `${totalElements} ${totalElements === 1 ? "registro" : "registros"}`}</span>
+          <label>
+            Registros por página
+            <select
+              aria-label="Registros por página"
+              value={pageSize}
+              onChange={(event) => { setPage(0); setPageSize(Number(event.target.value)); }}
+            >
+              {pageSizes.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+        </div>
         {error && <p className="form-error" role="alert">{error}</p>}
         {loading ? (
           <div className="table-message">Carregando solicitações...</div>
@@ -204,8 +267,22 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
             <table className={`request-table ${canDistribute ? "with-assignee" : ""}`}>
               <thead>
                 <tr>
-                  <th>Protocolo</th><th>Solicitação</th><th>Origem</th>
-                  <th>Prioridade</th><th>Status</th>{canDistribute && <th>Responsável</th>}<th><span className="sr-only">Abrir</span></th>
+                  <SortableHeader label="Protocolo" sortKey="protocolo" sort={sort} onSort={changeSort} />
+                  <SortableHeader label="Solicitação" sortKey="solicitacao" sort={sort} onSort={changeSort} />
+                  <SortableHeader label="Origem" sortKey="origem" sort={sort} onSort={changeSort} />
+                  <SortableHeader label="Prioridade" sortKey="prioridade" sort={sort} onSort={changeSort} />
+                  <SortableHeader label="Status" sortKey="status" sort={sort} onSort={changeSort} />
+                  {canDistribute && <SortableHeader label="Responsável" sortKey="responsavel" sort={sort} onSort={changeSort} />}
+                  <th><span className="sr-only">Abrir</span></th>
+                </tr>
+                <tr className="request-column-filters">
+                  <th><input aria-label="Filtrar protocolo" value={columnFilters.protocolo} onChange={(event) => changeColumnFilter("protocolo", event.target.value)} placeholder="Protocolo" /></th>
+                  <th><input aria-label="Filtrar solicitação" value={columnFilters.solicitacao} onChange={(event) => changeColumnFilter("solicitacao", event.target.value)} placeholder="Título, descrição ou categoria" /></th>
+                  <th><select aria-label="Filtrar coluna origem" value={columnFilters.origem} onChange={(event) => changeColumnFilter("origem", event.target.value)}><option value="">Todas</option>{sources.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></th>
+                  <th><select aria-label="Filtrar coluna prioridade" value={columnFilters.prioridade} onChange={(event) => changeColumnFilter("prioridade", event.target.value)}>{priorities.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></th>
+                  <th><select aria-label="Filtrar coluna status" value={status} onChange={(event) => { setPage(0); setStatus(event.target.value); }}>{statuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></th>
+                  {canDistribute && <th><input aria-label="Filtrar responsável" value={columnFilters.responsavel} onChange={(event) => changeColumnFilter("responsavel", event.target.value)} placeholder="Nome" /></th>}
+                  <th aria-hidden="true" />
                 </tr>
               </thead>
               <tbody>
@@ -230,6 +307,15 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && !error && totalElements > 0 && (
+          <nav className="request-pagination" aria-label="Paginação de solicitações">
+            <span>Página {page + 1} de {Math.max(totalPages, 1)}</span>
+            <div>
+              <button type="button" className="secondary-button" aria-label="Página anterior" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}><ChevronLeft size={17} /> Anterior</button>
+              <button type="button" className="secondary-button" aria-label="Próxima página" disabled={page + 1 >= totalPages} onClick={() => setPage((current) => current + 1)}>Próxima <ChevronRight size={17} /></button>
+            </div>
+          </nav>
         )}
       </section>
 
@@ -262,6 +348,16 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
       )}
     </>
   );
+}
+
+function SortableHeader({ label, sortKey, sort, onSort }) {
+  const active = sort.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort.direction === "asc" ? ArrowUp : ArrowDown;
+  return <th aria-sort={active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
+    <button type="button" className="request-sort-button" onClick={() => onSort(sortKey)}>
+      {label}<Icon size={14} aria-hidden="true" />
+    </button>
+  </th>;
 }
 
 function RequestForm({ references, initialCitizenId = "", canDistribute = false, onClose, onCreated }) {
@@ -2057,4 +2153,15 @@ function entityEntries(entities = {}) {
       .filter(Boolean)
       .map((item) => [labels[key] || key, String(item)]);
   });
+}
+
+function territorialFilterSummary(filters) {
+  const parts = [];
+  if (filters.inicio && filters.fim) parts.push(`${filters.inicio} a ${filters.fim}`);
+  if (filters.categoria) parts.push(filters.categoria);
+  if (filters.canal) parts.push(filters.canal);
+  if (filters.territorioId) parts.push("território selecionado");
+  if (filters.semTerritorio) parts.push("sem território");
+  if (filters.orgaoId) parts.push("órgão selecionado");
+  return parts.join(" · ") || "Filtros preservados da Inteligência Territorial";
 }
