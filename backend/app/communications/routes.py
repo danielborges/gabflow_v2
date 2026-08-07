@@ -63,6 +63,7 @@ from app.models import (
     UserStatus,
 )
 from app.outbox.handlers import EMAIL_RESPONSE_EVENT
+from app.requests.access import request_visibility_filters
 from app.requests.service import creation_event, next_protocol
 
 communications_bp = Blueprint("communications", __name__)
@@ -89,7 +90,7 @@ def _service_request(request_id: uuid.UUID, tenant_id: uuid.UUID):
     return db.session.execute(
         select(ServiceRequest).where(
             ServiceRequest.id == request_id,
-            ServiceRequest.tenant_id == tenant_id,
+            *request_visibility_filters(tenant_id),
         )
     ).scalar_one_or_none()
 

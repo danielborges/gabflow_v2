@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "../api";
 import { RequestsPage } from "./RequestsPage";
@@ -74,5 +74,81 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByRole("dialog", { name: "Registrar solicitação" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Cidadão" })).toHaveValue("Bruno Silva");
+  });
+
+  it("exibe o responsável na grid apenas para usuários que distribuem solicitações", async () => {
+    apiRequest.mockImplementation((url) => Promise.resolve(
+      String(url).startsWith("/api/v1/solicitacoes?")
+        ? {
+            content: [{
+              id: "req-1",
+              protocolo: "GF-2026-000001",
+              titulo: "Iluminação pública",
+              categoria: "Infraestrutura",
+              origem: "EMAIL",
+              prioridade: "MEDIA",
+              status: "NOVA",
+              responsavel: "Maria Operacional",
+              criadaEm: "2026-08-07T12:00:00Z",
+            }],
+          }
+        : { content: [] },
+    ));
+
+    const { unmount } = render(<RequestsPage user={{ role: "admin" }} />);
+    expect(await screen.findByRole("columnheader", { name: "Responsável" })).toBeInTheDocument();
+    expect(screen.getByText("Maria Operacional")).toBeInTheDocument();
+    unmount();
+
+    render(<RequestsPage user={{ role: "staff", chefeGabinete: false }} />);
+    await screen.findByText("Iluminação pública");
+    expect(screen.queryByRole("columnheader", { name: "Responsável" })).not.toBeInTheDocument();
+  });
+
+  it("permite distribuir no formulário somente para administrador, parlamentar ou chefe", () => {
+    const { unmount } = render(<RequestsPage user={{ role: "staff", chefeGabinete: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Nova solicitação" }));
+    expect(screen.queryByRole("combobox", { name: "Responsável" })).not.toBeInTheDocument();
+    unmount();
+
+    render(<RequestsPage user={{ role: "staff", chefeGabinete: true }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Nova solicitação" }));
+    expect(screen.getByRole("combobox", { name: "Responsável" })).toBeInTheDocument();
+  });
+
+  it("oferece ao parlamentar somente a distribuição no detalhe da solicitação", async () => {
+    const request = {
+      id: "req-1",
+      protocolo: "GF-2026-000001",
+      titulo: "Iluminação pública",
+      descricao: "Poste apagado",
+      categoria: "Infraestrutura",
+      origem: "EMAIL",
+      prioridade: "MEDIA",
+      status: "NOVA",
+      criadaEm: "2026-08-07T12:00:00Z",
+      interacoes: [],
+      historico: [],
+      tarefas: [],
+      anexos: [],
+      duplicidades: [],
+      encaminhamentos: [],
+      tentativasContato: [],
+      retornos: [],
+    };
+    apiRequest.mockImplementation((url) => {
+      if (url === "/api/v1/usuarios") return Promise.resolve({ content: [{ id: "user-1", nome: "Maria Operacional" }] });
+      if (url === "/api/v1/solicitacoes/req-1") return Promise.resolve(request);
+      if (String(url).startsWith("/api/v1/solicitacoes?")) return Promise.resolve({ content: [request] });
+      return Promise.resolve({ content: [] });
+    });
+
+    render(<RequestsPage user={{ role: "representative" }} />);
+    fireEvent.click(await screen.findByText("Iluminação pública"));
+
+    const distribution = (await screen.findByRole("heading", { name: "Distribuição" })).closest("section");
+    expect(within(distribution).getByRole("combobox", { name: "Responsável" })).toBeInTheDocument();
+    expect(within(distribution).getByRole("button", { name: "Atualizar responsável" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Acompanhamento" })).not.toBeInTheDocument();
   });
 });

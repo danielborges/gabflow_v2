@@ -76,6 +76,7 @@ const maximumAttachmentBytes = 15 * 1024 * 1024;
 
 export function RequestsPage({ user, initialSearch = "", initialCitizenId, initialRequestId, onInitialContextConsumed }) {
   const readOnly = user?.role === "representative";
+  const canDistribute = user?.role === "admin" || user?.role === "representative" || user?.chefeGabinete === true;
   const [items, setItems] = useState([]);
   const [references, setReferences] = useState(emptyReferences);
   const [loading, setLoading] = useState(true);
@@ -200,11 +201,11 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
           </div>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table className={`request-table ${canDistribute ? "with-assignee" : ""}`}>
               <thead>
                 <tr>
                   <th>Protocolo</th><th>Solicitação</th><th>Origem</th>
-                  <th>Prioridade</th><th>Status</th><th><span className="sr-only">Abrir</span></th>
+                  <th>Prioridade</th><th>Status</th>{canDistribute && <th>Responsável</th>}<th><span className="sr-only">Abrir</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -222,6 +223,7 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
                     <td>{sourceLabel(item.origem)}</td>
                     <td><span className={`priority priority-${item.prioridade.toLowerCase()}`}>{item.prioridade}</span></td>
                     <td><StatusBadge status={item.status} /></td>
+                    {canDistribute && <td className="request-assignee-cell"><strong title={item.responsavel || "Fila geral"}>{item.responsavel || "Fila geral"}</strong></td>}
                     <td><ArrowRight size={18} /></td>
                   </tr>
                 ))}
@@ -234,6 +236,7 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
       {showCreate && !readOnly && (
         <RequestForm
           references={references}
+          canDistribute={canDistribute}
           initialCitizenId={createCitizenId}
           onClose={() => { setShowCreate(false); setCreateCitizenId(""); }}
           onCreated={(created) => {
@@ -249,6 +252,7 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
           request={selected}
           references={references}
           readOnly={readOnly}
+          canDistribute={canDistribute}
           onClose={() => setSelected(null)}
           onChanged={(updated) => {
             setSelected(updated);
@@ -260,7 +264,7 @@ export function RequestsPage({ user, initialSearch = "", initialCitizenId, initi
   );
 }
 
-function RequestForm({ references, initialCitizenId = "", onClose, onCreated }) {
+function RequestForm({ references, initialCitizenId = "", canDistribute = false, onClose, onCreated }) {
   const [form, setForm] = useState({
     origem: "WHATSAPP",
     titulo: "",
@@ -330,7 +334,7 @@ function RequestForm({ references, initialCitizenId = "", onClose, onCreated }) 
             />
             <label>Organização<select name="organizacaoId" value={form.organizacaoId} onChange={change}><option value="">Não informada</option>{references.organizations.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
           </div>
-          <label>Responsável<select name="responsavelId" value={form.responsavelId} onChange={change}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+          {canDistribute && <label>Responsável<select name="responsavelId" value={form.responsavelId} onChange={change}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>}
           <label>Título<input name="titulo" maxLength="180" value={form.titulo} onChange={change} placeholder="Resumo objetivo da demanda" /></label>
           <label>Descrição<textarea name="descricao" minLength="3" required rows="5" value={form.descricao} onChange={change} placeholder="Descreva o relato recebido e os fatos relevantes." /></label>
           <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={(endereco) => setForm((current) => ({ ...current, endereco }))} placeholder="Logradouro, número e referência" territoryBounds={references.jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
@@ -452,7 +456,7 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
   );
 }
 
-function RequestDetails({ request, references, readOnly = false, onClose, onChanged }) {
+function RequestDetails({ request, references, readOnly = false, canDistribute = false, onClose, onChanged }) {
   const linkedCitizen = references.citizens.find((item) => item.id === request.cidadaoId);
   const preferredChannel = linkedCitizen?.canalPreferencial || "";
   const [status, setStatus] = useState(request.status);
@@ -531,15 +535,29 @@ function RequestDetails({ request, references, readOnly = false, onClose, onChan
   async function updateRequest() {
     setError("");
     try {
+      const payload = {
+        status,
+        categoriaId: categoryId || null,
+        motivoEncerramento: reason,
+        evidenciaEncerramento: evidence,
+      };
+      if (canDistribute) payload.responsavelId = assigneeId || null;
       const updated = await apiRequest(`/api/v1/solicitacoes/${request.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          status,
-          categoriaId: categoryId || null,
-          responsavelId: assigneeId || null,
-          motivoEncerramento: reason,
-          evidenciaEncerramento: evidence,
-        }),
+        body: JSON.stringify(payload),
+      });
+      onChanged(updated);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function updateAssignment() {
+    setError("");
+    try {
+      const updated = await apiRequest(`/api/v1/solicitacoes/${request.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ responsavelId: assigneeId || null }),
       });
       onChanged(updated);
     } catch (requestError) {
@@ -839,12 +857,20 @@ function RequestDetails({ request, references, readOnly = false, onClose, onChan
             <h3>Acompanhamento</h3>
             <div className="form-grid">
               <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}>{statuses.slice(1).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label>Responsável<select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+              {canDistribute
+                ? <label>Responsável<select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+                : <div className="request-assignee-readonly"><span>Responsável</span><strong>{request.responsavel || "Fila geral"}</strong></div>}
             </div>
             <label>Categoria<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Sem categoria</option>{references.categories.map((item) => <option key={item.id} value={item.id}>{item.nome} ({item.slaHoras}h)</option>)}</select></label>
             {request.prazo && <p className="muted-copy">Prazo de atendimento: <strong>{formatDate(request.prazo)}</strong></p>}
             {closing && <><label>Motivo do encerramento<textarea rows="2" value={reason} onChange={(event) => setReason(event.target.value)} /></label><label>Evidência ou justificativa<textarea rows="2" value={evidence} onChange={(event) => setEvidence(event.target.value)} /></label></>}
             <button className="secondary-button action-button" onClick={updateRequest}><CheckCircle2 size={17} /> Atualizar acompanhamento</button>
+          </section>}
+
+          {readOnly && canDistribute && <section className="drawer-section">
+            <h3>Distribuição</h3>
+            <label>Responsável<select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+            <button className="secondary-button action-button" onClick={updateAssignment}><CheckCircle2 size={17} /> Atualizar responsável</button>
           </section>}
 
           {!readOnly && <section className="drawer-section">

@@ -19,9 +19,12 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
   const [jurisdiction, setJurisdiction] = useState(null);
   const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get("buscaCidadao") || "");
   const [selectedLetter, setSelectedLetter] = useState(() => new URLSearchParams(window.location.search).get("letraCidadao") || "");
+  const [organizationQuery, setOrganizationQuery] = useState(() => new URLSearchParams(window.location.search).get("buscaOrganizacao") || "");
+  const [selectedOrganizationLetter, setSelectedOrganizationLetter] = useState("");
   const [availableLetters, setAvailableLetters] = useState([]);
   const [modal, setModal] = useState(null);
   const [selectedCitizen, setSelectedCitizen] = useState(null);
+  const [selectedOrganization, setSelectedOrganization] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [assistedReview, setAssistedReview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -94,22 +97,34 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
     }
   }
 
-  const items = tab === "citizens" ? citizens : organizations;
+  const organizationAvailableLetters = availableEntityLetters(organizations, (item) => item.nome);
+  const organizationItems = filterOrganizations(organizations, organizationQuery, selectedOrganizationLetter);
 
   function closeModal() {
     setModal(null);
     setSelectedCitizen(null);
+    setSelectedOrganization(null);
     setAssistedReview(null);
     onAssistedRegistrationConsumed?.();
     const params = new URLSearchParams(window.location.search);
     params.delete("cidadao");
+    params.delete("organizacao");
     window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
   }
 
   function createEntity() {
-    setSelectedCitizen(null);
+    if (tab === "citizens") setSelectedCitizen(null);
+    else setSelectedOrganization(null);
     setAssistedReview(null);
     setModal(tab);
+  }
+
+  function changeTab(nextTab) {
+    setTab(nextTab);
+    setModal(null);
+    setSelectedCitizen(null);
+    setSelectedOrganization(null);
+    setAssistedReview(null);
   }
 
   function changeQuery(value) {
@@ -130,6 +145,19 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
     window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
   }
 
+  function changeOrganizationQuery(value) {
+    setOrganizationQuery(value);
+    const params = new URLSearchParams(window.location.search);
+    if (value) params.set("buscaOrganizacao", value);
+    else params.delete("buscaOrganizacao");
+    window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+  }
+
+  function changeOrganizationLetter(letter) {
+    if (!organizationAvailableLetters.includes(letter)) return;
+    setSelectedOrganizationLetter((current) => current === letter ? "" : letter);
+  }
+
   async function editCitizen(citizen) {
     setModal("citizens");
     setDetailLoading(true);
@@ -139,6 +167,22 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
       const params = new URLSearchParams(window.location.search);
       params.set("tela", "cidadaos");
       params.set("cidadao", citizen.id);
+      window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function editOrganization(organization) {
+    setModal("organizations");
+    setDetailLoading(true);
+    try {
+      const detail = await apiRequest(`/api/v1/organizacoes/${organization.id}`);
+      setSelectedOrganization(detail);
+      const params = new URLSearchParams(window.location.search);
+      params.set("tela", "cidadaos");
+      params.set("organizacao", organization.id);
+      params.delete("cidadao");
       window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
     } finally {
       setDetailLoading(false);
@@ -158,49 +202,31 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
         </button>
       </section>
 
-      <section className="directory-controls">
-        <div className="segmented-control" aria-label="Tipo de cadastro">
-          <button className={tab === "citizens" ? "active" : ""} onClick={() => setTab("citizens")}><UserRound size={17} /> Cidadãos</button>
-          <button className={tab === "organizations" ? "active" : ""} onClick={() => setTab("organizations")}><Building2 size={17} /> Organizações</button>
-        </div>
-        {tab === "citizens" && (
+      <nav className="directory-folder-tabs segmented-control" aria-label="Tipo de cadastro" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "citizens"} className={tab === "citizens" ? "active" : ""} onClick={() => changeTab("citizens")}><UserRound size={17} /> Cidadãos</button>
+        <button type="button" role="tab" aria-selected={tab === "organizations"} className={tab === "organizations" ? "active" : ""} onClick={() => changeTab("organizations")}><Building2 size={17} /> Organizações</button>
+      </nav>
+
+      <section className="directory-tab-panel" role="tabpanel" aria-label={tab === "citizens" ? "Cadastros de cidadãos" : "Cadastros de organizações"}>
+        <div className="directory-tab-toolbar">
           <label className="toolbar-search">
             <Search size={18} />
-            <input aria-label="Buscar cidadãos" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Nome ou nome social" />
+            {tab === "citizens" ? (
+              <input aria-label="Buscar cidadãos" value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Nome ou nome social" />
+            ) : (
+              <input aria-label="Buscar organizações" value={organizationQuery} onChange={(event) => changeOrganizationQuery(event.target.value)} placeholder="Nome, tipo, contato ou território" />
+            )}
           </label>
-        )}
-      </section>
+        </div>
 
-      {tab === "citizens" ? (
-        <section className="directory-list citizen-directory-layout">
+        {tab === "citizens" ? (
+          <section className="directory-list citizen-directory-layout">
           <div className="citizen-agenda" aria-label="Agenda de cidadãos">
-            <nav className="citizen-alphabet-bar" aria-label="Filtrar cidadãos pela letra inicial">
-              <button
-                type="button"
-                className="clear-letter-filter"
-                disabled={!selectedLetter}
-                aria-label="Limpar filtro por letra"
-                title="Mostrar todas as letras"
-                onClick={() => changeLetter(selectedLetter)}
-              ><CircleSlash2 size={15} aria-hidden="true" /></button>
-              {CITIZEN_ALPHABET.map((letter) => {
-                const enabled = availableLetters.includes(letter);
-                return <button
-                  type="button"
-                  key={letter}
-                  disabled={!enabled}
-                  className={selectedLetter === letter ? "active" : ""}
-                  aria-pressed={selectedLetter === letter}
-                  aria-label={enabled ? `Filtrar pela letra ${letter}` : `Letra ${letter} sem cadastros`}
-                  title={enabled ? `Mostrar cidadãos com inicial ${letter}` : `Nenhum cidadão com inicial ${letter}`}
-                  onClick={() => changeLetter(letter)}
-                >{letter}</button>;
-              })}
-            </nav>
+            <AlphabetBar entityPlural="cidadãos" availableLetters={availableLetters} selectedLetter={selectedLetter} onChange={changeLetter} />
             <div className="citizen-agenda-content">
-              {loading ? <div className="table-message">Carregando cadastros...</div> : items.length === 0 ? (
+              {loading ? <div className="table-message">Carregando cadastros...</div> : citizens.length === 0 ? (
                 <div className="empty-state request-empty"><div className="empty-icon"><UserRound size={27} /></div><h2>Nenhum cadastro encontrado</h2><p>{selectedLetter ? `Não há resultados para a letra ${selectedLetter} com os filtros atuais.` : "Use “Novo cidadão” para iniciar o diretório."}</p></div>
-              ) : groupCitizens(items).map(([letter, citizensInGroup]) => (
+              ) : groupCitizens(citizens).map(([letter, citizensInGroup]) => (
                 <section className="citizen-letter-group" key={letter} aria-labelledby={`letter-${letter}`}>
                   <h2 id={`letter-${letter}`}>{letter}</h2>
                   {citizensInGroup.map((item) => {
@@ -242,20 +268,79 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
               <div className="citizen-detail-empty"><UserRound size={30} /><h2>Selecione um cidadão</h2><p>Consulte o cadastro e suas solicitações ou inicie um novo registro.</p></div>
             )}
           </div>
-        </section>
-      ) : (
-        <section className="directory-list">
-          {loading ? <div className="table-message">Carregando cadastros...</div> : items.length === 0 ? (
-            <div className="empty-state request-empty"><div className="empty-icon"><Building2 size={27} /></div><h2>Nenhum cadastro encontrado</h2><p>Use o botão acima para iniciar o diretório do gabinete.</p></div>
-          ) : <div className="entity-grid">{items.map((item) => (
-            <article key={item.id}><span className="entity-icon"><Building2 size={20} /></span><div><strong>{item.nome}</strong><small>{item.tipo}</small></div><span className="consent">{item.territorio || "Sem território"}</span></article>
-          ))}</div>}
-        </section>
-      )}
-
-      {modal === "organizations" && <OrganizationForm onClose={closeModal} onCreated={() => { closeModal(); load(); }} />}
+          </section>
+        ) : (
+          <section className="directory-list citizen-directory-layout organization-directory-layout">
+            <div className="citizen-agenda organization-agenda" aria-label="Agenda de organizações">
+              <AlphabetBar entityPlural="organizações" availableLetters={organizationAvailableLetters} selectedLetter={selectedOrganizationLetter} onChange={changeOrganizationLetter} />
+              <div className="citizen-agenda-content">
+                {loading ? <div className="table-message">Carregando cadastros...</div> : organizationItems.length === 0 ? (
+                  <div className="empty-state request-empty"><div className="empty-icon"><Building2 size={27} /></div><h2>Nenhuma organização encontrada</h2><p>{selectedOrganizationLetter ? `Não há resultados para a letra ${selectedOrganizationLetter} com os filtros atuais.` : "Use “Nova organização” para iniciar o diretório."}</p></div>
+                ) : groupOrganizations(organizationItems).map(([letter, organizationsInGroup]) => (
+                  <section className="citizen-letter-group" key={letter} aria-labelledby={`organization-letter-${letter}`}>
+                    <h2 id={`organization-letter-${letter}`}>{letter}</h2>
+                    {organizationsInGroup.map((item) => {
+                      const summary = organizationCardSummary(item);
+                      return <article
+                        key={item.id}
+                        className={`citizen-agenda-item organization-agenda-item ${selectedOrganization?.id === item.id ? "selected" : ""}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => editOrganization(item)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            editOrganization(item);
+                          }
+                        }}
+                        aria-label={`Editar organização ${item.nome}`}
+                      >
+                        <div className="citizen-card-primary"><strong>{item.nome}</strong><small>{summary.details.join(" · ") || "Cadastro sem informações complementares"}</small></div>
+                        <div className="citizen-card-contact"><strong>{summary.phone || "Sem telefone"}</strong></div>
+                      </article>;
+                    })}
+                  </section>
+                ))}
+              </div>
+            </div>
+            <div className="citizen-detail-region organization-detail-region">
+              {detailLoading ? <div className="table-message">Carregando organização...</div> : modal === "organizations" ? (
+                <OrganizationForm key={selectedOrganization?.id || "new-organization"} organization={selectedOrganization} onClose={closeModal} onSaved={async (saved) => { setSelectedOrganization(saved); await load(); }} />
+              ) : (
+                <div className="citizen-detail-empty"><Building2 size={30} /><h2>Selecione uma organização</h2><p>Consulte e edite o cadastro ou inicie uma nova organização.</p></div>
+              )}
+            </div>
+          </section>
+        )}
+      </section>
     </>
   );
+}
+
+function AlphabetBar({ entityPlural, availableLetters, selectedLetter, onChange }) {
+  return <nav className="citizen-alphabet-bar" aria-label={`Filtrar ${entityPlural} pela letra inicial`}>
+    <button
+      type="button"
+      className="clear-letter-filter"
+      disabled={!selectedLetter}
+      aria-label="Limpar filtro por letra"
+      title="Mostrar todos os cadastros"
+      onClick={() => onChange(selectedLetter)}
+    ><CircleSlash2 size={15} aria-hidden="true" /></button>
+    {CITIZEN_ALPHABET.map((letter) => {
+      const enabled = availableLetters.includes(letter);
+      return <button
+        type="button"
+        key={letter}
+        disabled={!enabled}
+        className={selectedLetter === letter ? "active" : ""}
+        aria-pressed={selectedLetter === letter}
+        aria-label={enabled ? `Filtrar pela letra ${letter}` : `Letra ${letter} sem cadastros`}
+        title={enabled ? `Mostrar ${entityPlural} com inicial ${letter}` : `Nenhum cadastro com inicial ${letter}`}
+        onClick={() => onChange(letter)}
+      >{letter}</button>;
+    })}
+  </nav>;
 }
 
 function CitizenForm({ citizen, assistedReview, organizations, jurisdiction, onClose, onCreateRequest, onOpenRequest, onOpenCitizen, onSaved }) {
@@ -403,7 +488,7 @@ function CitizenForm({ citizen, assistedReview, organizations, jurisdiction, onC
     <header className="citizen-editor-header">
       <div><p className="eyebrow">Diretório</p><h2>{isEditing ? "Editar cidadão" : "Cadastrar cidadão"}</h2></div>
       <div className="citizen-editor-actions">
-        {isEditing && <button type="button" className="primary-button compact" onClick={() => onCreateRequest?.(citizen)}><Plus size={17} /> Nova solicitação</button>}
+        {isEditing && <button type="button" className="primary-button compact citizen-new-request-button" onClick={() => onCreateRequest?.(citizen)}><Plus size={15} /> Nova solicitação</button>}
         <button type="button" className={`vip-toggle ${form.vip ? "active" : ""}`} onClick={() => { setForm((current) => ({ ...current, vip: !current.vip })); setDirty(true); }} aria-pressed={form.vip} aria-label={form.vip ? "Desmarcar cidadão VIP" : "Marcar cidadão como VIP"}><Star size={19} fill={form.vip ? "currentColor" : "none"} /> VIP</button>
         <button type="button" className="icon-button" onClick={safeClose} aria-label="Fechar cadastro"><X size={20} /></button>
       </div>
@@ -727,6 +812,37 @@ function groupCitizens(citizens) {
   return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right, "pt-BR"));
 }
 
+function normalizedText(value = "") {
+  return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+}
+
+function entityInitial(value = "") {
+  const normalized = normalizedText(value).trim();
+  return /^[A-Z]/.test(normalized) ? normalized[0] : "#";
+}
+
+function availableEntityLetters(items, nameSelector) {
+  return [...new Set(items.map((item) => entityInitial(nameSelector(item))).filter((letter) => letter !== "#"))].sort();
+}
+
+function filterOrganizations(organizations, query, letter) {
+  const normalizedQuery = normalizedText(query).trim();
+  return organizations.filter((item) => {
+    const searchable = normalizedText([item.nome, item.tipo, item.territorio, ...(item.contatos || []).map((contact) => contact.valor)].filter(Boolean).join(" "));
+    return (!normalizedQuery || searchable.includes(normalizedQuery)) && (!letter || entityInitial(item.nome) === letter);
+  });
+}
+
+function groupOrganizations(organizations) {
+  const groups = new Map();
+  organizations.forEach((organization) => {
+    const letter = entityInitial(organization.nome);
+    if (!groups.has(letter)) groups.set(letter, []);
+    groups.get(letter).push(organization);
+  });
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right, "pt-BR"));
+}
+
 function citizenAgendaUrl(query, letter, cursor = "") {
   const params = new URLSearchParams({ q: query });
   if (letter) params.set("letra", letter);
@@ -755,6 +871,23 @@ function citizenCardSummary(citizen) {
   };
 }
 
+function organizationCardSummary(organization) {
+  const contacts = organization.contatos || [];
+  const phone = contacts.find((item) => ["TELEFONE", "CELULAR", "WHATSAPP"].includes(String(item.tipo).toUpperCase()));
+  const email = contacts.find((item) => String(item.tipo).toUpperCase() === "EMAIL");
+  const typeLabel = {
+    ASSOCIACAO: "Associação",
+    ESCOLA: "Escola",
+    EMPRESA: "Empresa",
+    LIDERANCA: "Liderança",
+    OUTRA: "Outra",
+  }[organization.tipo] || organization.tipo;
+  return {
+    phone: phone?.valor ? formatBrazilianPhone(phone.valor) : "",
+    details: [email?.valor, typeLabel, organization.territorio].filter(Boolean),
+  };
+}
+
 function citizenContactSummary(citizen) {
   const summary = citizenCardSummary(citizen);
   return summary.phone || summary.details[0] || "Sem contato";
@@ -765,8 +898,9 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
-function OrganizationForm({ onClose, onCreated }) {
-  const [form, setForm] = useState({ nome: "", tipo: "ASSOCIACAO", email: "", telefone: "", territorio: "" });
+function OrganizationForm({ organization, onClose, onSaved }) {
+  const isEditing = Boolean(organization?.id);
+  const [form, setForm] = useState(() => organizationFormValues(organization));
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   function change(event) {
@@ -786,23 +920,41 @@ function OrganizationForm({ onClose, onCreated }) {
     setError("");
     if (!validateContacts()) return;
     try {
-      await apiRequest("/api/v1/organizacoes", { method: "POST", body: JSON.stringify({
+      const saved = await apiRequest(isEditing ? `/api/v1/organizacoes/${organization.id}` : "/api/v1/organizacoes", { method: isEditing ? "PATCH" : "POST", body: JSON.stringify({
         nome: form.nome, tipo: form.tipo, territorio: form.territorio,
+        observacoes: form.observacoes,
         contatos: [...(form.email ? [{ tipo: "EMAIL", valor: form.email }] : []), ...(form.telefone ? [{ tipo: "TELEFONE", valor: form.telefone }] : [])],
+        enderecos: form.endereco ? [{ endereco: form.endereco }] : [],
       }) });
-      onCreated();
+      onSaved(saved);
     } catch (requestError) { setError(requestError.message); }
   }
-  return <EntityModal title="Cadastrar organização" onClose={onClose}><form className="request-form" onSubmit={submit} noValidate>
-    <div className="form-grid"><label>Nome<input required name="nome" value={form.nome} onChange={change} /></label><label>Tipo<select name="tipo" value={form.tipo} onChange={change}><option value="ASSOCIACAO">Associação</option><option value="ESCOLA">Escola</option><option value="EMPRESA">Empresa</option><option value="LIDERANCA">Liderança</option><option value="OUTRA">Outra</option></select></label></div>
+  return <section className="citizen-editor organization-editor" aria-label={isEditing ? "Editar organização" : "Cadastrar organização"}>
+    <header className="citizen-editor-header"><div><p className="eyebrow">Diretório</p><h2>{isEditing ? "Editar organização" : "Cadastrar organização"}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar cadastro"><X size={20} /></button></header>
+    <form className="request-form organization-form" onSubmit={submit} noValidate>
+    <div className="form-grid"><label>Nome<input required autoFocus name="nome" value={form.nome} onChange={change} /></label><label>Tipo<select name="tipo" value={form.tipo} onChange={change}><option value="ASSOCIACAO">Associação</option><option value="ESCOLA">Escola</option><option value="EMPRESA">Empresa</option><option value="LIDERANCA">Liderança</option><option value="OUTRA">Outra</option></select></label></div>
     <div className="form-grid"><label>E-mail<input type="email" inputMode="email" autoComplete="email" placeholder="nome@dominio.com.br" name="email" value={form.email} onChange={change} aria-invalid={Boolean(fieldErrors.email)} />{fieldErrors.email && <small className="field-error">{fieldErrors.email}</small>}</label><label>Telefone<input type="tel" inputMode="numeric" autoComplete="tel" placeholder="(00) 00000-0000" maxLength={15} name="telefone" value={form.telefone} onChange={change} aria-invalid={Boolean(fieldErrors.telefone)} />{fieldErrors.telefone && <small className="field-error">{fieldErrors.telefone}</small>}</label></div>
-    <label>Território<input name="territorio" value={form.territorio} onChange={change} placeholder="Bairro ou região" /></label>
-    {error && <p className="form-error">{error}</p>}<FormFooter onClose={onClose} />
-  </form></EntityModal>;
+    <div className="form-grid"><label>Endereço<input name="endereco" value={form.endereco} onChange={change} placeholder="Logradouro e número" /></label><label>Território<input name="territorio" value={form.territorio} onChange={change} placeholder="Bairro ou região" /></label></div>
+    <label>Observações<textarea name="observacoes" rows={3} value={form.observacoes} onChange={change} /></label>
+    {isEditing && <div className="citizen-readonly-meta"><span><strong>Cadastrada em</strong>{formatDateTime(organization.criadaEm)}</span><span><strong>Última atualização</strong>{formatDateTime(organization.atualizadaEm)}</span></div>}
+    {error && <p className="form-error" role="alert">{error}</p>}<FormFooter onClose={onClose} isEditing={isEditing} />
+  </form></section>;
 }
 
-function EntityModal({ title, onClose, children }) {
-  return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label={title}><header><div><p className="eyebrow">Diretório</p><h2>{title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={20} /></button></header>{children}</section></div>;
+function organizationFormValues(organization) {
+  const contacts = organization?.contatos || [];
+  const phone = contacts.find((item) => ["TELEFONE", "CELULAR", "WHATSAPP"].includes(String(item.tipo).toUpperCase()));
+  const email = contacts.find((item) => String(item.tipo).toUpperCase() === "EMAIL");
+  const address = organization?.enderecos?.[0] || {};
+  return {
+    nome: organization?.nome || "",
+    tipo: organization?.tipo || "ASSOCIACAO",
+    email: email?.valor || "",
+    telefone: formatBrazilianPhone(phone?.valor || ""),
+    endereco: address.endereco || address.logradouro || "",
+    territorio: organization?.territorio || "",
+    observacoes: organization?.observacoes || "",
+  };
 }
 
 function FormFooter({ onClose, isEditing = false }) {

@@ -36,6 +36,7 @@ from app.models import (
 )
 from app.notifications.service import notify_user
 from app.operations.routes import contact_attempt_data, forwarding_data
+from app.requests.access import can_distribute_requests, request_visibility_filters
 from app.requests.operations import attachment_data, task_data
 from app.requests.service import (
     RequestValidationError,
@@ -53,11 +54,13 @@ def _context() -> tuple[uuid.UUID, uuid.UUID]:
     return uuid.UUID(get_jwt()["tenant_id"]), uuid.UUID(get_jwt_identity())
 
 
-def _get_request_or_404(request_id: uuid.UUID, tenant_id: uuid.UUID) -> ServiceRequest | None:
+def _get_request_or_404(
+    request_id: uuid.UUID, tenant_id: uuid.UUID, user_id: uuid.UUID
+) -> ServiceRequest | None:
     service_request = db.session.execute(
         select(ServiceRequest).where(
             ServiceRequest.id == request_id,
-            ServiceRequest.tenant_id == tenant_id,
+            *request_visibility_filters(tenant_id, user_id),
         )
     ).scalar_one_or_none()
     if service_request is None:
@@ -92,6 +95,7 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
         "responsavelId": (
             str(service_request.responsible_id) if service_request.responsible_id else None
         ),
+        "responsavel": service_request.responsible.name if service_request.responsible else None,
         "prazo": service_request.due_at.isoformat() if service_request.due_at else None,
         "situacaoSla": _sla_status(service_request),
         "grupoDuplicidadeId": (
@@ -151,13 +155,13 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
 @requests_bp.get("/solicitacoes")
 @jwt_required()
 def list_requests():
-    tenant_id, _ = _context()
+    tenant_id, user_id = _context()
     page = max(request.args.get("page", default=0, type=int), 0)
     size = min(max(request.args.get("size", default=20, type=int), 1), 100)
     status = request.args.get("status", type=str)
     search = request.args.get("q", type=str)
 
-    filters = [ServiceRequest.tenant_id == tenant_id]
+    filters = request_visibility_filters(tenant_id, user_id)
     if status:
         try:
             filters.append(ServiceRequest.status == RequestStatus(status.upper()))
@@ -217,6 +221,12 @@ def create_request():
     if payload.get("orgaoId") and agency is None:
         return jsonify(error="validation_error", message="Órgão inválido."), 422
 
+    if payload.get("responsavelId") and not can_distribute_requests():
+        return (
+            jsonify(error="forbidden", message="Somente a liderança pode distribuir solicitações."),
+            403,
+        )
+
     responsible = _tenant_entity(User, payload.get("responsavelId"), tenant_id)
     if responsible and responsible.status != UserStatus.ACTIVE:
         responsible = None
@@ -271,22 +281,35 @@ def create_request():
 @requests_bp.get("/solicitacoes/<uuid:request_id>")
 @jwt_required()
 def get_request(request_id: uuid.UUID):
-    tenant_id, _ = _context()
-    service_request = _get_request_or_404(request_id, tenant_id)
+    tenant_id, user_id = _context()
+    service_request = _get_request_or_404(request_id, tenant_id, user_id)
     if service_request is None:
         return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
     return jsonify(_serialize(service_request, include_details=True))
 
 
 @requests_bp.patch("/solicitacoes/<uuid:request_id>")
-@roles_required("admin", "manager", "staff")
+@roles_required("admin", "manager", "representative", "staff")
 def update_request(request_id: uuid.UUID):
     tenant_id, user_id = _context()
-    service_request = _get_request_or_404(request_id, tenant_id)
+    service_request = _get_request_or_404(request_id, tenant_id, user_id)
     if service_request is None:
         return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
 
     payload = request.get_json(silent=True) or {}
+    if get_jwt().get("role") == "representative" and set(payload) - {"responsavelId"}:
+        return (
+            jsonify(
+                error="forbidden",
+                message="O parlamentar pode alterar apenas a distribuição da solicitação.",
+            ),
+            403,
+        )
+    if "responsavelId" in payload and not can_distribute_requests():
+        return (
+            jsonify(error="forbidden", message="Somente a liderança pode distribuir solicitações."),
+            403,
+        )
     relationship_changes = {}
     before_assignment = service_request.responsible_id
     assignment_changed = False
@@ -401,7 +424,7 @@ def update_request(request_id: uuid.UUID):
 @roles_required("admin", "manager", "staff")
 def create_interaction(request_id: uuid.UUID):
     tenant_id, user_id = _context()
-    service_request = _get_request_or_404(request_id, tenant_id)
+    service_request = _get_request_or_404(request_id, tenant_id, user_id)
     if service_request is None:
         return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
 

@@ -26,6 +26,7 @@ from app.models import (
     RequestPriority,
     ServiceRequest,
 )
+from app.requests.access import request_visibility_filters
 
 ai_bp = Blueprint("ai", __name__)
 REVIEW_ACTIONS = {
@@ -373,6 +374,6 @@ def _service_request(tenant_id: uuid.UUID, request_id: uuid.UUID) -> ServiceRequ
     return db.session.execute(
         select(ServiceRequest).where(
             ServiceRequest.id == request_id,
-            ServiceRequest.tenant_id == tenant_id,
+            *request_visibility_filters(tenant_id),
         )
     ).scalar_one_or_none()
