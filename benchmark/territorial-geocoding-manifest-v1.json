@@ -1,0 +1,73 @@
+{
+  "dataset": "territorial-geocoding-dataset-v1.csv",
+  "dataset_version": "1.0.0",
+  "frozen_at": "2026-08-10",
+  "sha256": "7f8d1428f00ecd9f7ff051b65ae122cd428a825d91fe8f8d51b4038bf4f65a13",
+  "jurisdiction": {
+    "municipality": "Juiz de Fora",
+    "state": "MG",
+    "ibge_code": "3136702"
+  },
+  "sample": {
+    "total": 700,
+    "segments": {
+      "central": 200,
+      "demais": 150,
+      "periferia": 200,
+      "rural": 150
+    },
+    "incomplete_by_segment": {
+      "central": 40,
+      "demais": 30,
+      "periferia": 40,
+      "rural": 30
+    },
+    "negative_controls": 20
+  },
+  "reference_sources": [
+    {
+      "name": "IBGE — CNEFE, Censo Demográfico 2022",
+      "release": "CSV municipal publicado em 2024-05-20",
+      "retrieved_at": "2026-08-10",
+      "municipalities": [
+        "3136702",
+        "3140803",
+        "3119609"
+      ],
+      "url": "https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/Arquivos_CNEFE/CSV/Municipio/31_MG/"
+    },
+    {
+      "name": "IBGE — Coordenadas de endereços, Censo Demográfico 2022",
+      "release": "publicado em 2024-01-31",
+      "retrieved_at": "2026-08-10",
+      "url": "https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/Coordenadas_enderecos/Municipio/31_MG/"
+    },
+    {
+      "name": "IBGE — Malha Municipal Digital de Minas Gerais 2023",
+      "release": "arquivo publicado em 2024-12-15",
+      "retrieved_at": "2026-08-10",
+      "url": "https://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/malhas_municipais/municipio_2023/UFs/MG/MG_Municipios_2023.zip"
+    }
+  ],
+  "selection": {
+    "privacy": "Excluídos domicílios particulares e coletivos; somente espécies CNEFE 3, 4, 5, 6 e 8.",
+    "public_equipment_priority": "Prioridade determinística para ensino, saúde e nomes indicativos de equipamento público.",
+    "rural_rule": "NUM_QUADRA=0 (área não urbanizada, conforme dicionário CNEFE).",
+    "central_rule": "DSC_LOCALIDADE=CENTRO.",
+    "periphery_rule": "Lista governada de localidades periféricas registrada no gerador.",
+    "incomplete_rule": "20% por segmento; omissão controlada de número, CEP ou bairro, ou abreviação do tipo de logradouro.",
+    "provider_independence": "Nenhuma resposta de Geoapify, Google, Mapbox ou Geocode Earth foi usada."
+  },
+  "review": {
+    "reviewer": "PENDENTE_REVISAO_HUMANA",
+    "status": "machine-validated; human review pending",
+    "notes": "Preencher o revisor após conferência humana cega da amostra e das divergências."
+  },
+  "jurisdiction_mesh": {
+    "name": "IBGE Malha Municipal Digital — MG",
+    "version": "2023 (publicação 2024-12-15)",
+    "crs": "SIRGAS 2000 / EPSG:4674",
+    "postgis_import": "pending",
+    "validation": "700/700 pontos na malha do município esperado; 700/700 classificações dentro/fora coerentes com a malha de Juiz de Fora"
+  }
+}

@@ -7,12 +7,13 @@ import math
 import statistics
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.geocoding.contract import CanonicalGeocodeResult, GeocodeQuery, GeocodeStatus
 from app.geocoding.providers import GeocodingProvider, GeocodingProviderError
+from app.territory_geometry import geometry_contains, normalize_geometry
 
 BENCHMARK_VERSION = "geocoding-benchmark-v1"
 MINIMUM_SAMPLE_SIZE = 500
@@ -92,6 +93,7 @@ def run_benchmark(
     providers: tuple[GeocodingProvider, ...],
     *,
     jurisdiction_bbox: tuple[float, float, float, float],
+    jurisdiction_geometry: dict | None = None,
     country_code: str = "BR",
     delay_ms: int = 250,
     repeat_fraction: float = 0.1,
@@ -122,6 +124,7 @@ def run_benchmark(
             result = None
             try:
                 result = provider.geocode(query)
+                result = _apply_jurisdiction_geometry(result, jurisdiction_geometry)
             except (
                 GeocodingProviderError,
                 IndexError,
@@ -169,6 +172,7 @@ def run_benchmark(
             error = None
             try:
                 repeated = provider.geocode(query)
+                repeated = _apply_jurisdiction_geometry(repeated, jurisdiction_geometry)
             except (
                 GeocodingProviderError,
                 IndexError,
@@ -210,6 +214,7 @@ def run_benchmark(
         "configuration": {
             "countryCode": country_code.upper(),
             "jurisdictionBbox": list(jurisdiction_bbox),
+            "jurisdictionGeometrySha256": _geometry_checksum(jurisdiction_geometry),
             "delayMs": delay_ms,
             "repeatFraction": repeat_fraction,
             "providerOrder": [provider.name for provider in providers],
@@ -218,6 +223,53 @@ def run_benchmark(
         "results": detailed_results,
         "repeatResults": repeat_results,
     }
+
+
+def normalize_benchmark_geometry(value: dict) -> dict:
+    """Normaliza Polygon, MultiPolygon, Feature ou FeatureCollection para o ensaio."""
+    if not isinstance(value, dict):
+        raise ValueError("A jurisdição deve ser um objeto GeoJSON.")
+    if value.get("type") != "FeatureCollection":
+        return normalize_geometry(value)
+    features = value.get("features")
+    if not isinstance(features, list) or not features:
+        raise ValueError("A FeatureCollection da jurisdição está vazia.")
+    polygons = []
+    for feature in features:
+        geometry = normalize_geometry(feature)
+        if geometry["type"] == "Polygon":
+            polygons.append(geometry["coordinates"])
+        else:
+            polygons.extend(geometry["coordinates"])
+    return {"type": "MultiPolygon", "coordinates": polygons}
+
+
+def _apply_jurisdiction_geometry(
+    result: CanonicalGeocodeResult | None,
+    geometry: dict | None,
+) -> CanonicalGeocodeResult | None:
+    if (
+        result is None
+        or geometry is None
+        or result.latitude is None
+        or result.longitude is None
+    ):
+        return result
+    if geometry_contains(geometry, result.latitude, result.longitude):
+        return result
+    return replace(result, status=GeocodeStatus.OUTSIDE_JURISDICTION)
+
+
+def _geometry_checksum(geometry: dict | None) -> str | None:
+    if geometry is None:
+        return None
+    payload = json.dumps(
+        geometry,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def write_benchmark_report(report: dict, path: str | Path) -> None:

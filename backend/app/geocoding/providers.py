@@ -387,6 +387,7 @@ class GeocodeEarthAdapter(_BaseAdapter):
 
 
 PROVIDER_NAMES = ("geoapify", "google", "mapbox", "geocode-earth")
+DEFAULT_PROVIDER_NAMES = ("geoapify", "google", "geocode-earth")
 
 
 def provider_from_environment(

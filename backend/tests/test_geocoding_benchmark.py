@@ -9,6 +9,7 @@ from app.geocoding.benchmark import (
     BenchmarkCase,
     evaluate_result,
     load_benchmark_dataset,
+    normalize_benchmark_geometry,
     run_benchmark,
     write_benchmark_report,
 )
@@ -20,6 +21,8 @@ from app.geocoding.contract import (
     NormalizedAddress,
 )
 from app.geocoding.providers import (
+    DEFAULT_PROVIDER_NAMES,
+    PROVIDER_NAMES,
     GeoapifyAdapter,
     GeocodeEarthAdapter,
     GoogleMapsAdapter,
@@ -257,6 +260,49 @@ def test_benchmark_is_ordered_scored_and_does_not_persist_input_text(tmp_path):
     assert json.loads(serialized)["benchmarkVersion"] == "geocoding-benchmark-v1"
 
 
+def test_benchmark_applies_official_polygon_instead_of_only_bbox(tmp_path):
+    dataset_path = tmp_path / "benchmark.csv"
+    dataset_path.write_text(_csv_payload(), encoding="utf-8")
+    dataset = load_benchmark_dataset(dataset_path, allow_small_sample=True)
+    geometry = normalize_benchmark_geometry(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-43.5, -21.9],
+                                [-43.2, -21.9],
+                                [-43.2, -21.6],
+                                [-43.5, -21.6],
+                                [-43.5, -21.9],
+                            ]
+                        ],
+                    },
+                }
+            ],
+        }
+    )
+
+    report = run_benchmark(
+        dataset,
+        (StubProvider(),),
+        jurisdiction_bbox=(-44, -22, -39, -19),
+        jurisdiction_geometry=geometry,
+        delay_ms=0,
+        repeat_fraction=0,
+    )
+
+    results = {item["caseId"]: item for item in report["results"]}
+    assert results["case-1"]["result"]["status"] == "VERIFIED"
+    assert results["case-2"]["result"]["status"] == "OUTSIDE_JURISDICTION"
+    assert report["configuration"]["jurisdictionGeometrySha256"]
+
+
 def test_evaluation_normalizes_accents_and_reports_distance():
     case = BenchmarkCase(
         case_id="1",
@@ -318,6 +364,52 @@ def test_cli_executes_small_smoke_dataset(app, tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "Benchmark concluído" in result.output
     assert json.loads(output.read_text(encoding="utf-8"))["providers"][0]["provider"] == "STUB"
+
+
+def test_cli_defaults_to_three_providers_and_keeps_mapbox_optional(
+    app, tmp_path, monkeypatch
+):
+    dataset = tmp_path / "benchmark.csv"
+    dataset.write_text(_csv_payload(), encoding="utf-8")
+    requested = []
+
+    def provider(name, **_kwargs):
+        requested.append(name)
+        return StubProvider()
+
+    monkeypatch.setattr("app.cli.provider_from_environment", provider)
+    common_args = [
+        "geocoding-benchmark",
+        "--dataset",
+        str(dataset),
+        "--bbox=-43.6,-22.0,-43.1,-21.5",
+        "--delay-ms",
+        "0",
+        "--allow-small-sample",
+    ]
+
+    default_result = app.test_cli_runner().invoke(
+        args=[*common_args, "--output", str(tmp_path / "default.json")]
+    )
+
+    assert default_result.exit_code == 0, default_result.output
+    assert requested == list(DEFAULT_PROVIDER_NAMES)
+    assert "mapbox" not in DEFAULT_PROVIDER_NAMES
+    assert "mapbox" in PROVIDER_NAMES
+
+    requested.clear()
+    mapbox_result = app.test_cli_runner().invoke(
+        args=[
+            *common_args,
+            "--output",
+            str(tmp_path / "mapbox.json"),
+            "--provider",
+            "mapbox",
+        ]
+    )
+
+    assert mapbox_result.exit_code == 0, mapbox_result.output
+    assert requested == ["mapbox"]
 
 
 def _csv_payload():
