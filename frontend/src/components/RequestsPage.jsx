@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleDot,
   Link2,
+  MapPin,
   RotateCcw,
   ScanText,
   ShieldAlert,
@@ -599,6 +600,10 @@ function RequestDetails({ request, references, readOnly = false, canDistribute =
     justificativaCanal: "",
   });
   const [error, setError] = useState("");
+  const [geocodingConsent, setGeocodingConsent] = useState(false);
+  const [geocodingJustification, setGeocodingJustification] = useState("");
+  const [geocodingBusy, setGeocodingBusy] = useState(false);
+  const [geocodingNotice, setGeocodingNotice] = useState("");
 
   useEffect(() => {
     setCategoryId(request.categoriaId || "");
@@ -626,6 +631,57 @@ function RequestDetails({ request, references, readOnly = false, canDistribute =
 
   async function refresh() {
     onChanged(await apiRequest(`/api/v1/solicitacoes/${request.id}`));
+  }
+
+  async function geocodeWithGeoapify() {
+    setError("");
+    setGeocodingNotice("");
+    setGeocodingBusy(true);
+    try {
+      const updated = await apiRequest(
+        `/api/v1/solicitacoes/${request.id}/geocodificacao/geoapify`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirmacaoDadosTeste: geocodingConsent }),
+        },
+      );
+      setGeocodingConsent(false);
+      setGeocodingNotice("Resultado recebido. Revise a localização antes de aprová-la.");
+      onChanged(updated);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setGeocodingBusy(false);
+    }
+  }
+
+  async function reviewGeocoding(decision) {
+    setError("");
+    setGeocodingNotice("");
+    setGeocodingBusy(true);
+    try {
+      const updated = await apiRequest(
+        `/api/v1/solicitacoes/${request.id}/geocodificacao/revisao`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            decisao: decision,
+            justificativa: geocodingJustification,
+          }),
+        },
+      );
+      setGeocodingJustification("");
+      setGeocodingNotice(
+        decision === "APROVAR"
+          ? "Localização verificada por revisão humana."
+          : "Localização rejeitada e removida do mapa.",
+      );
+      onChanged(updated);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setGeocodingBusy(false);
+    }
   }
 
   async function updateRequest() {
@@ -940,6 +996,56 @@ function RequestDetails({ request, references, readOnly = false, canDistribute =
             {request.impacto && <span>Impacto {request.impacto.toLowerCase()}</span>}
             {request.urgencia && <span>Urgência {request.urgencia.toLowerCase()}</span>}
           </div>
+
+          {(request.geocodificacaoHomologacao?.habilitada || request.qualidadeGeografica?.origem === "GEOAPIFY") && (
+            <section className="drawer-section geocoding-homologation">
+              <div className="geocoding-heading">
+                <div><p className="eyebrow">Somente homologação</p><h3>Localização com Geoapify</h3></div>
+                <span className={`geocoding-state state-${String(request.qualidadeGeografica?.status || "UNRESOLVED").toLowerCase()}`}>
+                  {geocodingStatusLabel(request.qualidadeGeografica?.status)}
+                </span>
+              </div>
+              <p className="muted-copy">
+                O provedor sugere a localização, mas nunca a verifica automaticamente. A aprovação exige revisão humana.
+              </p>
+              {request.latitude != null && request.longitude != null && (
+                <div className="geocoding-result">
+                  <MapPin size={18} aria-hidden="true" />
+                  <div>
+                    <strong>{Number(request.latitude).toFixed(6)}, {Number(request.longitude).toFixed(6)}</strong>
+                    <small>Confiança {formatConfidence(request.qualidadeGeografica?.confianca)} · {request.qualidadeGeografica?.metodo}</small>
+                  </div>
+                  <a href={`https://www.openstreetmap.org/?mlat=${request.latitude}&mlon=${request.longitude}#map=18/${request.latitude}/${request.longitude}`} target="_blank" rel="noreferrer">Visualizar mapa</a>
+                </div>
+              )}
+              {(request.qualidadeGeografica?.atribuicoes || []).length > 0 && (
+                <small className="geocoding-attribution">Dados: {request.qualidadeGeografica.atribuicoes.join(" · ")}</small>
+              )}
+              {request.geocodificacaoHomologacao?.podeOperar && (
+                <>
+                  <label className="geocoding-consent">
+                    <input type="checkbox" checked={geocodingConsent} onChange={(event) => setGeocodingConsent(event.target.checked)} />
+                    Confirmo que este endereço pertence à homologação e está autorizado para consulta externa.
+                  </label>
+                  <button type="button" className="secondary-button action-button" disabled={!geocodingConsent || geocodingBusy || request.geocodificacaoHomologacao.restantesHoje <= 0} onClick={geocodeWithGeoapify}>
+                    <MapPin size={17} /> {geocodingBusy ? "Consultando..." : "Consultar Geoapify"}
+                  </button>
+                  <small className="geocoding-quota">Cota do gabinete: {request.geocodificacaoHomologacao.restantesHoje} de {request.geocodificacaoHomologacao.limiteDiario} consultas disponíveis hoje.</small>
+                </>
+              )}
+              {request.qualidadeGeografica?.revisaoPendente && request.geocodificacaoHomologacao?.podeOperar && (
+                <div className="geocoding-review">
+                  <label>Justificativa da revisão<input value={geocodingJustification} minLength="3" onChange={(event) => setGeocodingJustification(event.target.value)} placeholder="Informe como a localização foi conferida" /></label>
+                  <div>
+                    <button type="button" className="primary-button compact" disabled={geocodingJustification.trim().length < 3 || geocodingBusy || ["OUTSIDE_JURISDICTION", "UNRESOLVED"].includes(request.qualidadeGeografica.status)} onClick={() => reviewGeocoding("APROVAR")}><CheckCircle2 size={17} /> Aprovar localização</button>
+                    <button type="button" className="secondary-button compact" disabled={geocodingJustification.trim().length < 3 || geocodingBusy} onClick={() => reviewGeocoding("REJEITAR")}><X size={17} /> Rejeitar</button>
+                  </div>
+                </div>
+              )}
+              {!request.geocodificacaoHomologacao?.podeOperar && request.qualidadeGeografica?.revisaoPendente && <p className="muted-copy">Aguardando revisão de administrador ou gestor.</p>}
+              {geocodingNotice && <p className="geocoding-notice" role="status">{geocodingNotice}</p>}
+            </section>
+          )}
 
           {!readOnly && <AITriagePanel
             request={request}
@@ -2012,6 +2118,20 @@ function statusLabel(status) {
 
 function sourceLabel(source) {
   return sources.find(([value]) => value === source)?.[1] || source;
+}
+
+function geocodingStatusLabel(status) {
+  return {
+    VERIFIED: "Verificada",
+    APPROXIMATE: "Aproximada",
+    AMBIGUOUS: "Ambígua",
+    OUTSIDE_JURISDICTION: "Fora da jurisdição",
+    UNRESOLVED: "Não resolvida",
+  }[status] || "Não consultada";
+}
+
+function formatConfidence(value) {
+  return value == null ? "não informada" : `${Math.round(Number(value) * 100)}%`;
 }
 
 function formatDate(value) {

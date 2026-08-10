@@ -8,6 +8,23 @@ vi.mock("../api", () => ({ apiRequest: vi.fn() }));
 describe("OperationalDashboard", () => {
   it("exibe indicadores, fila prioritária e inteligência territorial", async () => {
     apiRequest.mockImplementation(async (path, options = {}) => {
+      if (path.startsWith("/api/v1/painel/territorial/metricas-execucao")) {
+        return { abertas: 2, taxaConclusaoPercentual: 50, coberturaEvidenciasPercentual: 50, cumprimentoPrazoPercentual: 100, tempoMedioConclusaoHoras: 8 };
+      }
+      if (path.startsWith("/api/v1/painel/territorial/alertas")) {
+        return { content: [], total: 0 };
+      }
+      if (path.startsWith("/api/v1/painel/territorial/acoes")) {
+        if (options.method === "POST") return { id: "action-1", status: "PENDENTE" };
+        return {
+          content: [],
+          page: 1,
+          total: 0,
+          totalPages: 1,
+          permissoes: { podeCriar: true, podeGerenciar: true, escopo: "GABINETE" },
+          responsaveis: [{ id: "user-1", nome: "Equipe A" }],
+        };
+      }
       if (path === "/api/v1/painel/territorial/geocodificar" && options.method === "POST") {
         return { geocodificadas: 1, pendentes: 0, metodo: "LOCAL_APROXIMADO" };
       }
@@ -275,6 +292,19 @@ describe("OperationalDashboard", () => {
     expect(screen.getByText("Tabela territorial")).toBeInTheDocument();
     expect(screen.getByText("Comparação temporal")).toBeInTheDocument();
     expect(screen.getByText("Crescimento")).toBeInTheDocument();
+    expect(screen.getByText("Operação territorial")).toBeInTheDocument();
+    expect(screen.getByLabelText("Filtrar status das ações")).toHaveValue("ABERTAS");
+    expect(screen.getByLabelText("Ações por página")).toHaveValue("10");
+    const newActionButton = screen.getByRole("button", { name: "Nova ação" });
+    await waitFor(() => expect(newActionButton).toBeEnabled());
+    fireEvent.click(newActionButton);
+    expect(screen.getByRole("dialog", { name: "Criar ação territorial" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Responsável"), { target: { value: "user-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar ação" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/painel/territorial/acoes",
+      expect.objectContaining({ method: "POST" }),
+    ));
     fireEvent.click(screen.getAllByRole("button", { name: "Ver solicitações" })[0]);
     expect(onOpenRequests).toHaveBeenCalledWith(expect.objectContaining({ territorioId: "territory-1" }));
 

@@ -1,0 +1,75 @@
+{
+  "gate": "D",
+  "executed_at": "2026-08-10T21:38:19.630210+00:00",
+  "environment": "http://localhost:8081",
+  "tenant": "gabinete-demo",
+  "dataset": {
+    "citizens": 307,
+    "organizations": 51,
+    "service_requests": 765
+  },
+  "profile": {
+    "concurrency": 50,
+    "requests": 1000,
+    "warmup_requests": 5,
+    "business_mix": "one dashboard load per virtual user, followed by territorial work",
+    "read_only": true
+  },
+  "thresholds": {
+    "overall_p95_ms": 2000,
+    "error_rate_percent": 1.0,
+    "operational_dashboard_p95_ms": 2000
+  },
+  "summary": {
+    "requests": 1000,
+    "successes": 1000,
+    "errors": 0,
+    "p50_ms": 93.8,
+    "p95_ms": 2146.9,
+    "p99_ms": 4424.2,
+    "max_ms": 6514.2,
+    "duration_seconds": 6.704,
+    "throughput_rps": 149.16,
+    "error_rate_percent": 0.0
+  },
+  "by_endpoint": {
+    "/api/v1/painel/operacional": {
+      "requests": 50,
+      "successes": 50,
+      "errors": 0,
+      "p50_ms": 2187.6,
+      "p95_ms": 6500.5,
+      "p99_ms": 6514.2,
+      "max_ms": 6514.2
+    },
+    "/api/v1/painel/territorial/acoes": {
+      "requests": 476,
+      "successes": 476,
+      "errors": 0,
+      "p50_ms": 113.3,
+      "p95_ms": 352.0,
+      "p99_ms": 2956.6,
+      "max_ms": 4851.5
+    },
+    "/api/v1/painel/territorial/alertas": {
+      "requests": 237,
+      "successes": 237,
+      "errors": 0,
+      "p50_ms": 67.0,
+      "p95_ms": 156.8,
+      "p99_ms": 2789.3,
+      "max_ms": 4394.3
+    },
+    "/api/v1/painel/territorial/metricas-execucao": {
+      "requests": 237,
+      "successes": 237,
+      "errors": 0,
+      "p50_ms": 82.0,
+      "p95_ms": 180.4,
+      "p99_ms": 4290.5,
+      "max_ms": 4747.3
+    }
+  },
+  "error_types": {},
+  "decision": "FAILED"
+}

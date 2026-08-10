@@ -12,6 +12,7 @@
   "dependencies": {
     "@sentry/react": "^9.28.1",
     "lucide-react": "^0.513.0",
+    "maplibre-gl": "^6.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

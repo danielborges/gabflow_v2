@@ -1,0 +1,139 @@
+{
+  "gate": "D",
+  "ambiente": "http://localhost:8081",
+  "iniciadoEm": "2026-08-10T21:42:46.459573+00:00",
+  "finalizadoEm": "2026-08-10T21:42:47.183164+00:00",
+  "execucao": "gate-d-20260810T214246Z",
+  "personas": {
+    "lideranca": {
+      "id": "ed2190f8-66ba-4749-8210-71f459cb2837",
+      "perfil": "admin"
+    },
+    "trabalhador": {
+      "id": "b35c9902-acdb-470d-a7de-09ec8d371d9f",
+      "perfil": "staff"
+    }
+  },
+  "artefatosCriados": {
+    "acaoId": "e6d6fe50-d5fa-4310-b326-39258375951f",
+    "evidenciaId": "aeacbb72-77b7-4ba9-a710-bdddb99b9b36"
+  },
+  "metricasTerritoriais": {
+    "abertas": 1,
+    "alertasAtivos": 0,
+    "canceladas": 0,
+    "coberturaEvidenciasPercentual": 66.7,
+    "comEvidencias": 2,
+    "concluidas": 2,
+    "cumprimentoPrazoPercentual": 100.0,
+    "porStatus": {
+      "CANCELADA": 0,
+      "CONCLUIDA": 2,
+      "EM_ANDAMENTO": 0,
+      "PENDENTE": 1
+    },
+    "taxaConclusaoPercentual": 66.7,
+    "tempoMedioConclusaoHoras": 0.0,
+    "total": 3,
+    "vencidas": 0
+  },
+  "cenarios": [
+    {
+      "cenario": "Liderança lista trabalhadores",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Acesso administrativo"
+    },
+    {
+      "cenario": "Liderança prepara usuário dedicado de homologação",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Credencial redefinida sem exposição no relatório e alteração auditada"
+    },
+    {
+      "cenario": "Liderança acessa painel territorial",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Painel operacional"
+    },
+    {
+      "cenario": "Liderança cria e distribui ação com prazo",
+      "esperado": 201,
+      "observado": 201,
+      "resultado": "APROVADO",
+      "evidencia": "Ação e6d6fe50-d5fa-4310-b326-39258375951f atribuída ao trabalhador no território Centro"
+    },
+    {
+      "cenario": "Trabalhador acessa somente ações próprias",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Escopo PROPRIAS e ação atribuída visível"
+    },
+    {
+      "cenario": "Trabalhador não pode criar ação territorial",
+      "esperado": 403,
+      "observado": 403,
+      "resultado": "APROVADO",
+      "evidencia": "Restrição negocial por perfil"
+    },
+    {
+      "cenario": "Trabalhador não pode alterar prazo",
+      "esperado": 403,
+      "observado": 403,
+      "resultado": "APROVADO",
+      "evidencia": "Prazo reservado à liderança"
+    },
+    {
+      "cenario": "Trabalhador inicia ação atribuída",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Transição PENDENTE → EM_ANDAMENTO"
+    },
+    {
+      "cenario": "Trabalhador registra evidência estruturada",
+      "esperado": 201,
+      "observado": 201,
+      "resultado": "APROVADO",
+      "evidencia": "Evidência aeacbb72-77b7-4ba9-a710-bdddb99b9b36 com tipo, data, título e URL"
+    },
+    {
+      "cenario": "Trabalhador conclui ação com resultado",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Transição EM_ANDAMENTO → CONCLUIDA com resultado obrigatório"
+    },
+    {
+      "cenario": "Liderança acompanha métricas de execução",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Conclusão e cobertura de evidências refletidas nos indicadores"
+    },
+    {
+      "cenario": "Liderança consulta ciclo de vida dos alertas",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "1 alerta(s) consultado(s), inclusive históricos"
+    },
+    {
+      "cenario": "Operação mantém trilha de auditoria",
+      "esperado": 200,
+      "observado": 200,
+      "resultado": "APROVADO",
+      "evidencia": "Criação, movimentação e evidência localizadas na auditoria"
+    }
+  ],
+  "resumo": {
+    "total": 13,
+    "aprovados": 13,
+    "reprovados": 0
+  },
+  "decisao": "APROVADO"
+}

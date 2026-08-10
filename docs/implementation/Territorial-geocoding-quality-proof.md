@@ -2,9 +2,10 @@
 
 ## Objetivo e decisão
 
-Comparar Geoapify, Google, Mapbox e Geocode Earth em condições reproduzíveis antes de promover
-um provedor para produção. O Geoapify é o candidato provisório; o resultado da prova, e não a
-preferência inicial, determina a decisão final.
+Comparar Geoapify, Google e Geocode Earth em condições reproduzíveis antes de promover um
+provedor para produção. O Geoapify é o candidato provisório; o resultado da prova, e não a
+preferência inicial, determina a decisão final. Mapbox pode ser incluído por decisão explícita
+como comparador opcional, sem bloquear nem alterar o Gate C padrão.
 
 **Amostra padrão:** 700 endereços. O ensaio pode variar entre 500 e 1.000 sem alterar o método.
 
@@ -55,6 +56,8 @@ O backend fornece o comando `flask geocoding-benchmark`, com adaptadores para `g
 
 - ordena os casos por `case_id` e registra o SHA-256 exato do CSV;
 - executa provedores sequencialmente, com intervalo e timeout configuráveis;
+- usa o `bbox` para orientar as consultas e, quando `--jurisdiction-tenant` é informado,
+  classifica `OUTSIDE_JURISDICTION` pelo polígono GeoJSON oficial do gabinete;
 - repete 10% da amostra, escolhida deterministicamente, para medir estabilidade;
 - não grava a consulta textual nem o payload bruto no relatório;
 - grava somente fingerprint da consulta, contrato canônico, avaliação, latência e erro tipado;
@@ -62,14 +65,25 @@ O backend fornece o comando `flask geocoding-benchmark`, com adaptadores para `g
   gates e decisão por provedor em JSON;
 - escreve o relatório de maneira atômica.
 
-Variáveis exigidas conforme os provedores selecionados:
+O relatório registra o SHA-256 da geometria normalizada utilizada, permitindo comprovar que
+execuções posteriores avaliaram exatamente a mesma jurisdição. Em ensaios de Gate C,
+`--jurisdiction-tenant` é obrigatório; o retângulo isolado não representa adequadamente limites
+municipais irregulares.
+
+O conjunto padrão executado quando `--provider` não é informado contém `geoapify`, `google` e
+`geocode-earth`. O adaptador `mapbox` permanece selecionável explicitamente.
+Na amostra padrão de 700 casos, com repetição de 10%, isso representa 2.310 consultas antes de
+eventuais retentativas; incluir Mapbox acrescenta outras 770 consultas.
+
+Variáveis exigidas para o conjunto padrão:
 
 ```text
 GEOAPIFY_API_KEY
 GOOGLE_MAPS_API_KEY
-MAPBOX_ACCESS_TOKEN
 GEOCODE_EARTH_API_KEY
 ```
+
+`MAPBOX_ACCESS_TOKEN` é exigida somente quando `--provider mapbox` for informado.
 
 Formato CSV obrigatório:
 
@@ -92,10 +106,16 @@ docker compose run --rm `
   --output /benchmark/report.json `
   --cost-per-thousand geoapify=1.00 `
   --cost-per-thousand google=5.00 `
-  --bbox=-43.60,-22.00,-43.10,-21.50
+  --cost-per-thousand geocode-earth=1.00 `
+  --bbox=-43.60,-22.00,-43.10,-21.50 `
+  --jurisdiction-tenant gabinete-demo
 ```
 
-Para testar apenas um candidato, repetir `--provider` com os nomes desejados. A opção
+Os custos do exemplo são ilustrativos e devem ser substituídos pelos valores contratuais vigentes.
+
+Sem `--provider`, o comando compara os três candidatos obrigatórios. Para escolher um subconjunto,
+repetir `--provider` com os nomes desejados. Para incluir o comparador opcional, acrescentar
+`--provider mapbox` e configurar sua credencial e custo contratual. A opção
 `--allow-small-sample` existe exclusivamente para smoke tests; sem ela, o comando rejeita menos
 de 500 ou mais de 1.000 casos. O relatório deve ser tratado como artefato restrito mesmo sem o
 texto original, pois contém coordenadas e componentes normalizados retornados pelos provedores.
@@ -150,3 +170,11 @@ O relatório final deve conter dataset/checksum, versão do executor, matriz de 
 divergências revisadas, custos, parecer jurídico e decisão `APROVADO`, `APROVADO COM RESSALVAS`
 ou `REPROVADO`. Até essa decisão, o Geoapify permanece aprovado somente para desenvolvimento e
 homologação controlada.
+
+## Resultado da rodada de 10/08/2026
+
+O Gate C foi encerrado como **REPROVADO**, sem promoção de provedor para produção. A amostra
+congelada de 700 casos foi executada contra Geoapify, Google e Geocode Earth; nenhum candidato
+atendeu simultaneamente todas as metas eliminatórias. O relatório detalhado permanece como
+artefato restrito e a decisão sanitizada, os checksums e as condições para nova rodada estão em
+[`Territorial-geocoding-gate-c-closure.md`](Territorial-geocoding-gate-c-closure.md).

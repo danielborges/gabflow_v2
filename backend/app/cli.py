@@ -39,10 +39,15 @@ from app.electoral.territorial_ingestion import (
 from app.extensions import db
 from app.geocoding.benchmark import (
     load_benchmark_dataset,
+    normalize_benchmark_geometry,
     run_benchmark,
     write_benchmark_report,
 )
-from app.geocoding.providers import PROVIDER_NAMES, provider_from_environment
+from app.geocoding.providers import (
+    DEFAULT_PROVIDER_NAMES,
+    PROVIDER_NAMES,
+    provider_from_environment,
+)
 from app.models import (
     ElectoralDatasetVersion,
     ElectoralPublicCommitment,
@@ -760,13 +765,18 @@ def register_commands(app: Flask) -> None:
         "provider_names",
         type=click.Choice(PROVIDER_NAMES, case_sensitive=False),
         multiple=True,
-        default=PROVIDER_NAMES,
+        default=DEFAULT_PROVIDER_NAMES,
         show_default=True,
+        help="Provedores do ensaio; Mapbox permanece disponível como comparador opcional.",
     )
     @click.option(
         "--bbox",
         required=True,
         help="Jurisdição no formato minLon,minLat,maxLon,maxLat.",
+    )
+    @click.option(
+        "--jurisdiction-tenant",
+        help="Slug do gabinete cuja geometria oficial validará a jurisdição.",
     )
     @click.option("--country", default="BR", show_default=True)
     @click.option("--timeout-seconds", type=click.FloatRange(min=1), default=12, show_default=True)
@@ -794,6 +804,7 @@ def register_commands(app: Flask) -> None:
         output: Path,
         provider_names: tuple[str, ...],
         bbox: str,
+        jurisdiction_tenant: str | None,
         country: str,
         timeout_seconds: float,
         delay_ms: int,
@@ -807,6 +818,18 @@ def register_commands(app: Flask) -> None:
             if len(bbox_values) != 4:
                 raise ValueError
             loaded = load_benchmark_dataset(dataset, allow_small_sample=allow_small_sample)
+            jurisdiction_geometry = None
+            if jurisdiction_tenant:
+                tenant = db.session.execute(
+                    select(Tenant).where(Tenant.slug == jurisdiction_tenant)
+                ).scalar_one_or_none()
+                if tenant is None:
+                    raise ValueError("Gabinete da jurisdição não encontrado.")
+                if not tenant.jurisdiction_geojson:
+                    raise ValueError("O gabinete não possui geometria oficial configurada.")
+                jurisdiction_geometry = normalize_benchmark_geometry(
+                    tenant.jurisdiction_geojson
+                )
             providers = tuple(
                 provider_from_environment(name, timeout_seconds=timeout_seconds)
                 for name in provider_names
@@ -816,6 +839,7 @@ def register_commands(app: Flask) -> None:
                 loaded,
                 providers,
                 jurisdiction_bbox=bbox_values,
+                jurisdiction_geometry=jurisdiction_geometry,
                 country_code=country,
                 delay_ms=delay_ms,
                 repeat_fraction=repeat_fraction,
@@ -827,7 +851,9 @@ def register_commands(app: Flask) -> None:
         approved = [item["provider"] for item in report["providers"] if item["approved"]]
         click.echo(
             f"Benchmark concluído: casos={len(loaded.cases)}, "
-            f"checksum={loaded.checksum}, aprovados={','.join(approved) or 'nenhum'}, "
+            f"checksum={loaded.checksum}, "
+            f"qualidade_aprovada={','.join(approved) or 'nenhum'}, "
+            "autorizacao_producao=nao, "
             f"relatório={output}."
         )
 

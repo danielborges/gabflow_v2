@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { TerritorialMap } from "./TerritorialMap";
 
 const statusLabels = {
   NOVA: "Nova",
@@ -44,7 +45,7 @@ const defaultDashboardFilters = {
   granularidade: "dia",
 };
 
-export function OperationalDashboard({ onOpenRequests }) {
+export function OperationalDashboard({ user, onOpenRequests }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [geocoding, setGeocoding] = useState(false);
@@ -225,6 +226,7 @@ export function OperationalDashboard({ onOpenRequests }) {
             onSave={saveCurrentView}
           />
           <TerritorialWorkspace
+            user={user}
             data={data}
             busy={geocoding}
             onGeocode={geocodePending}
@@ -307,14 +309,50 @@ function TerritorialSavedViews({ items, name, error, onNameChange, onApply, onSa
   );
 }
 
-function TerritorialWorkspace({ data, busy, onGeocode, onInvestigate }) {
+function TerritorialWorkspace({ user, data, busy, onGeocode, onInvestigate }) {
   const rows = data.territorial?.tabelaTerritorial || emptyTerritorialRows;
   const [selectedId, setSelectedId] = useState(rows[0]?.id || null);
   const [sort, setSort] = useState({ key: "total", direction: "desc" });
+  const [actionData, setActionData] = useState({ content: [], page: 1, total: 0, totalPages: 1, permissoes: {} });
+  const [executionMetrics, setExecutionMetrics] = useState({});
+  const [territorialAlerts, setTerritorialAlerts] = useState([]);
+  const [actionUsers, setActionUsers] = useState([]);
+  const [actionError, setActionError] = useState("");
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [actionQuery, setActionQuery] = useState({ status: "ABERTAS", tipo: "", prazoEstado: "", q: "", page: 1, size: 10, sort: "criadaEm,desc" });
   useEffect(() => {
     if (!rows.some((item) => item.id === selectedId)) setSelectedId(rows[0]?.id || null);
   }, [rows, selectedId]);
   const selected = rows.find((item) => item.id === selectedId) || null;
+  const actionableSelection = selected && !selected.semTerritorio && selected.id !== "sem-territorio";
+  const loadActions = useCallback(async () => {
+    if (!selectedId || selectedId === "sem-territorio") {
+      setActionData({ content: [], page: 1, total: 0, totalPages: 1, permissoes: {} });
+      setActionError("");
+      return;
+    }
+    try {
+      const params = new URLSearchParams({ territorioId: selectedId });
+      Object.entries(actionQuery).forEach(([key, value]) => {
+        if (value !== "") params.set(key, String(value));
+      });
+      const [response, metrics, alerts] = await Promise.all([
+        apiRequest(`/api/v1/painel/territorial/acoes?${params}`),
+        apiRequest(`/api/v1/painel/territorial/metricas-execucao?territorioId=${selectedId}`),
+        apiRequest(`/api/v1/painel/territorial/alertas?territorioId=${selectedId}&status=ABERTOS`),
+      ]);
+      setActionData(response);
+      setExecutionMetrics(metrics);
+      setTerritorialAlerts(alerts.content || []);
+      setActionUsers(response.responsaveis || []);
+      setActionError("");
+    } catch (requestError) {
+      setActionError(requestError.message);
+    }
+  }, [actionQuery, selectedId]);
+  useEffect(() => {
+    loadActions();
+  }, [loadActions]);
   const sortedRows = [...rows].sort((left, right) => {
     const leftValue = left[sort.key] ?? -Infinity;
     const rightValue = right[sort.key] ?? -Infinity;
@@ -352,7 +390,32 @@ function TerritorialWorkspace({ data, busy, onGeocode, onInvestigate }) {
       </div>
       <aside className="territorial-support">
         <TerritorialInvestigationPanel item={selected} onInvestigate={onInvestigate} />
+        <TerritorialOperationsPanel
+          data={actionData}
+          error={actionError}
+          query={actionQuery}
+          users={actionUsers}
+          user={user}
+          selected={actionableSelection ? selected : null}
+          metrics={executionMetrics}
+          alerts={territorialAlerts}
+          onCreate={() => setActionModalOpen(true)}
+          onChanged={loadActions}
+          onQueryChange={setActionQuery}
+        />
       </aside>
+      {actionModalOpen && actionableSelection && (
+        <TerritorialActionModal
+          item={selected}
+          filters={data.filtros?.selecionados || { territorioId: selected.id }}
+          users={actionUsers}
+          onClose={() => setActionModalOpen(false)}
+          onCreated={() => {
+            setActionModalOpen(false);
+            loadActions();
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -378,9 +441,19 @@ function TerritorialTable({ rows, selectedId, sort, onSort, onSelect, onInvestig
     <header><div><h2>Tabela territorial</h2><p>Alternativa acessível ao mapa, com o mesmo recorte e seleção.</p></div></header>
     {!rows.length ? <p className="muted-copy">Amostra insuficiente para comparar territórios.</p> : <div className="table-scroll">
       <table className="territorial-table">
+        <colgroup>
+          <col className="territorial-column-name" />
+          <col className="territorial-column-volume" />
+          <col className="territorial-column-percentage" />
+          <col className="territorial-column-percentage" />
+          <col className="territorial-column-response" />
+          <col className="territorial-column-resolution" />
+          <col className="territorial-column-trend" />
+          <col className="territorial-column-action" />
+        </colgroup>
         <thead><tr>{headers.map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.direction : "none"}><button onClick={() => onSort(key)}>{label}</button></th>)}<th>Ação</th></tr></thead>
         <tbody>{rows.map((item) => <tr key={item.id} className={item.id === selectedId ? "selected" : ""} tabIndex="0" onClick={() => onSelect(item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(item.id); }}>
-          <td><strong>{item.nome}</strong><small>{formatPercent(item.qualidadeGeograficaPercentual)} com localização</small></td>
+          <td><span className="territorial-name-cell"><strong>{item.nome}</strong><small>{formatPercent(item.qualidadeGeograficaPercentual)} com localização</small></span></td>
           <td>{item.total}</td><td>{formatPercent(item.percentualAtraso)}</td><td>{formatPercent(item.taxaSolucao)}</td>
           <td>{formatHours(item.tempoMedianoPrimeiraRespostaHoras)}</td><td>{formatHours(item.tempoMedianoResolucaoHoras)}</td>
           <td><TrendBadge item={item} /></td>
@@ -414,6 +487,288 @@ function TerritorialInvestigationPanel({ item, onInvestigate }) {
     <section className="territorial-examples"><h3>Exemplos autorizados</h3>{item.detalhes?.amostra?.length ? item.detalhes.amostra.map((request) => <article key={request.id}><strong>{request.protocolo}</strong><span>{request.titulo}</span></article>) : <p className="muted-copy">Sem exemplos disponíveis para seu perfil.</p>}</section>
     <button className="primary-button" onClick={() => onInvestigate(item.filtroSolicitacoes)}>Ver solicitações</button>
   </section>;
+}
+
+function TerritorialOperationsPanel({ data, error, query, users, user, selected, metrics, alerts, onCreate, onChanged, onQueryChange }) {
+  const [closingId, setClosingId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [edit, setEdit] = useState({ responsavelId: "", prazo: "" });
+  const [result, setResult] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [evidenceAction, setEvidenceAction] = useState(null);
+  const [evidence, setEvidence] = useState({ tipo: "DOCUMENTO", titulo: "", descricao: "", data: "", url: "", arquivo: null });
+  const [resolvingAlert, setResolvingAlert] = useState(null);
+  const [resolutionNote, setResolutionNote] = useState("");
+  const actions = data.content || [];
+  const permissions = data.permissoes || {};
+
+  function changeQuery(key, value) {
+    onQueryChange((current) => ({ ...current, [key]: value, page: key === "page" ? value : 1 }));
+  }
+
+  async function updateAction(action, payload) {
+    setSaving(true);
+    setLocalError("");
+    try {
+      await apiRequest(`/api/v1/painel/territorial/acoes/${action.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      setClosingId(null);
+      setResult("");
+      await onChanged();
+    } catch (requestError) {
+      setLocalError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openEdit(action) {
+    setEditingId(action.id);
+    setEdit({
+      responsavelId: action.responsavelId || "",
+      prazo: action.prazo ? localDateTimeValue(new Date(action.prazo)) : "",
+    });
+  }
+
+  async function saveEdit(action) {
+    await updateAction(action, {
+      responsavelId: edit.responsavelId || null,
+      prazo: edit.prazo ? new Date(edit.prazo).toISOString() : null,
+    });
+    setEditingId(null);
+  }
+
+  async function submitEvidence(event, action) {
+    event.preventDefault();
+    setSaving(true);
+    setLocalError("");
+    try {
+      let body;
+      if (evidence.arquivo) {
+        body = new FormData();
+        Object.entries(evidence).forEach(([key, value]) => {
+          if (value) body.append(key === "arquivo" ? "arquivo" : key, value);
+        });
+      } else {
+        body = JSON.stringify({ ...evidence, arquivo: undefined });
+      }
+      await apiRequest(`/api/v1/painel/territorial/acoes/${action.id}/evidencias`, { method: "POST", body });
+      setEvidenceAction(null);
+      setEvidence({ tipo: "DOCUMENTO", titulo: "", descricao: "", data: "", url: "", arquivo: null });
+      await onChanged();
+    } catch (requestError) {
+      setLocalError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateAlert(alert, status, justificativa = "") {
+    setSaving(true);
+    setLocalError("");
+    try {
+      await apiRequest(`/api/v1/painel/territorial/alertas/${alert.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, justificativa }),
+      });
+      setResolvingAlert(null);
+      setResolutionNote("");
+      await onChanged();
+    } catch (requestError) {
+      setLocalError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="territorial-operations-panel">
+    <header>
+      <div><h2>Operação territorial</h2><p>{permissions.escopo === "PROPRIAS" ? `Apenas ações atribuídas a ${user?.name || "você"}.` : "Histórico e prazos do território selecionado."}</p></div>
+      <button className="primary-button compact" disabled={!selected || !permissions.podeCriar} onClick={onCreate}>Nova ação</button>
+    </header>
+    <div className="territorial-execution-metrics" aria-label="Métricas de execução territorial">
+      <span><strong>{metrics?.abertas || 0}</strong><small>abertas</small></span>
+      <span><strong>{formatPercent(metrics?.taxaConclusaoPercentual)}</strong><small>conclusão</small></span>
+      <span><strong>{formatPercent(metrics?.coberturaEvidenciasPercentual)}</strong><small>com evidência</small></span>
+      <span><strong>{metrics?.cumprimentoPrazoPercentual == null ? "N/A" : formatPercent(metrics.cumprimentoPrazoPercentual)}</strong><small>no prazo</small></span>
+      <span><strong>{formatHours(metrics?.tempoMedioConclusaoHoras)}</strong><small>tempo médio</small></span>
+    </div>
+    {!!alerts?.length && <section className="territorial-alert-center">
+      <header><strong>Alertas operacionais</strong><span>{alerts.length} aberto(s)</span></header>
+      {alerts.map((alert) => <article key={alert.id} className={alert.status.toLowerCase()}>
+        <div><strong>{alert.titulo}</strong><small>{alert.acaoTitulo} · {formatDateTime(alert.disparadoEm)}</small></div>
+        {resolvingAlert === alert.id ? <div className="territorial-alert-resolution">
+          <input aria-label="Resolução do alerta" value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} placeholder="Como o alerta foi resolvido?" />
+          <button className="secondary-button compact" onClick={() => setResolvingAlert(null)}>Voltar</button>
+          <button className="primary-button compact" disabled={saving || resolutionNote.trim().length < 3} onClick={() => updateAlert(alert, "RESOLVIDO", resolutionNote)}>Resolver</button>
+        </div> : <div className="territorial-alert-actions">
+          {alert.status === "ATIVO" && <button className="secondary-button compact" disabled={saving} onClick={() => updateAlert(alert, "RECONHECIDO")}>Reconhecer</button>}
+          <button className="secondary-button compact" onClick={() => setResolvingAlert(alert.id)}>Resolver</button>
+        </div>}
+      </article>)}
+    </section>}
+    <div className="territorial-action-filters">
+      <input aria-label="Buscar ações territoriais" placeholder="Buscar no histórico" value={query.q} onChange={(event) => changeQuery("q", event.target.value)} />
+      <select aria-label="Filtrar status das ações" value={query.status} onChange={(event) => changeQuery("status", event.target.value)}>
+        <option value="ABERTAS">Abertas</option><option value="TODAS">Todas</option>
+        <option value="PENDENTE">Pendentes</option><option value="EM_ANDAMENTO">Em andamento</option>
+        <option value="CONCLUIDA">Concluídas</option><option value="CANCELADA">Canceladas</option>
+      </select>
+      <select aria-label="Filtrar tipo de ação" value={query.tipo} onChange={(event) => changeQuery("tipo", event.target.value)}>
+        <option value="">Todos os tipos</option>{["TAREFA", "AGENDA", "VISITA", "ROTEIRO", "ENCAMINHAMENTO"].map((value) => <option key={value} value={value}>{territorialActionTypeLabel(value)}</option>)}
+      </select>
+      <select aria-label="Filtrar prazo das ações" value={query.prazoEstado} onChange={(event) => changeQuery("prazoEstado", event.target.value)}>
+        <option value="">Todos os prazos</option><option value="VENCIDA">Vencidas</option>
+        <option value="PROXIMA">Próximas 24h</option><option value="NO_PRAZO">No prazo</option>
+        <option value="SEM_PRAZO">Sem prazo</option><option value="ENCERRADA">Encerradas</option>
+      </select>
+    </div>
+    {(error || localError) && <p className="form-error" role="alert">{error || localError}</p>}
+    {!actions.length ? <p className="muted-copy">Nenhuma ação encontrada neste recorte.</p> : (
+      <div className="territorial-action-list">
+        {actions.map((action) => <article key={action.id}>
+          <div className="territorial-action-heading">
+            <span className={`territorial-action-type ${action.tipo.toLowerCase()}`}>{territorialActionTypeLabel(action.tipo)}</span>
+            <span className={`territorial-action-status ${action.status.toLowerCase()}`}>{territorialActionStatusLabel(action.status)}</span>
+          </div>
+          <strong>{action.titulo}</strong>
+          <small>{action.responsavel} · {action.prazo ? formatDateTime(action.prazo) : "Sem prazo"}</small>
+          <span className={`territorial-deadline-state ${action.prazoEstado.toLowerCase()}`}>{territorialDeadlineLabel(action.prazoEstado)}</span>
+          {action.solicitacaoIds?.length > 0 && <small>{action.solicitacaoIds.length} solicitação(ões) de referência</small>}
+          {action.resultado && <p className="territorial-action-result"><strong>Resultado:</strong> {action.resultado}</p>}
+          {!!action.evidenciasEstruturadas?.length && <ul className="territorial-evidence-list">{action.evidenciasEstruturadas.map((item) => <li key={item.id}>
+            <span><strong>{item.titulo}</strong><small>{territorialEvidenceTypeLabel(item.tipo)} · {item.autor}</small></span>
+            {item.downloadUrl ? <a href={item.downloadUrl}>Baixar</a> : <a href={item.url} target="_blank" rel="noreferrer">Abrir</a>}
+          </li>)}</ul>}
+          {evidenceAction === action.id && <form className="territorial-evidence-form" onSubmit={(event) => submitEvidence(event, action)}>
+            <div><label>Tipo<select value={evidence.tipo} onChange={(event) => setEvidence((current) => ({ ...current, tipo: event.target.value }))}>{["DOCUMENTO", "FOTO", "LINK", "ATA", "COMPROVANTE", "OUTRO"].map((value) => <option key={value} value={value}>{territorialEvidenceTypeLabel(value)}</option>)}</select></label>
+            <label>Data<input type="datetime-local" value={evidence.data} onChange={(event) => setEvidence((current) => ({ ...current, data: event.target.value }))} /></label></div>
+            <label>Título<input required minLength="3" value={evidence.titulo} onChange={(event) => setEvidence((current) => ({ ...current, titulo: event.target.value }))} /></label>
+            <label>Descrição<textarea rows="2" value={evidence.descricao} onChange={(event) => setEvidence((current) => ({ ...current, descricao: event.target.value }))} /></label>
+            <label>Arquivo<input type="file" accept=".pdf,.jpg,.jpeg,.png,.txt,.mp3,.mp4,.ogg,.wav,.webm" onChange={(event) => setEvidence((current) => ({ ...current, arquivo: event.target.files?.[0] || null }))} /></label>
+            <label>ou URL<input type="url" value={evidence.url} onChange={(event) => setEvidence((current) => ({ ...current, url: event.target.value }))} placeholder="https://" /></label>
+            <div><button type="button" className="secondary-button compact" onClick={() => setEvidenceAction(null)}>Voltar</button><button className="primary-button compact" disabled={saving || (!evidence.arquivo && !evidence.url)}>Salvar evidência</button></div>
+          </form>}
+          {editingId === action.id && <div className="territorial-action-edit">
+            <label>Responsável<select value={edit.responsavelId} onChange={(event) => setEdit((current) => ({ ...current, responsavelId: event.target.value }))}><option value="">Não atribuído</option>{users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+            <label>Prazo<input type="datetime-local" value={edit.prazo} onChange={(event) => setEdit((current) => ({ ...current, prazo: event.target.value }))} /></label>
+            <div><button className="secondary-button compact" onClick={() => setEditingId(null)}>Voltar</button><button className="primary-button compact" disabled={saving} onClick={() => saveEdit(action)}>Salvar</button></div>
+          </div>}
+          {closingId === action.id ? <div className="territorial-action-close">
+            <label>Resultado ou justificativa<textarea rows="3" value={result} onChange={(event) => setResult(event.target.value)} /></label>
+            <div>
+              <button className="secondary-button compact" onClick={() => setClosingId(null)}>Voltar</button>
+              {action.permissoes.podeCancelar && <button className="secondary-button compact danger" disabled={saving || result.trim().length < 3} onClick={() => updateAction(action, { status: "CANCELADA", resultado: result })}>Cancelar ação</button>}
+              <button className="primary-button compact" disabled={saving || result.trim().length < 3} onClick={() => updateAction(action, { status: "CONCLUIDA", resultado: result })}>Concluir</button>
+            </div>
+          </div> : editingId !== action.id && action.permissoes.podeMovimentar && !["CONCLUIDA", "CANCELADA"].includes(action.status) && <div className="territorial-action-buttons">
+            <button className="secondary-button compact" onClick={() => setEvidenceAction(action.id)}>Adicionar evidência</button>
+            {action.permissoes.podeReatribuir && <button className="secondary-button compact" onClick={() => openEdit(action)}>Atribuição e prazo</button>}
+            {action.status === "PENDENTE" && <button className="secondary-button compact" disabled={saving} onClick={() => updateAction(action, { status: "EM_ANDAMENTO" })}>Iniciar</button>}
+            <button className="secondary-button compact" onClick={() => setClosingId(action.id)}>Encerrar</button>
+          </div>}
+        </article>)}
+      </div>
+    )}
+    <footer className="territorial-action-pagination">
+      <span>{data.total || 0} ação(ões) · Página {data.page || 1} de {data.totalPages || 1}</span>
+      <select aria-label="Ações por página" value={query.size} onChange={(event) => changeQuery("size", Number(event.target.value))}>{[10, 25, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <button className="secondary-button compact" disabled={(data.page || 1) <= 1} onClick={() => changeQuery("page", data.page - 1)}>Anterior</button>
+      <button className="secondary-button compact" disabled={(data.page || 1) >= (data.totalPages || 1)} onClick={() => changeQuery("page", data.page + 1)}>Próxima</button>
+    </footer>
+  </section>;
+}
+
+function TerritorialActionModal({ item, filters, users, onClose, onCreated }) {
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  tomorrow.setMinutes(0, 0, 0);
+  const [form, setForm] = useState({
+    tipo: "TAREFA",
+    titulo: `Atuação territorial em ${item.nome}`,
+    descricao: "",
+    responsavelId: "",
+    prazo: localDateTimeValue(tomorrow),
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const requestIds = (item.detalhes?.amostra || []).map((requestItem) => requestItem.id).filter(Boolean);
+
+  function change(event) {
+    setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest("/api/v1/painel/territorial/acoes", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          territorioId: item.id,
+          prazo: form.prazo ? new Date(form.prazo).toISOString() : null,
+          filtros: { ...filters, territorioId: item.id },
+          solicitacaoIds: requestIds,
+          origem: {
+            tipo: "INTELIGENCIA_TERRITORIAL",
+            territorioNome: item.nome,
+            comparacao: item.comparacao,
+          },
+        }),
+      });
+      onCreated();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="modal territorial-action-modal" role="dialog" aria-modal="true" aria-labelledby="territorial-action-title" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><p className="eyebrow">{item.nome}</p><h2 id="territorial-action-title">Criar ação territorial</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}>×</button></header>
+      <form onSubmit={submit}>
+        <div className="form-grid">
+          <label>Tipo<select name="tipo" value={form.tipo} onChange={change}>{["TAREFA", "AGENDA", "VISITA", "ROTEIRO", "ENCAMINHAMENTO"].map((value) => <option key={value} value={value}>{territorialActionTypeLabel(value)}</option>)}</select></label>
+          <label>Responsável<select name="responsavelId" value={form.responsavelId} onChange={change}><option value="">Não atribuído</option>{users.map((user) => <option key={user.id} value={user.id}>{user.nome}</option>)}</select></label>
+        </div>
+        <label>Título<input name="titulo" required minLength="3" maxLength="180" value={form.titulo} onChange={change} /></label>
+        <label>Prazo ou data da agenda<input name="prazo" type="datetime-local" value={form.prazo} onChange={change} required={["AGENDA", "VISITA", "ROTEIRO"].includes(form.tipo)} /></label>
+        <label>Descrição<textarea name="descricao" rows="4" value={form.descricao} onChange={change} placeholder="Objetivo, orientação e resultado esperado" /></label>
+        <p className="territorial-action-provenance">A ação preservará os filtros atuais e {requestIds.length} solicitação(ões) de referência autorizada(s).</p>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <footer><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button compact" disabled={saving}>{saving ? "Criando..." : "Criar ação"}</button></footer>
+      </form>
+    </section>
+  </div>;
+}
+
+function territorialActionTypeLabel(value) {
+  return { TAREFA: "Tarefa", AGENDA: "Agenda", VISITA: "Visita", ROTEIRO: "Roteiro", ENCAMINHAMENTO: "Encaminhamento" }[value] || value;
+}
+
+function territorialActionStatusLabel(value) {
+  return { PENDENTE: "Pendente", EM_ANDAMENTO: "Em andamento", CONCLUIDA: "Concluída", CANCELADA: "Cancelada" }[value] || value;
+}
+
+function territorialDeadlineLabel(value) {
+  return {
+    VENCIDA: "Prazo vencido", PROXIMA: "Vence em até 24h", NO_PRAZO: "No prazo",
+    SEM_PRAZO: "Sem prazo", ENCERRADA: "Encerrada",
+  }[value] || value;
+}
+
+function territorialEvidenceTypeLabel(value) {
+  return { DOCUMENTO: "Documento", FOTO: "Foto", LINK: "Link", ATA: "Ata", COMPROVANTE: "Comprovante", OUTRO: "Outro" }[value] || value;
+}
+
+function localDateTimeValue(value) {
+  const offset = value.getTimezoneOffset() * 60_000;
+  return new Date(value.getTime() - offset).toISOString().slice(0, 16);
 }
 
 function MonthlyMandateReport() {
@@ -724,6 +1079,11 @@ function TerritorialPanel({ data, busy, onGeocode, selectedTerritoryId, onSelect
 }
 
 function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, expanded = false }) {
+  const mapProps = { cells, points, jurisdiction, selectedTerritoryId, onSelectTerritory, expanded };
+  return <TerritorialMap {...mapProps} fallback={<TerritorialFallbackMap {...mapProps} />} />;
+}
+
+function TerritorialFallbackMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, expanded = false }) {
   const geojsonCoordinates = extractGeojsonCoordinates(jurisdiction?.geojson);
   const coordinates = [...cells, ...points].filter(hasCoordinates);
   const mapCoordinates = coordinates.length ? coordinates : geojsonCoordinates;
@@ -903,6 +1263,10 @@ function periodLabel(value) {
 
 function formatDate(value) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(new Date(value));
+}
+
+function formatDateTime(value) {
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
 function formatPercent(value) {

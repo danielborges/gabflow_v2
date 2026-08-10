@@ -2,7 +2,10 @@
 
 ## Status
 
-Aceito provisoriamente em 07/08/2026, condicionado à prova de qualidade do Gate C.
+**Gate C reprovado em 10/08/2026.** Nenhum provedor foi promovido para produção.
+MapLibre GL JS, PostgreSQL/PostGIS e o adaptador intercambiável permanecem aceitos; Geoapify
+continua provisório somente para desenvolvimento e homologação controlada. Mapbox permanece
+opcional e fora do conjunto obrigatório.
 
 ## Contexto
 
@@ -24,8 +27,16 @@ Adotar provisoriamente a seguinte composição:
 
 A promoção do Geoapify para produção depende da prova definida em
 [`Territorial-geocoding-quality-proof.md`](../../implementation/Territorial-geocoding-quality-proof.md).
-Google, Mapbox e Geocode Earth participam como candidatos comparáveis, não como dependências do
-domínio.
+Google e Geocode Earth formam, com o Geoapify, o conjunto padrão de candidatos comparáveis.
+Mapbox não integra o Gate C obrigatório porque o fluxo aprovado não depende de seus mapas ou
+tiles e sua geocodificação permanente acrescenta uma condição comercial específica. O adaptador
+Mapbox permanece disponível como comparador opcional, sem se tornar dependência do domínio.
+
+A rodada de 700 casos executada em 10/08/2026 reprovou os três candidatos obrigatórios por metas
+eliminatórias de qualidade. A decisão completa está em
+[`Territorial-geocoding-gate-c-closure.md`](../../implementation/Territorial-geocoding-gate-c-closure.md).
+Uma promoção futura exige nova rodada versionada; esta ADR não autoriza uso de provedor externo
+em produção enquanto o Gate C permanecer reprovado.
 
 ## Contrato do adaptador
 
@@ -72,7 +83,8 @@ alterar silenciosamente uma coordenada já verificada por pessoa.
 - **Google Maps:** forte candidato de precisão, mas com restrições de retenção e combinação com
   mapas de terceiros incompatíveis com o uso como fonte histórica padrão sem contrato específico.
 - **Mapbox Permanent Geocoding:** permite persistência, porém requer modalidade permanente e
-  avaliação dos termos para uso analítico.
+  avaliação dos termos para uso analítico; foi mantido como comparador opcional, fora do conjunto
+  padrão do Gate C.
 - **Geocode Earth:** termos favoráveis à persistência e bom candidato a fallback, sujeito ao
   benchmark de cobertura local.
 - **Nominatim público:** inadequado para carga recorrente de produção; uma instalação própria

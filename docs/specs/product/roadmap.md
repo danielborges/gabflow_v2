@@ -150,17 +150,18 @@
 
 ### Evolução planejada — Inteligência territorial acionável
 
-- **Incremento 5.1 — Confiabilidade territorial:** filtros consistentes no PostGIS e no
-  fallback, proveniência e confiança da coordenada, validação da jurisdição, privacidade por
-  célula e telemetria de produto.
+- **Incremento 5.1 — Confiabilidade territorial — Gate A encerrado em 10/08/2026:** filtros
+  consistentes no PostGIS e no fallback, proveniência e confiança da coordenada, validação da
+  jurisdição, privacidade por célula, telemetria de produto e baseline validados.
 - **Incremento 5.2 — Exploração acionável — Gate B aprovado em 07/08/2026:** comparação
   temporal, tabela territorial, mapa sincronizado, painel de causas, exemplos autorizados e
   navegação para Solicitações com filtros preservados; homologação navegada concluída nos
   perfis administrativo, gerencial e operacional, com P95 de 550,2 ms.
-- **Incremento 5.3 — Cartografia e qualidade governadas — stack provisória aprovada:**
-  Geoapify + MapLibre GL JS + PostgreSQL/PostGIS, com adaptador intercambiável; promoção para
-  produção condicionada ao benchmark de 500–1.000 endereços contra Google, Mapbox e Geocode
-  Earth, às metas de precisão e à aprovação de retenção, LGPD, SLA e atribuições.
+- **Incremento 5.3 — Cartografia e qualidade governadas — Gate C reprovado em 10/08/2026:**
+  a rodada de 700 casos eliminou Geoapify, Google e Geocode Earth por metas de qualidade; nenhum
+  provedor foi promovido para produção. MapLibre GL JS, PostgreSQL/PostGIS e o adaptador
+  intercambiável permanecem válidos; nova rodada requer amostra revisada e aprovações jurídica e
+  comercial. Mapbox permanece somente como comparador opcional.
 - **Incremento 5.4 — Operação territorial integrada:** criação e acompanhamento de tarefa,
   agenda, visita, roteiro ou encaminhamento a partir de território e alerta.
 - **Incremento 5.5 — Inteligência avançada:** cobertura de visitas, relação com atuação do

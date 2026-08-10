@@ -15,6 +15,7 @@ from app.models import Mandate, Tenant, User
 from app.outbox.service import ProcessingResult, process_batch, worker_identity
 from app.rag.operational_memory import enqueue_expired_operational_memory
 from app.tenant_context import activate_user_context, tenant_context
+from app.territorial.service import generate_deadline_notifications
 
 
 @dataclass
@@ -51,7 +52,9 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
             if app.config["WORKER_RUN_SCHEDULER"] and (
                 once or now - last_scheduler_run >= app.config["SCHEDULER_INTERVAL_SECONDS"]
             ):
-                reminders, expirations, report_expirations = _run_scheduler_once()
+                reminders, expirations, report_expirations, territorial_deadlines = (
+                    _run_scheduler_once()
+                )
                 if reminders:
                     app.logger.info("Scheduler generated %s return reminders", reminders)
                 if expirations:
@@ -63,6 +66,11 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
                     app.logger.info(
                         "Scheduler revoked %s expired electoral reports",
                         report_expirations,
+                    )
+                if territorial_deadlines:
+                    app.logger.info(
+                        "Scheduler generated %s territorial deadline notifications",
+                        territorial_deadlines,
                     )
                 last_scheduler_run = now
 
@@ -82,22 +90,24 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
     return aggregate
 
 
-def _run_scheduler_once() -> tuple[int, int, int]:
+def _run_scheduler_once() -> tuple[int, int, int, int]:
     if db.engine.dialect.name == "postgresql":
         acquired = db.session.execute(
             text("SELECT pg_try_advisory_xact_lock(hashtext('gabflow.scheduler.return-reminders'))")
         ).scalar_one()
         if not acquired:
             db.session.commit()
-            return 0, 0, 0
+            return 0, 0, 0, 0
     reminders = generate_due_return_reminders()
     expirations = 0
     report_expirations = 0
     electoral_alert_deliveries = 0
     recurring_report_jobs = 0
+    territorial_deadlines = 0
     tenant_ids = list(db.session.scalars(select(Tenant.id).order_by(Tenant.id)))
     for tenant_id in tenant_ids:
         with tenant_context(tenant_id):
+            territorial_deadlines += generate_deadline_notifications(tenant_id)
             expirations += enqueue_expired_operational_memory(tenant_id)
             report_expirations += cleanup_expired_reports(tenant_id)
             recurring_report_jobs += dispatch_due_report_schedules(tenant_id)
@@ -123,4 +133,4 @@ def _run_scheduler_once() -> tuple[int, int, int]:
             "Scheduler generated %s recurring electoral report jobs",
             recurring_report_jobs,
         )
-    return reminders, expirations, report_expirations
+    return reminders, expirations, report_expirations, territorial_deadlines

@@ -4,7 +4,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import func, or_, select
 
@@ -14,10 +14,15 @@ from app.ai.service import (
     latest_assistance_execution,
     latest_triage_execution,
 )
+from app.audit import add_audit
 from app.auth.permissions import roles_required
 from app.communications.service import scheduled_return_data
-from app.extensions import db
+from app.extensions import db, limiter
+from app.geocoding.benchmark import normalize_benchmark_geometry
+from app.geocoding.contract import GeocodeQuery, GeocodeStatus
+from app.geocoding.providers import GeoapifyAdapter, GeocodingProviderError
 from app.models import (
+    AuditLog,
     Citizen,
     ExternalAgency,
     InteractionDirection,
@@ -49,6 +54,7 @@ from app.requests.service import (
     record_audit,
     validate_create,
 )
+from app.territory_geometry import geometry_contains
 
 requests_bp = Blueprint("requests", __name__)
 
@@ -104,6 +110,16 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
             "atualizadaEm": (
                 service_request.geocoded_at.isoformat() if service_request.geocoded_at else None
             ),
+            "atribuicoes": (
+                ["Geoapify", "OpenStreetMap contributors"]
+                if service_request.geocode_source == "GEOAPIFY"
+                else []
+            ),
+            "revisaoPendente": (
+                service_request.geocode_source == "GEOAPIFY"
+                and service_request.geocode_method == "HOMOLOGATION_EXTERNAL"
+                and not service_request.geocode_verified
+            ),
         },
         "responsavelId": (
             str(service_request.responsible_id) if service_request.responsible_id else None
@@ -123,6 +139,9 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
         "atualizadaEm": service_request.updated_at.isoformat(),
     }
     if include_details:
+        data["geocodificacaoHomologacao"] = _geocoding_homologation_state(
+            service_request.tenant_id
+        )
         data["interacoes"] = [
             {
                 "id": str(item.id),
@@ -163,6 +182,72 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
             latest_assistance_execution(service_request.tenant_id, service_request.id)
         )
     return data
+
+
+def _geocoding_homologation_state(tenant_id: uuid.UUID) -> dict:
+    environment = str(current_app.config.get("APP_ENV", "development")).lower()
+    flag_enabled = bool(current_app.config.get("GEOCODING_HOMOLOGATION_ENABLED", False))
+    credential_configured = bool(str(current_app.config.get("GEOAPIFY_API_KEY", "")).strip())
+    allowed_environment = environment != "production"
+    daily_limit = max(
+        int(current_app.config.get("GEOCODING_HOMOLOGATION_DAILY_LIMIT", 100)), 0
+    )
+    starts_at = datetime.combine(datetime.now(UTC).date(), datetime.min.time(), tzinfo=UTC)
+    used = db.session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == tenant_id,
+            AuditLog.action == "request.geocoding.geoapify.executed",
+            AuditLog.created_at >= starts_at,
+        )
+    ).scalar_one()
+    enabled = flag_enabled and credential_configured and allowed_environment
+    role = str(get_jwt().get("role", "")).lower()
+    unavailable_reason = None
+    if not allowed_environment:
+        unavailable_reason = "A integração de homologação é proibida em produção."
+    elif not flag_enabled:
+        unavailable_reason = "A feature flag de homologação está desabilitada."
+    elif not credential_configured:
+        unavailable_reason = "A credencial do Geoapify não está configurada."
+    return {
+        "habilitada": enabled,
+        "podeOperar": enabled and role in {"admin", "manager"},
+        "ambiente": environment,
+        "provedor": "GEOAPIFY",
+        "limiteDiario": daily_limit,
+        "utilizadasHoje": used,
+        "restantesHoje": max(daily_limit - used, 0),
+        "motivoIndisponivel": unavailable_reason,
+    }
+
+
+def _homologation_bbox(tenant: Tenant) -> tuple[float, float, float, float] | None:
+    bounds = tenant.jurisdiction_bounds
+    if not isinstance(bounds, dict):
+        return None
+    try:
+        return (
+            float(bounds["minLongitude"]),
+            float(bounds["minLatitude"]),
+            float(bounds["maxLongitude"]),
+            float(bounds["maxLatitude"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _geocoding_feature_error(state: dict):
+    if not state["habilitada"]:
+        return jsonify(
+            error="geocoding_homologation_disabled",
+            message=state["motivoIndisponivel"] or "Integração indisponível.",
+        ), 403
+    if state["restantesHoje"] <= 0:
+        return jsonify(
+            error="geocoding_quota_exceeded",
+            message="A cota diária de geocodificação do gabinete foi atingida.",
+        ), 429
+    return None
 
 
 @requests_bp.get("/solicitacoes")
@@ -418,6 +503,225 @@ def get_request(request_id: uuid.UUID):
     service_request = _get_request_or_404(request_id, tenant_id, user_id)
     if service_request is None:
         return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
+    return jsonify(_serialize(service_request, include_details=True))
+
+
+@requests_bp.post("/solicitacoes/<uuid:request_id>/geocodificacao/geoapify")
+@limiter.limit("10 per minute")
+@roles_required("admin", "manager")
+def geocode_request_with_geoapify(request_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    service_request = _get_request_or_404(request_id, tenant_id, user_id)
+    if service_request is None:
+        return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
+
+    state = _geocoding_homologation_state(tenant_id)
+    if feature_error := _geocoding_feature_error(state):
+        return feature_error
+    payload = request.get_json(silent=True) or {}
+    if payload.get("confirmacaoDadosTeste") is not True:
+        return jsonify(
+            error="test_data_confirmation_required",
+            message=(
+                "Confirme que o endereço pertence à homologação e não contém vínculo pessoal "
+                "indevido antes de consultar o provedor externo."
+            ),
+        ), 422
+    if not service_request.address or not service_request.address.strip():
+        return jsonify(
+            error="address_required",
+            message="Informe um endereço na solicitação antes de geocodificar.",
+        ), 422
+    if service_request.geocode_verified:
+        return jsonify(
+            error="verified_geocoding_protected",
+            message=(
+                "A localização já foi verificada por uma pessoa e não pode ser substituída "
+                "por nova consulta automática."
+            ),
+        ), 409
+
+    tenant = db.session.get(Tenant, tenant_id)
+    bbox = _homologation_bbox(tenant)
+    if bbox is None and not tenant.jurisdiction_geojson:
+        return jsonify(
+            error="jurisdiction_not_configured",
+            message="Configure os limites ou a geometria oficial da jurisdição.",
+        ), 422
+    reference = ", ".join(
+        value
+        for value in (
+            service_request.address.strip(),
+            tenant.jurisdiction_city,
+            tenant.jurisdiction_state,
+        )
+        if value
+    )
+    query = GeocodeQuery(reference, jurisdiction_bbox=bbox)
+    provider = GeoapifyAdapter(
+        str(current_app.config["GEOAPIFY_API_KEY"]).strip(),
+        timeout_seconds=float(
+            current_app.config.get("GEOCODING_HOMOLOGATION_TIMEOUT_SECONDS", 12)
+        ),
+    )
+    try:
+        result = provider.geocode(query)
+    except GeocodingProviderError:
+        return jsonify(
+            error="geocoding_provider_unavailable",
+            message="O Geoapify não respondeu de forma válida. Tente novamente mais tarde.",
+        ), 502
+
+    status = result.status
+    if (
+        result.latitude is not None
+        and result.longitude is not None
+        and tenant.jurisdiction_geojson
+    ):
+        geometry = normalize_benchmark_geometry(tenant.jurisdiction_geojson)
+        if not geometry_contains(geometry, result.latitude, result.longitude):
+            status = GeocodeStatus.OUTSIDE_JURISDICTION
+    if status == GeocodeStatus.VERIFIED:
+        status = GeocodeStatus.APPROXIMATE
+
+    before = {
+        "latitude": service_request.latitude,
+        "longitude": service_request.longitude,
+        "statusGeografico": service_request.geocode_status,
+        "verificada": service_request.geocode_verified,
+        "metodo": service_request.geocode_method,
+    }
+    service_request.latitude = result.latitude
+    service_request.longitude = result.longitude
+    service_request.geocode_source = result.provider
+    service_request.geocode_method = "HOMOLOGATION_EXTERNAL"
+    service_request.geocode_confidence = result.confidence
+    service_request.geocode_verified = False
+    service_request.geocode_status = status.value
+    service_request.geocoded_at = datetime.now(UTC)
+    service_request.history.append(
+        RequestHistory(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="request.geocoded.geoapify",
+            changes={
+                "latitude": {"antes": before["latitude"], "depois": result.latitude},
+                "longitude": {"antes": before["longitude"], "depois": result.longitude},
+                "statusGeografico": {
+                    "antes": before["statusGeografico"],
+                    "depois": status.value,
+                },
+                "verificada": {"antes": before["verificada"], "depois": False},
+                "metodo": {
+                    "antes": before["metodo"],
+                    "depois": "HOMOLOGATION_EXTERNAL",
+                },
+                "atribuicoes": list(result.attribution),
+                "revisaoHumana": "PENDENTE",
+            },
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "request.geocoding.geoapify.executed",
+        "service_request",
+        service_request.id,
+        before={"statusGeografico": before["statusGeografico"]},
+        after={
+            "provedor": "GEOAPIFY",
+            "statusGeografico": status.value,
+            "revisaoHumana": "PENDENTE",
+        },
+    )
+    db.session.commit()
+    return jsonify(_serialize(service_request, include_details=True))
+
+
+@requests_bp.post("/solicitacoes/<uuid:request_id>/geocodificacao/revisao")
+@roles_required("admin", "manager")
+def review_geocoded_request(request_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    service_request = _get_request_or_404(request_id, tenant_id, user_id)
+    if service_request is None:
+        return jsonify(error="resource_not_found", message="Solicitação não encontrada."), 404
+    state = _geocoding_homologation_state(tenant_id)
+    if not state["habilitada"]:
+        return _geocoding_feature_error(state)
+    if (
+        service_request.geocode_source != "GEOAPIFY"
+        or service_request.geocode_method != "HOMOLOGATION_EXTERNAL"
+        or service_request.geocode_verified
+    ):
+        return jsonify(
+            error="geocoding_review_not_pending",
+            message="A solicitação não possui resultado pendente de revisão do Geoapify.",
+        ), 409
+
+    payload = request.get_json(silent=True) or {}
+    decision = str(payload.get("decisao", "")).upper()
+    justification = str(payload.get("justificativa", "")).strip()
+    if decision not in {"APROVAR", "REJEITAR"} or len(justification) < 3:
+        return jsonify(
+            error="validation_error",
+            message="Informe decisão APROVAR ou REJEITAR e uma justificativa.",
+        ), 422
+    if decision == "APROVAR" and (
+        service_request.latitude is None
+        or service_request.longitude is None
+        or service_request.geocode_status in {"UNRESOLVED", "OUTSIDE_JURISDICTION"}
+    ):
+        return jsonify(
+            error="geocoding_result_not_approvable",
+            message="Resultados sem coordenadas ou fora da jurisdição não podem ser aprovados.",
+        ), 422
+
+    before_status = service_request.geocode_status
+    before_verified = service_request.geocode_verified
+    if decision == "APROVAR":
+        service_request.geocode_status = "VERIFIED"
+        service_request.geocode_verified = True
+        service_request.geocode_method = "HOMOLOGATION_HUMAN_REVIEW"
+    else:
+        service_request.latitude = None
+        service_request.longitude = None
+        service_request.geocode_status = "UNRESOLVED"
+        service_request.geocode_verified = False
+        service_request.geocode_method = "HOMOLOGATION_REJECTED"
+    service_request.geocoded_at = datetime.now(UTC)
+    service_request.history.append(
+        RequestHistory(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="request.geocoding.reviewed",
+            changes={
+                "decisao": decision,
+                "justificativa": justification,
+                "statusGeografico": {
+                    "antes": before_status,
+                    "depois": service_request.geocode_status,
+                },
+                "verificada": {
+                    "antes": before_verified,
+                    "depois": service_request.geocode_verified,
+                },
+            },
+        )
+    )
+    add_audit(
+        tenant_id,
+        user_id,
+        "request.geocoding.reviewed",
+        "service_request",
+        service_request.id,
+        before={"statusGeografico": before_status, "verificada": before_verified},
+        after={
+            "decisao": decision,
+            "statusGeografico": service_request.geocode_status,
+            "verificada": service_request.geocode_verified,
+        },
+    )
+    db.session.commit()
     return jsonify(_serialize(service_request, include_details=True))
 
 

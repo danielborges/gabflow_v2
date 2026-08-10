@@ -247,4 +247,68 @@ describe("RequestsPage", () => {
     expect(within(distribution).getByRole("button", { name: "Atualizar responsável" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Acompanhamento" })).not.toBeInTheDocument();
   });
+
+  it("consulta o Geoapify em homologação e exige revisão humana", async () => {
+    const request = {
+      id: "req-geo",
+      protocolo: "GF-2026-000777",
+      titulo: "Localização de homologação",
+      descricao: "Registro sintético",
+      endereco: "Rua Halfeld, 10, Centro",
+      origem: "PRESENCIAL",
+      prioridade: "MEDIA",
+      status: "NOVA",
+      criadaEm: "2026-08-10T12:00:00Z",
+      latitude: -21.76,
+      longitude: -43.35,
+      qualidadeGeografica: {
+        origem: "GEOAPIFY",
+        metodo: "HOMOLOGATION_EXTERNAL",
+        confianca: 0.98,
+        verificada: false,
+        status: "APPROXIMATE",
+        atribuicoes: ["Geoapify", "OpenStreetMap contributors"],
+        revisaoPendente: true,
+      },
+      geocodificacaoHomologacao: {
+        habilitada: true,
+        podeOperar: true,
+        limiteDiario: 100,
+        utilizadasHoje: 1,
+        restantesHoje: 99,
+      },
+      interacoes: [], historico: [], tarefas: [], anexos: [], duplicidades: [],
+      encaminhamentos: [], tentativasContato: [], retornos: [],
+    };
+    apiRequest.mockImplementation((url, options) => {
+      if (url === "/api/v1/solicitacoes/req-geo" && !options) return Promise.resolve(request);
+      if (String(url).startsWith("/api/v1/solicitacoes?")) {
+        return Promise.resolve({ content: [request], totalElements: 1, totalPages: 1 });
+      }
+      if (url === "/api/v1/solicitacoes/req-geo/geocodificacao/geoapify") {
+        return Promise.resolve(request);
+      }
+      return Promise.resolve({ content: [] });
+    });
+
+    render(<RequestsPage user={{ role: "admin" }} />);
+    fireEvent.click(await screen.findByText("Localização de homologação"));
+
+    expect(await screen.findByRole("heading", { name: "Localização com Geoapify" })).toBeInTheDocument();
+    expect(screen.getByText("Dados: Geoapify · OpenStreetMap contributors")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Consultar Geoapify" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Aprovar localização" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Confirmo que este endereço/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Consultar Geoapify" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/solicitacoes/req-geo/geocodificacao/geoapify",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ confirmacaoDadosTeste: true }),
+      }),
+    ));
+    expect(await screen.findByText("Resultado recebido. Revise a localização antes de aprová-la.")).toBeInTheDocument();
+  });
 });

@@ -304,7 +304,7 @@ export function Workspace({ user, onLogout }) {
         {activeView === "rag" && isModuleEnabled("rag") && <RagKnowledgeBasePage />}
         {activeView === "admin" && user.role === "admin" && <AdministrationPage />}
         {activeView === "privacy" && ["admin", "manager"].includes(user.role) && isModuleEnabled("privacidade") && <PrivacyGovernancePage />}
-        {activeView === "overview" && <OperationalDashboard onOpenRequests={openTerritorialRequests} />}
+        {activeView === "overview" && <OperationalDashboard user={user} onOpenRequests={openTerritorialRequests} />}
       </main>
     </div>
   );
