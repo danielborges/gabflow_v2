@@ -851,7 +851,9 @@ def register_commands(app: Flask) -> None:
         approved = [item["provider"] for item in report["providers"] if item["approved"]]
         click.echo(
             f"Benchmark concluído: casos={len(loaded.cases)}, "
-            f"checksum={loaded.checksum}, aprovados={','.join(approved) or 'nenhum'}, "
+            f"checksum={loaded.checksum}, "
+            f"qualidade_aprovada={','.join(approved) or 'nenhum'}, "
+            "autorizacao_producao=nao, "
             f"relatório={output}."
         )
 

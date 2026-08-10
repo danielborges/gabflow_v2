@@ -1,5 +1,7 @@
 import hashlib
 import secrets
+import threading
+import time
 import uuid
 from calendar import monthrange
 from collections import Counter
@@ -7,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from math import cos, pi, sin
 from statistics import median
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -42,6 +44,9 @@ from app.requests.access import request_visibility_filters
 
 operations_bp = Blueprint("operations", __name__)
 public_bp = Blueprint("public_requests", __name__)
+_DASHBOARD_CACHE: dict[tuple, tuple[float, dict]] = {}
+_DASHBOARD_CACHE_LOCKS: dict[tuple, threading.Lock] = {}
+_DASHBOARD_CACHE_GUARD = threading.Lock()
 
 CLOSED_STATUSES = {
     RequestStatus.RESOLVIDA,
@@ -381,11 +386,43 @@ def create_contact_attempt(request_id: uuid.UUID):
 @jwt_required()
 def operational_dashboard():
     tenant_id, user_id = _context()
-    now = datetime.now(UTC)
-    from app.communications.service import generate_return_reminders, scheduled_return_data
+    from app.communications.service import generate_return_reminders
 
     if generate_return_reminders(tenant_id, user_id):
         db.session.commit()
+    claims = get_jwt()
+    cache_key = (
+        str(tenant_id),
+        claims.get("role"),
+        bool(claims.get("is_chief_of_staff")),
+        tuple(sorted(request.args.items(multi=True))),
+    )
+    with _DASHBOARD_CACHE_GUARD:
+        key_lock = _DASHBOARD_CACHE_LOCKS.setdefault(cache_key, threading.Lock())
+    with key_lock:
+        now = time.monotonic()
+        cached = _DASHBOARD_CACHE.get(cache_key)
+        if cached and cached[0] > now:
+            return jsonify(cached[1])
+        response = _build_operational_dashboard()
+        if isinstance(response, tuple):
+            return response
+        payload = response.get_json()
+        ttl = current_app.config["OPERATIONAL_DASHBOARD_CACHE_SECONDS"]
+        _DASHBOARD_CACHE[cache_key] = (now + ttl, payload)
+        if len(_DASHBOARD_CACHE) > 200:
+            expired = [key for key, value in _DASHBOARD_CACHE.items() if value[0] <= now]
+            for key in expired:
+                _DASHBOARD_CACHE.pop(key, None)
+                _DASHBOARD_CACHE_LOCKS.pop(key, None)
+        return response
+
+
+def _build_operational_dashboard():
+    tenant_id, _ = _context()
+    now = datetime.now(UTC)
+    from app.communications.service import scheduled_return_data
+
     all_items = list(
         db.session.execute(
             select(ServiceRequest)
@@ -1008,7 +1045,6 @@ def _territorial_dashboard(
     comparison = _territorial_comparison(
         items,
         comparison_items,
-        overdue_ids,
         territory_names,
         agency_names,
         responsible_names,
@@ -1018,7 +1054,7 @@ def _territorial_dashboard(
     )
     return {
         "metodo": "POSTGIS" if postgis is not None else "LOCAL_APROXIMADO",
-        "versaoMetodo": "5.2",
+        "versaoMetodo": "5.2.1",
         "geradoEm": datetime.now(UTC).isoformat(),
         "filtrosAplicados": {
             "inicio": filters["inicio"].isoformat() if filters["inicio"] else None,
@@ -1062,7 +1098,6 @@ def _territorial_dashboard(
 def _territorial_comparison(
     items: list[ServiceRequest],
     comparison_items: list[ServiceRequest],
-    overdue_ids: set[uuid.UUID],
     territory_names: dict,
     agency_names: dict,
     responsible_names: dict,
@@ -1070,12 +1105,19 @@ def _territorial_comparison(
     comparison_filters: dict,
     can_view_examples: bool,
 ) -> dict:
+    current_cutoff = datetime.combine(
+        filters["fim"] + timedelta(days=1), datetime.min.time(), tzinfo=UTC
+    )
+    comparison_cutoff = datetime.combine(
+        comparison_filters["fim"] + timedelta(days=1), datetime.min.time(), tzinfo=UTC
+    )
+    current_overdue_ids = _overdue_ids_at(items, current_cutoff)
     current_groups = _group_requests_by_territory(items, territory_names)
     comparison_groups = _group_requests_by_territory(comparison_items, territory_names)
     alert_items = _recurrent_demands(
         items,
         datetime.now(UTC),
-        overdue_ids,
+        current_overdue_ids,
         territory_names,
         can_view_examples,
     )
@@ -1088,19 +1130,9 @@ def _territorial_comparison(
         if len(current_group) < MIN_ANALYTICS_GROUP_SIZE:
             continue
         previous_group = comparison_groups.get(key, [])
-        current_metrics = _territorial_period_metrics(current_group, overdue_ids)
-        comparison_cutoff = datetime.combine(
-            comparison_filters["fim"] + timedelta(days=1), datetime.min.time(), tzinfo=UTC
-        )
-        previous_overdue_ids = {
-            item.id
-            for item in previous_group
-            if item.status not in CLOSED_STATUSES
-            and item.due_at
-            and _utc(item.due_at) < comparison_cutoff
-        }
+        current_metrics = _territorial_period_metrics(current_group, current_cutoff)
         previous_metrics = _territorial_period_metrics(
-            previous_group, previous_overdue_ids
+            previous_group, comparison_cutoff
         )
         comparison_available = len(previous_group) >= MIN_ANALYTICS_GROUP_SIZE
         territory_id = current_group[0].territory_id
@@ -1208,8 +1240,8 @@ def _territorial_comparison(
             },
             "metodo": "JANELAS_EQUIVALENTES",
             "metodologia": (
-                "Coortes de solicitações criadas em janelas equivalentes; desfechos e tempos "
-                "consideram o estado conhecido no momento da consulta."
+                "Coortes de solicitações criadas em janelas equivalentes; cada coorte considera "
+                "somente status, respostas e encerramentos conhecidos até o fim da própria janela."
             ),
             "estado": (
                 "DISPONIVEL"
@@ -1240,23 +1272,29 @@ def _group_requests_by_territory(
 
 
 def _territorial_period_metrics(
-    items: list[ServiceRequest], overdue_ids: set[uuid.UUID]
+    items: list[ServiceRequest], cutoff: datetime
 ) -> dict:
     total = len(items)
+    overdue_ids = _overdue_ids_at(items, cutoff)
     overdue_total = sum(item.id in overdue_ids for item in items)
     solved_total = sum(
-        item.status in {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA} for item in items
+        _status_at(item, cutoff) in {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA}
+        for item in items
     )
     first_response_hours = []
     resolution_hours = []
     geocoded = 0
     for item in items:
-        first_response = _first_citizen_response_at(item)
+        first_response = _first_citizen_response_at(item, cutoff)
         if first_response:
             first_response_hours.append(_hours_between(item.created_at, first_response))
-        for closed_at, closed_status in _closure_events(item):
-            if closed_status in {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA}:
-                resolution_hours.append(_hours_between(item.created_at, closed_at))
+        solved_events = [
+            closed_at
+            for closed_at, closed_status in _closure_events(item, cutoff)
+            if closed_status in {RequestStatus.RESOLVIDA, RequestStatus.ENCERRADA}
+        ]
+        if solved_events:
+            resolution_hours.append(_hours_between(item.created_at, min(solved_events)))
         geocoded += int(_location_status(item) in {"APPROXIMATE", "VERIFIED"})
     return {
         "total": total,
@@ -1622,17 +1660,22 @@ def _operational_metrics(items: list[ServiceRequest]) -> dict:
     }
 
 
-def _first_citizen_response_at(item: ServiceRequest) -> datetime | None:
+def _first_citizen_response_at(
+    item: ServiceRequest, cutoff: datetime | None = None
+) -> datetime | None:
     for interaction in item.interactions:
         if (
             interaction.direction == InteractionDirection.SAIDA
             and interaction.visibility == InteractionVisibility.CIDADAO
+            and (cutoff is None or _utc(interaction.created_at) < cutoff)
         ):
             return _utc(interaction.created_at)
     return None
 
 
-def _closure_events(item: ServiceRequest) -> list[tuple[datetime, RequestStatus]]:
+def _closure_events(
+    item: ServiceRequest, cutoff: datetime | None = None
+) -> list[tuple[datetime, RequestStatus]]:
     events = []
     for history in item.history:
         if history.action != "request.updated":
@@ -1648,10 +1691,45 @@ def _closure_events(item: ServiceRequest) -> list[tuple[datetime, RequestStatus]
         except ValueError:
             continue
         if status in CLOSED_STATUSES:
-            events.append((closed_at, status))
+            if cutoff is None or closed_at < cutoff:
+                events.append((closed_at, status))
     if not events and item.closed_at:
-        events.append((_utc(item.closed_at), item.status))
+        closed_at = _utc(item.closed_at)
+        if cutoff is None or closed_at < cutoff:
+            events.append((closed_at, item.status))
     return events
+
+
+def _status_at(item: ServiceRequest, cutoff: datetime) -> RequestStatus:
+    """Reconstitui o status conhecido imediatamente antes do corte exclusivo."""
+    status = item.status
+    transitions = []
+    for history in item.history:
+        if history.action != "request.updated" or _utc(history.created_at) < cutoff:
+            continue
+        status_change = (history.changes or {}).get("status") or {}
+        before = status_change.get("antes")
+        if before is not None:
+            transitions.append((_utc(history.created_at), before))
+
+    for _, before in sorted(transitions, key=lambda transition: transition[0], reverse=True):
+        try:
+            status = RequestStatus(before)
+        except ValueError:
+            continue
+    return status
+
+
+def _overdue_ids_at(
+    items: list[ServiceRequest], cutoff: datetime
+) -> set[uuid.UUID]:
+    return {
+        item.id
+        for item in items
+        if item.due_at
+        and _utc(item.due_at) < cutoff
+        and _status_at(item, cutoff) not in CLOSED_STATUSES
+    }
 
 
 def _history_datetime(value) -> datetime | None:

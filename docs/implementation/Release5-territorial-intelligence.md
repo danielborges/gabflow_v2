@@ -12,7 +12,7 @@
 | RF-080 | Painel operacional com volume por status, categoria, territorio, orgao, canal e periodo, com filtros por data, categoria, canal, territorio e orgao |
 | RF-081 | Metricas de tempo ate primeira resposta, primeiro encaminhamento, encerramento e resolucao |
 | RF-082 | Reaberturas contabilizadas e alertas de reincidencia por categoria, territorio e celula geografica |
-| RF-083 | Base do mapa de calor territorial com pontos geocodificados, hotspots e limites da jurisdicao; interacao e drill-down permanecem planejados |
+| RF-083 | Mapa territorial interativo em homologacao com base Geoapify, pontos geocodificados, hotspots, limites da jurisdicao, navegacao e selecao de territorio; o SVG anterior permanece apenas como contingencia |
 | RF-085 | Relatorio mensal do mandato com resumo, destaques, indicadores agregados e evidencias rastreaveis por protocolo |
 | RF-086 | Indicadores por orgao destinatario no painel e no relatorio mensal |
 | RF-087 | Fila prioritaria com demandas atrasadas, proximas do prazo, sem responsavel, aguardando orgao e retornos pendentes |
@@ -70,8 +70,8 @@
   criacao de tarefa, agenda, visita, roteiro ou encaminhamento;
 - a privacidade territorial precisa ser refinada para o menor recorte retornado e para permissoes
   distintas de agregado, exemplo e ponto individual;
-- o mapa atual e uma representacao visual estatica; tabela equivalente, selecao, camadas,
-  navegacao e exportacao permanecem planejadas;
+- o mapa interativo depende de uma chave publica de tiles restrita por dominio e permanece
+  bloqueado em producao; exportacao cartografica e seletores de camadas permanecem planejados;
 - o painel nao possui telemetria de produto suficiente para medir adocao, investigacao e
   conversao em acao;
 - RF-084 esta parcialmente coberto por filtros; exportacao de dashboard ainda depende de uma entrega especifica.

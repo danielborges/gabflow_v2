@@ -13,4 +13,7 @@ frontend/dist/
 .vscode/
 *.log
 *.db
+benchmark/*.csv
+benchmark/results/*.json
+!benchmark/territorial-geocoding-manifest-v1.json
 !backend/Dockerfile.db

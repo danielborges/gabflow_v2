@@ -170,3 +170,11 @@ O relatório final deve conter dataset/checksum, versão do executor, matriz de 
 divergências revisadas, custos, parecer jurídico e decisão `APROVADO`, `APROVADO COM RESSALVAS`
 ou `REPROVADO`. Até essa decisão, o Geoapify permanece aprovado somente para desenvolvimento e
 homologação controlada.
+
+## Resultado da rodada de 10/08/2026
+
+O Gate C foi encerrado como **REPROVADO**, sem promoção de provedor para produção. A amostra
+congelada de 700 casos foi executada contra Geoapify, Google e Geocode Earth; nenhum candidato
+atendeu simultaneamente todas as metas eliminatórias. O relatório detalhado permanece como
+artefato restrito e a decisão sanitizada, os checksums e as condições para nova rodada estão em
+[`Territorial-geocoding-gate-c-closure.md`](Territorial-geocoding-gate-c-closure.md).

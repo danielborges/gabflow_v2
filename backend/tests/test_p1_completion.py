@@ -1,11 +1,22 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from app.auth.security import hash_password
 from app.extensions import db
-from app.models import AuditLog, Role, ServiceRequest, Tenant, User
+from app.models import (
+    AuditLog,
+    InteractionDirection,
+    InteractionVisibility,
+    RequestStatus,
+    Role,
+    ServiceRequest,
+    Tenant,
+    User,
+)
+from app.operations.routes import _territorial_period_metrics
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -333,7 +344,7 @@ def test_territorial_points_follow_role_privacy(app, client):
     assert territorial["pontos"] == []
     assert territorial["heatmap"][0]["total"] == 3
     assert territorial["privacidade"]["visualizacaoPontosPermitida"] is False
-    assert territorial["versaoMetodo"] == "5.2"
+    assert territorial["versaoMetodo"] == "5.2.1"
     assert territorial["filtrosAplicados"]["granularidade"] == "dia"
     assert territorial["geradoEm"]
     assert staff_dashboard["alertasDemanda"]["reincidencias"][0]["exemplos"] == []
@@ -399,6 +410,57 @@ def test_territorial_exploration_compares_windows_and_preserves_grid_filters(app
     assert saved.json["filtros"]["territorioId"] == territory["id"]
     views = client.get("/api/v1/painel/territorial/visoes")
     assert [item["nome"] for item in views.json["content"]] == ["Centro Sul — WhatsApp"]
+
+
+def test_territorial_history_uses_each_period_cutoff():
+    created_at = datetime(2026, 6, 1, tzinfo=UTC)
+    historical_cutoff = datetime(2026, 7, 1, tzinfo=UTC)
+    resolved_at = datetime(2026, 7, 5, tzinfo=UTC)
+    answered_at = datetime(2026, 7, 3, tzinfo=UTC)
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        created_at=created_at,
+        due_at=datetime(2026, 6, 20, tzinfo=UTC),
+        status=RequestStatus.RESOLVIDA,
+        closed_at=resolved_at,
+        geocode_verified=False,
+        geocode_status="APPROXIMATE",
+        latitude=-21.762,
+        longitude=-43.315,
+        history=[
+            SimpleNamespace(
+                action="request.updated",
+                created_at=resolved_at,
+                changes={
+                    "status": {
+                        "antes": RequestStatus.EM_ATENDIMENTO.value,
+                        "depois": RequestStatus.RESOLVIDA.value,
+                    },
+                    "closed_at": {"antes": None, "depois": resolved_at.isoformat()},
+                },
+            )
+        ],
+        interactions=[
+            SimpleNamespace(
+                direction=InteractionDirection.SAIDA,
+                visibility=InteractionVisibility.CIDADAO,
+                created_at=answered_at,
+            )
+        ],
+    )
+
+    historical = _territorial_period_metrics([item], historical_cutoff)
+    assert historical["atrasadas"] == 1
+    assert historical["solucionadas"] == 0
+    assert historical["tempoMedianoPrimeiraRespostaHoras"] is None
+    assert historical["tempoMedianoResolucaoHoras"] is None
+
+    later_cutoff = datetime(2026, 7, 10, tzinfo=UTC)
+    later = _territorial_period_metrics([item], later_cutoff)
+    assert later["atrasadas"] == 0
+    assert later["solucionadas"] == 1
+    assert later["tempoMedianoPrimeiraRespostaHoras"] == 768.0
+    assert later["tempoMedianoResolucaoHoras"] == 816.0
 
 
 def test_tenant_jurisdiction_can_be_configured_and_feeds_dashboard(app, client, monkeypatch):

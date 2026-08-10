@@ -154,8 +154,9 @@ intercambiável e a aprovação não autoriza o Geoapify em produção antes do 
 
 O adaptador canônico e o executor reproduzível do benchmark foram implementados, com Geoapify,
 Google e Geocode Earth no conjunto padrão e Mapbox preservado como comparador opcional, além de
-checksum do dataset, métricas segmentadas, repetição de estabilidade e CLI. Permanece pendente
-formar e revisar a amostra real antes de executar a prova externa.
+checksum do dataset, métricas segmentadas, repetição de estabilidade e CLI. A prova externa com
+700 casos foi executada em 10/08/2026 e nenhum candidato cumpriu todas as metas eliminatórias.
+O Gate C foi encerrado como reprovado, sem autorização de provedor para produção.
 
 **Entregas**
 
@@ -264,8 +265,10 @@ Implementação iniciada em 07/08/2026, com o primeiro corte funcional cobrindo:
 - telemetria minimizada para abertura, filtro, investigação e início de ação, sem protocolo,
   coordenada ou conteúdo da solicitação.
 
-Antes do Gate A ainda são necessárias a homologação visual no Gabinete Demonstração, a execução
-dos testes PostgreSQL/PostGIS no pipeline e a coleta do baseline de uso e latência.
+O Gate A foi **aprovado e encerrado em 10/08/2026**. A homologação no Gabinete Demonstração,
+os testes territoriais e PostgreSQL/PostGIS, a observação da telemetria e o baseline de latência
+eliminaram as pendências bloqueantes. A decisão e suas evidências estão em
+[`Territorial-intelligence-gate-a-closure.md`](Territorial-intelligence-gate-a-closure.md).
 
 ### Estado do incremento 5.2
 
@@ -284,6 +287,10 @@ Implementação iniciada em 07/08/2026, cobrindo:
 - visões salvas limitadas e isoladas por tenant e usuário, contendo somente filtros permitidos;
 - evento `INVESTIGACAO_INICIADA` integrado ao funil territorial.
 
+Em 10/08/2026, a metodologia histórica foi corrigida e versionada como `5.2.1`: status, atraso,
+primeira resposta e encerramento de cada coorte passaram a respeitar o corte da própria janela,
+sem incorporar fatos futuros ao período anterior.
+
 ### Homologação e decisão do Gate B
 
 O Gate B foi **aprovado em 07/08/2026** após homologação navegada no Gabinete Demonstração com
@@ -296,6 +303,28 @@ massa sintética e o carregamento relacional em cascata do painel. Após a otimi
 consultas autenticadas apresentaram mediana de 359,3 ms e P95 de 550,2 ms, abaixo do orçamento
 de 1,5 segundo. A evidência completa está em
 `docs/implementation/Territorial-intelligence-gate-b-homologation.md`.
+
+### Homologação e decisão do Gate C
+
+O Gate C foi **encerrado como REPROVADO em 10/08/2026**. Os checksums do dataset, da geometria
+oficial e do relatório foram validados, mas Geoapify, Google e Geocode Earth falharam uma ou mais
+metas eliminatórias. Revisão humana, custos e aprovações jurídica/comercial também permanecem
+pendentes. Nenhum provedor externo foi promovido para produção. A matriz e as condições para uma
+nova rodada estão em
+[`Territorial-geocoding-gate-c-closure.md`](Territorial-geocoding-gate-c-closure.md).
+
+### Homologação e decisão do Gate D
+
+Em 10/08/2026 foi implementada a primeira fatia vertical da operação territorial. O recorte
+selecionado agora pode originar tarefa, agenda, visita, roteiro ou encaminhamento com responsável,
+prazo, proveniência, solicitações de referência, estado, evidências e resultado. Agenda, visita e
+roteiro também geram compromisso integrado à Agenda; duplicidades abertas são bloqueadas e todas
+as mutações são auditadas e isoladas por tenant.
+
+O Gate D foi **APROVADO e formalmente encerrado em 10/08/2026**. No volume-alvo, 1.000 consultas
+autenticadas com concorrência 50 tiveram P95 de 452,1 ms e nenhuma falha. A homologação negocial
+aprovou 13 de 13 cenários com os perfis de liderança e trabalhador. A evidência completa está em
+[`Territorial-intelligence-gate-d-closure.md`](Territorial-intelligence-gate-d-closure.md).
 
 ### Definition of Done por item
 
@@ -311,13 +340,17 @@ de 1,5 segundo. A evidência completa está em
 
 ### Marcos de decisão
 
-- **Gate A — fim de 5.1:** filtros coerentes, proveniência disponível, privacidade aprovada e
-  baseline de uso coletando dados.
+- **Gate A — fim de 5.1 — aprovado e encerrado em 10/08/2026:** filtros coerentes, proveniência
+  disponível, privacidade aprovada, PostgreSQL/PostGIS validado e baseline de uso e latência
+  coletando dados.
 - **Gate B — fim de 5.2:** usuários conseguem chegar do sinal aos casos e a conversão em
   investigação pode ser medida.
-- **Gate C — fim de 5.3:** benchmark atende metas segmentadas, fornecedor e termos são aprovados,
-  e qualidade cartográfica/exportação atendem requisitos operacionais e de proteção de dados.
-- **Gate D — fim de 5.4:** ações territoriais têm responsável, prazo, evidência e resultado.
+- **Gate C — fim de 5.3 — reprovado e encerrado em 10/08/2026:** nenhum candidato atendeu todas
+  as metas segmentadas; nenhum provedor está autorizado para produção. Uma nova rodada exige
+  dataset versionado, revisão humana e aprovações jurídica e comercial.
+- **Gate D — fim de 5.4 — aprovado e encerrado em 10/08/2026:** ações territoriais têm
+  responsável, prazo, evidência e resultado; o volume-alvo e a homologação negocial foram
+  aprovados.
 - **Gate E — entrada em 5.5:** somente após Gates A–D e revisão explícita de privacidade,
   metodologia e ganho de produto.
 

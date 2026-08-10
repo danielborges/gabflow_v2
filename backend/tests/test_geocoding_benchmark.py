@@ -252,12 +252,47 @@ def test_benchmark_is_ordered_scored_and_does_not_persist_input_text(tmp_path):
 
     assert report["dataset"]["sha256"] == dataset.checksum
     assert report["providers"][0]["approved"] is True
+    assert report["qualityDecision"] == {
+        "status": "APROVADO",
+        "approvedProviders": ["STUB"],
+        "failedProviders": [],
+        "scope": "QUALIDADE_TECNICA",
+        "productionAuthorization": False,
+    }
     assert report["providers"][0]["statuses"]["VERIFIED"] == 1
     assert report["providers"][0]["distanceMeters"]["sampleCount"] == 1
     assert report["providers"][0]["cost"]["estimatedRun"] == 0.0075
     assert [item["caseId"] for item in report["results"]] == ["case-1", "case-2"]
     assert "Rua Segredo" not in serialized
     assert json.loads(serialized)["benchmarkVersion"] == "geocoding-benchmark-v1"
+
+
+def test_benchmark_consolidates_failed_quality_gates(tmp_path):
+    class UnresolvedProvider:
+        name = "UNRESOLVED"
+        version = "v1"
+
+        def geocode(self, _query):
+            return None
+
+    dataset_path = tmp_path / "benchmark.csv"
+    dataset_path.write_text(_csv_payload(), encoding="utf-8")
+    dataset = load_benchmark_dataset(dataset_path, allow_small_sample=True)
+
+    report = run_benchmark(
+        dataset,
+        (UnresolvedProvider(),),
+        jurisdiction_bbox=(-43.6, -22.0, -43.1, -21.5),
+        delay_ms=0,
+        repeat_fraction=0,
+    )
+
+    decision = report["qualityDecision"]
+    assert decision["status"] == "REPROVADO"
+    assert decision["approvedProviders"] == []
+    assert decision["productionAuthorization"] is False
+    assert decision["failedProviders"][0]["provider"] == "UNRESOLVED"
+    assert "municipality" in decision["failedProviders"][0]["failedGates"]
 
 
 def test_benchmark_applies_official_polygon_instead_of_only_bbox(tmp_path):

@@ -1,5 +1,5 @@
 {
-  "dataset": "territorial-geocoding-dataset-v1.csv",
+  "dataset": "smoke.csv",
   "dataset_version": "1.0.0",
   "frozen_at": "2026-08-10",
   "sha256": "7f8d1428f00ecd9f7ff051b65ae122cd428a825d91fe8f8d51b4038bf4f65a13",

@@ -48,6 +48,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.requests.operations import request_ops_bp
     from app.requests.routes import requests_bp
     from app.search.routes import search_bp
+    from app.territorial.routes import territorial_operations_bp
 
     register_commands(app)
     app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
@@ -69,6 +70,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(platform_bp, url_prefix="/api/v1/platform")
     app.register_blueprint(global_rag_bp, url_prefix="/api/v1/platform/rag-global")
     app.register_blueprint(search_bp, url_prefix="/api/v1")
+    app.register_blueprint(territorial_operations_bp, url_prefix="/api/v1")
     app.register_blueprint(public_bp, url_prefix="/api/v1")
     app.register_blueprint(public_site_bp, url_prefix="/api/v1")
 

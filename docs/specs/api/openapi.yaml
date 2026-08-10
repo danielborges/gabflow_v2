@@ -291,6 +291,50 @@ paths:
                 $ref: "#/components/schemas/Solicitacao"
         "422":
           $ref: "#/components/responses/ValidationError"
+  /solicitacoes/{id}/geocodificacao/geoapify:
+    post:
+      summary: Consulta o Geoapify no fluxo controlado de homologação
+      description: >-
+        Disponível somente fora de produção, mediante feature flag, credencial, cota do gabinete
+        e perfil ADMIN ou MANAGER. O resultado nunca é promovido automaticamente a VERIFIED.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmacaoDadosTeste]
+              properties:
+                confirmacaoDadosTeste: { type: boolean, enum: [true] }
+      responses:
+        "200": { description: Resultado persistido como pendente de revisão humana }
+        "403": { description: Ambiente, flag, credencial ou perfil não autorizado }
+        "409": { description: Localização já verificada e protegida contra sobrescrita }
+        "422": { description: Confirmação, endereço ou jurisdição ausente }
+        "429": { description: Cota diária ou limite de frequência atingido }
+        "502": { description: Provedor indisponível ou resposta inválida }
+  /solicitacoes/{id}/geocodificacao/revisao:
+    post:
+      summary: Aprova ou rejeita uma localização sugerida pelo Geoapify
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decisao, justificativa]
+              properties:
+                decisao: { type: string, enum: [APROVAR, REJEITAR] }
+                justificativa: { type: string, minLength: 3 }
+      responses:
+        "200": { description: Revisão humana auditada }
+        "403": { description: Fluxo de homologação ou perfil não autorizado }
+        "409": { description: Não existe resultado pendente de revisão }
+        "422": { description: Decisão inválida ou resultado não aprovável }
   /solicitacoes/{id}/interacoes:
     post:
       summary: Registra uma interação
@@ -543,6 +587,139 @@ paths:
       responses:
         "204": { description: Visão removida }
         "404": { description: Visão não encontrada para o usuário e tenant }
+  /painel/territorial/acoes:
+    get:
+      summary: Lista ações operacionais do recorte territorial no tenant atual
+      parameters:
+        - { in: query, name: territorioId, schema: { type: string, format: uuid } }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [ABERTAS, TODAS, PENDENTE, EM_ANDAMENTO, CONCLUIDA, CANCELADA]
+        - { in: query, name: tipo, schema: { type: string, enum: [TAREFA, AGENDA, VISITA, ROTEIRO, ENCAMINHAMENTO] } }
+        - { in: query, name: responsavelId, schema: { type: string, format: uuid } }
+        - { in: query, name: prazoEstado, schema: { type: string, enum: [VENCIDA, PROXIMA, NO_PRAZO, SEM_PRAZO, ENCERRADA] } }
+        - { in: query, name: q, schema: { type: string, maxLength: 100 } }
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: size, schema: { type: integer, enum: [10, 25, 50, 100], default: 10 } }
+        - { in: query, name: sort, schema: { type: string } }
+      responses:
+        "200": { description: Histórico paginado conforme o escopo de permissão do usuário }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    post:
+      summary: Converte um recorte territorial em tarefa, agenda, visita, roteiro ou encaminhamento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerritorialActionInput" }
+      responses:
+        "201":
+          description: Ação criada com proveniência preservada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerritorialAction" }
+        "409": { description: Já existe ação aberta equivalente }
+        "403": { description: Perfil sem permissão para criar ações }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/acoes/{id}:
+    patch:
+      summary: Atualiza responsável, prazo, evidências ou estado da ação territorial
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                responsavelId: { type: [string, "null"], format: uuid }
+                prazo: { type: [string, "null"], format: date-time }
+                status:
+                  type: string
+                  enum: [PENDENTE, EM_ANDAMENTO, CONCLUIDA, CANCELADA]
+                resultado: { type: string, minLength: 3 }
+                evidencias:
+                  type: array
+                  maxItems: 20
+                  items: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Ação atualizada; encerramento exige resultado ou justificativa
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerritorialAction" }
+        "404": { description: Ação não encontrada no tenant }
+        "403": { description: Alteração não permitida para o perfil }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/acoes/{id}/evidencias:
+    post:
+      summary: Adiciona evidência estruturada e imutável a uma ação territorial
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerritorialEvidenceInput" }
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/TerritorialEvidenceInput"
+                - type: object
+                  properties:
+                    arquivo: { type: string, format: binary }
+      responses:
+        "201": { description: Evidência armazenada, verificada e auditada }
+        "403": { description: Ação fora do escopo do usuário }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/evidencias/{id}/download:
+    get:
+      summary: Baixa evidência territorial criptografada com token temporário
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - { in: query, name: token, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Conteúdo original da evidência }
+        "403": { description: Token inválido ou ação fora do escopo }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /painel/territorial/metricas-execucao:
+    get:
+      summary: Consolida métricas do funil operacional territorial
+      parameters:
+        - { in: query, name: territorioId, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Volumes, conclusão, prazo, evidência, tempo médio e alertas ativos }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /painel/territorial/alertas:
+    get:
+      summary: Lista alertas territoriais conforme território e escopo do usuário
+      parameters:
+        - { in: query, name: territorioId, schema: { type: string, format: uuid } }
+        - { in: query, name: status, schema: { type: string, enum: [ABERTOS, TODOS, ATIVO, RECONHECIDO, RESOLVIDO] } }
+      responses:
+        "200": { description: Alertas persistentes e auditáveis }
+  /painel/territorial/alertas/{id}:
+    patch:
+      summary: Reconhece ou resolve um alerta territorial
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [RECONHECIDO, RESOLVIDO] }
+                justificativa: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200": { description: Transição registrada e auditada }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /anexos/{id}/download:
     get:
       summary: Baixa um anexo por token temporário assinado
@@ -2791,6 +2968,81 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    TerritorialActionInput:
+      type: object
+      required: [territorioId, tipo, titulo]
+      properties:
+        territorioId: { type: string, format: uuid }
+        tipo:
+          type: string
+          enum: [TAREFA, AGENDA, VISITA, ROTEIRO, ENCAMINHAMENTO]
+        titulo: { type: string, minLength: 3, maxLength: 180 }
+        descricao: { type: [string, "null"] }
+        responsavelId: { type: [string, "null"], format: uuid }
+        prazo: { type: [string, "null"], format: date-time }
+        filtros: { type: object, additionalProperties: true }
+        origem: { type: object, additionalProperties: true }
+        solicitacaoIds:
+          type: array
+          maxItems: 100
+          items: { type: string, format: uuid }
+    TerritorialAction:
+      allOf:
+        - $ref: "#/components/schemas/TerritorialActionInput"
+        - type: object
+          required: [id, status, territorio, criadaEm, atualizadaEm]
+          properties:
+            id: { type: string, format: uuid }
+            territorio: { type: string }
+            status:
+              type: string
+              enum: [PENDENTE, EM_ANDAMENTO, CONCLUIDA, CANCELADA]
+            responsavel: { type: string }
+            prazoEstado:
+              type: string
+              enum: [VENCIDA, PROXIMA, NO_PRAZO, SEM_PRAZO, ENCERRADA]
+            resultado: { type: [string, "null"] }
+            evidencias:
+              type: array
+              items: { type: string }
+            evidenciasEstruturadas:
+              type: array
+              items: { $ref: "#/components/schemas/TerritorialEvidence" }
+            agendaEventoId: { type: [string, "null"], format: uuid }
+            concluidaEm: { type: [string, "null"], format: date-time }
+            criadaEm: { type: string, format: date-time }
+            atualizadaEm: { type: string, format: date-time }
+            permissoes:
+              type: object
+              properties:
+                podeMovimentar: { type: boolean }
+                podeReatribuir: { type: boolean }
+                podeAlterarPrazo: { type: boolean }
+                podeCancelar: { type: boolean }
+    TerritorialEvidenceInput:
+      type: object
+      required: [tipo, titulo]
+      properties:
+        tipo: { type: string, enum: [DOCUMENTO, FOTO, LINK, ATA, COMPROVANTE, OUTRO] }
+        titulo: { type: string, minLength: 3, maxLength: 180 }
+        descricao: { type: [string, "null"], maxLength: 2000 }
+        data: { type: [string, "null"], format: date-time }
+        url: { type: [string, "null"], format: uri }
+    TerritorialEvidence:
+      allOf:
+        - $ref: "#/components/schemas/TerritorialEvidenceInput"
+        - type: object
+          required: [id, autor, criadaEm]
+          properties:
+            id: { type: string, format: uuid }
+            nomeArquivo: { type: [string, "null"] }
+            mimeType: { type: [string, "null"] }
+            tamanho: { type: [integer, "null"] }
+            sha256: { type: [string, "null"] }
+            statusVerificacao: { type: [string, "null"] }
+            downloadUrl: { type: [string, "null"] }
+            autor: { type: string }
+            criadaEm: { type: string, format: date-time }
     RevisaoIdentidadeCanal:
       type: object
       additionalProperties: false

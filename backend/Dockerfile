@@ -25,4 +25,4 @@ RUN mkdir -p /app/data/attachments /app/data/rag /models/whisper \
 EXPOSE 5000
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "180", "--graceful-timeout", "30", "--access-logfile", "-", "wsgi:app"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "wsgi:app"]

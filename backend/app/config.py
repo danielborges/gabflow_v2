@@ -14,6 +14,9 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     DB_ENFORCE_RUNTIME_ROLE = os.getenv("DB_ENFORCE_RUNTIME_ROLE", "true").lower() == "true"
+    OPERATIONAL_DASHBOARD_CACHE_SECONDS = float(
+        os.getenv("OPERATIONAL_DASHBOARD_CACHE_SECONDS", "3")
+    )
 
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
     JWT_TOKEN_LOCATION = ["cookies"]
@@ -24,6 +27,17 @@ class Config:
 
     RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
     RATELIMIT_HEADERS_ENABLED = True
+
+    GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY", "")
+    GEOCODING_HOMOLOGATION_ENABLED = (
+        os.getenv("GEOCODING_HOMOLOGATION_ENABLED", "false").lower() == "true"
+    )
+    GEOCODING_HOMOLOGATION_DAILY_LIMIT = int(
+        os.getenv("GEOCODING_HOMOLOGATION_DAILY_LIMIT", "100")
+    )
+    GEOCODING_HOMOLOGATION_TIMEOUT_SECONDS = float(
+        os.getenv("GEOCODING_HOMOLOGATION_TIMEOUT_SECONDS", "12")
+    )
 
     SENTRY_DSN = os.getenv("SENTRY_DSN")
     SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
@@ -409,12 +423,15 @@ class Config:
 
 class TestConfig(Config):
     TESTING = True
+    OPERATIONAL_DASHBOARD_CACHE_SECONDS = 0
     SQLALCHEMY_DATABASE_URI = "sqlite+pysqlite:///:memory:"
     SQLALCHEMY_ENGINE_OPTIONS = {
         "execution_options": {"schema_translate_map": {"rag_global": None}}
     }
     JWT_COOKIE_SECURE = False
     RATELIMIT_ENABLED = False
+    GEOCODING_HOMOLOGATION_ENABLED = False
+    GEOAPIFY_API_KEY = ""
     SENTRY_DSN = None
     RAG_OPERATIONAL_MEMORY_ENABLED = False
     RAG_NEURAL_RERANK_ENABLED = False

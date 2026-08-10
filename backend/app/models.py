@@ -420,6 +420,27 @@ class AgendaEventStatus(str, enum.Enum):
     CANCELADO = "CANCELADO"
 
 
+class TerritorialActionType(str, enum.Enum):
+    TAREFA = "TAREFA"
+    AGENDA = "AGENDA"
+    VISITA = "VISITA"
+    ROTEIRO = "ROTEIRO"
+    ENCAMINHAMENTO = "ENCAMINHAMENTO"
+
+
+class TerritorialActionStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    EM_ANDAMENTO = "EM_ANDAMENTO"
+    CONCLUIDA = "CONCLUIDA"
+    CANCELADA = "CANCELADA"
+
+
+class TerritorialAlertStatus(str, enum.Enum):
+    ATIVO = "ATIVO"
+    RECONHECIDO = "RECONHECIDO"
+    RESOLVIDO = "RESOLVIDO"
+
+
 class OversightActionStatus(str, enum.Enum):
     PLANEJADA = "PLANEJADA"
     EM_ANDAMENTO = "EM_ANDAMENTO"
@@ -4646,6 +4667,137 @@ class AgendaEvent(db.Model):
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class TerritorialAction(db.Model):
+    __tablename__ = "territorial_actions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_territorial_actions_tenant_id_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    territory_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("territories.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    action_type: Mapped[TerritorialActionType] = mapped_column(
+        Enum(TerritorialActionType, name="territorial_action_type"), nullable=False, index=True
+    )
+    status: Mapped[TerritorialActionStatus] = mapped_column(
+        Enum(TerritorialActionStatus, name="territorial_action_status"),
+        default=TerritorialActionStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    source_key: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    source_context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    request_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    result: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    agenda_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agenda_events.id", ondelete="SET NULL"), index=True
+    )
+    due_soon_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    overdue_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class TerritorialActionEvidence(db.Model):
+    __tablename__ = "territorial_action_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("territorial_actions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    evidence_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_url: Mapped[str | None] = mapped_column(String(1000))
+    storage_key: Mapped[str | None] = mapped_column(String(300), unique=True)
+    original_name: Mapped[str | None] = mapped_column(String(255))
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    scan_status: Mapped[AttachmentScanStatus | None] = mapped_column(
+        Enum(AttachmentScanStatus, name="attachment_scan_status", create_type=False)
+    )
+    scan_provider: Mapped[str | None] = mapped_column(String(80))
+    scan_engine_version: Mapped[str | None] = mapped_column(String(80))
+    scan_signature_version: Mapped[str | None] = mapped_column(String(80))
+    scan_threat: Mapped[str | None] = mapped_column(String(160))
+    scan_error_code: Mapped[str | None] = mapped_column(String(80))
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    encryption_key_version: Mapped[int | None] = mapped_column(Integer)
+    encryption_algorithm: Mapped[str | None] = mapped_column(String(40))
+    encrypted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class TerritorialActionAlert(db.Model):
+    __tablename__ = "territorial_action_alerts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "action_id", "alert_type", name="uq_territorial_alert"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("territorial_actions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    alert_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    status: Mapped[TerritorialAlertStatus] = mapped_column(
+        Enum(TerritorialAlertStatus, name="territorial_alert_status"),
+        default=TerritorialAlertStatus.ATIVO,
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledged_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    resolution_note: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )

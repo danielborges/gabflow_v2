@@ -220,8 +220,28 @@ def run_benchmark(
             "providerOrder": [provider.name for provider in providers],
         },
         "providers": provider_reports,
+        "qualityDecision": _quality_decision(provider_reports),
         "results": detailed_results,
         "repeatResults": repeat_results,
+    }
+
+
+def _quality_decision(provider_reports: list[dict]) -> dict:
+    approved = [item["provider"] for item in provider_reports if item["approved"]]
+    failed = [
+        {
+            "provider": item["provider"],
+            "failedGates": [name for name, passed in item["gates"].items() if not passed],
+        }
+        for item in provider_reports
+        if not item["approved"]
+    ]
+    return {
+        "status": "APROVADO" if approved else "REPROVADO",
+        "approvedProviders": approved,
+        "failedProviders": failed,
+        "scope": "QUALIDADE_TECNICA",
+        "productionAuthorization": False,
     }
 
 
