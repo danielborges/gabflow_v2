@@ -3,6 +3,7 @@
 ## Status
 
 Aceito provisoriamente em 07/08/2026, condicionado à prova de qualidade do Gate C.
+Decisão de benchmark consolidada em 10/08/2026: Mapbox permanece opcional.
 
 ## Contexto
 
@@ -24,8 +25,10 @@ Adotar provisoriamente a seguinte composição:
 
 A promoção do Geoapify para produção depende da prova definida em
 [`Territorial-geocoding-quality-proof.md`](../../implementation/Territorial-geocoding-quality-proof.md).
-Google, Mapbox e Geocode Earth participam como candidatos comparáveis, não como dependências do
-domínio.
+Google e Geocode Earth formam, com o Geoapify, o conjunto padrão de candidatos comparáveis.
+Mapbox não integra o Gate C obrigatório porque o fluxo aprovado não depende de seus mapas ou
+tiles e sua geocodificação permanente acrescenta uma condição comercial específica. O adaptador
+Mapbox permanece disponível como comparador opcional, sem se tornar dependência do domínio.
 
 ## Contrato do adaptador
 
@@ -72,7 +75,8 @@ alterar silenciosamente uma coordenada já verificada por pessoa.
 - **Google Maps:** forte candidato de precisão, mas com restrições de retenção e combinação com
   mapas de terceiros incompatíveis com o uso como fonte histórica padrão sem contrato específico.
 - **Mapbox Permanent Geocoding:** permite persistência, porém requer modalidade permanente e
-  avaliação dos termos para uso analítico.
+  avaliação dos termos para uso analítico; foi mantido como comparador opcional, fora do conjunto
+  padrão do Gate C.
 - **Geocode Earth:** termos favoráveis à persistência e bom candidato a fallback, sujeito ao
   benchmark de cobertura local.
 - **Nominatim público:** inadequado para carga recorrente de produção; uma instalação própria

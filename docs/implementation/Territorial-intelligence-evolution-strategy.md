@@ -152,9 +152,10 @@ prova comparativa descrita em
 no [`ADR-011`](../specs/adr/ADR-011-governed-geospatial-provider.md). O adaptador permanece
 intercambiável e a aprovação não autoriza o Geoapify em produção antes do Gate C.
 
-O adaptador canônico e o executor reproduzível do benchmark foram implementados, incluindo os
-quatro candidatos, checksum do dataset, métricas segmentadas, repetição de estabilidade e CLI.
-Permanece pendente formar e revisar a amostra real antes de executar a prova externa.
+O adaptador canônico e o executor reproduzível do benchmark foram implementados, com Geoapify,
+Google e Geocode Earth no conjunto padrão e Mapbox preservado como comparador opcional, além de
+checksum do dataset, métricas segmentadas, repetição de estabilidade e CLI. Permanece pendente
+formar e revisar a amostra real antes de executar a prova externa.
 
 **Entregas**
 
@@ -171,7 +172,8 @@ Permanece pendente formar e revisar a amostra real antes de executar a prova ext
 - correções administrativas são auditadas e recalculam agregados afetados;
 - mapa, tabela e exportação usam o mesmo contrato analítico;
 - nenhuma exportação inclui ponto ou protocolo sem autorização explícita;
-- benchmark de 500 a 1.000 endereços compara Geoapify, Google, Mapbox e Geocode Earth;
+- benchmark de 500 a 1.000 endereços compara obrigatoriamente Geoapify, Google e Geocode Earth;
+  Mapbox pode ser incluído como comparador opcional sem bloquear o Gate C;
 - acerto municipal é de pelo menos 95%, com metas segmentadas de logradouro, número, bairro e
   jurisdição atendidas;
 - retenção, suboperadores, LGPD, SLA, atribuições e custo recebem aprovação formal.
