@@ -412,6 +412,7 @@ class AgendaEventType(str, enum.Enum):
     VISITA = "VISITA"
     REUNIAO = "REUNIAO"
     AUDIENCIA = "AUDIENCIA"
+    FISCALIZACAO = "FISCALIZACAO"
 
 
 class AgendaEventStatus(str, enum.Enum):
@@ -2761,9 +2762,7 @@ class ServiceRequest(db.Model):
 
 class TerritorialSavedView(db.Model):
     __tablename__ = "territorial_saved_views"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "user_id", "name"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "user_id", "name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -4648,6 +4647,7 @@ class AgendaEvent(db.Model):
     location: Mapped[str | None] = mapped_column(String(500))
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    representative_presence: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     citizen_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("citizens.id", ondelete="SET NULL"), index=True
     )
@@ -4829,11 +4829,55 @@ class OversightAction(db.Model):
     request_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("service_requests.id", ondelete="SET NULL"), index=True
     )
+    agenda_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agenda_events.id", ondelete="SET NULL"), unique=True, index=True
+    )
     findings: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     photos: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     responsible_parties: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     report: Mapped[str | None] = mapped_column(Text)
     follow_up_actions: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class OversightEvidence(db.Model):
+    __tablename__ = "oversight_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    oversight_action_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("oversight_actions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    evidence_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    observation: Mapped[str | None] = mapped_column(Text)
+    storage_key: Mapped[str] = mapped_column(String(300), unique=True, nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    scan_status: Mapped[AttachmentScanStatus] = mapped_column(
+        Enum(AttachmentScanStatus, name="attachment_scan_status", create_type=False),
+        nullable=False,
+    )
+    scan_provider: Mapped[str | None] = mapped_column(String(80))
+    scan_engine_version: Mapped[str | None] = mapped_column(String(80))
+    scan_signature_version: Mapped[str | None] = mapped_column(String(80))
+    scan_threat: Mapped[str | None] = mapped_column(String(160))
+    scan_error_code: Mapped[str | None] = mapped_column(String(80))
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    encryption_key_version: Mapped[int | None] = mapped_column(Integer)
+    encryption_algorithm: Mapped[str | None] = mapped_column(String(40))
+    encrypted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

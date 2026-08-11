@@ -1,0 +1,104 @@
+asyncapi: 3.0.0
+info:
+  title: GabFlow WhatsApp Internal Events
+  version: 1.0.0
+defaultContentType: application/json
+channels:
+  inboundMessage:
+    address: whatsapp.inbound.message.v1
+    messages: {inboundMessage: {$ref: '#/components/messages/InboundMessage'}}
+  messageStatus:
+    address: whatsapp.message.status.v1
+    messages: {messageStatus: {$ref: '#/components/messages/MessageStatus'}}
+  flowSubmission:
+    address: whatsapp.flow.submitted.v1
+    messages: {flowSubmission: {$ref: '#/components/messages/FlowSubmission'}}
+  requestCreated:
+    address: service-request.created.v1
+    messages: {requestCreated: {$ref: '#/components/messages/RequestCreated'}}
+operations:
+  processInboundMessage:
+    action: receive
+    channel: {$ref: '#/channels/inboundMessage'}
+  processMessageStatus:
+    action: receive
+    channel: {$ref: '#/channels/messageStatus'}
+  processFlowSubmission:
+    action: receive
+    channel: {$ref: '#/channels/flowSubmission'}
+  publishRequestCreated:
+    action: send
+    channel: {$ref: '#/channels/requestCreated'}
+components:
+  schemas:
+    Envelope:
+      type: object
+      required: [eventId, eventType, occurredAt, tenantId, correlationId, schemaVersion, data]
+      properties:
+        eventId: {type: string, format: uuid}
+        eventType: {type: string}
+        occurredAt: {type: string, format: date-time}
+        tenantId: {type: string, format: uuid}
+        correlationId: {type: string}
+        schemaVersion: {const: 1}
+        data: {type: object}
+  messages:
+    InboundMessage:
+      name: InboundMessage
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [providerMessageId, phoneNumberId, waUserId, messageType]
+                properties:
+                  providerMessageId: {type: string}
+                  phoneNumberId: {type: string}
+                  waUserId: {type: string}
+                  messageType: {enum: [text, audio, image, document, location, contact, interactive, unknown]}
+                  mediaRef: {type: [string, 'null']}
+    MessageStatus:
+      name: MessageStatus
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [providerMessageId, status]
+                properties:
+                  providerMessageId: {type: string}
+                  status: {enum: [sent, delivered, read, failed]}
+                  errorCode: {type: [string, 'null']}
+    FlowSubmission:
+      name: FlowSubmission
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [flowId, flowVersion, conversationId, values]
+                properties:
+                  flowId: {type: string}
+                  flowVersion: {type: string}
+                  conversationId: {type: string, format: uuid}
+                  values: {type: object}
+    RequestCreated:
+      name: RequestCreated
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [requestId, publicProtocol, source]
+                properties:
+                  requestId: {type: string, format: uuid}
+                  publicProtocol: {type: string}
+                  source: {const: WHATSAPP}

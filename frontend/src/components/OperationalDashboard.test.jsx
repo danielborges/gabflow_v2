@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { apiRequest } from "../api";
+import { apiDownload, apiRequest } from "../api";
 import { OperationalDashboard } from "./OperationalDashboard";
 
-vi.mock("../api", () => ({ apiRequest: vi.fn() }));
+vi.mock("../api", () => ({ apiRequest: vi.fn(), apiDownload: vi.fn() }));
 
 describe("OperationalDashboard", () => {
   it("exibe indicadores, fila prioritária e inteligência territorial", async () => {
+    apiDownload.mockResolvedValue(new Blob(["pdf"], { type: "application/pdf" }));
     apiRequest.mockImplementation(async (path, options = {}) => {
       if (path.startsWith("/api/v1/painel/territorial/metricas-execucao")) {
         return { abertas: 2, taxaConclusaoPercentual: 50, coberturaEvidenciasPercentual: 50, cumprimentoPrazoPercentual: 100, tempoMedioConclusaoHoras: 8 };
@@ -28,17 +29,41 @@ describe("OperationalDashboard", () => {
       if (path === "/api/v1/painel/territorial/geocodificar" && options.method === "POST") {
         return { geocodificadas: 1, pendentes: 0, metodo: "LOCAL_APROXIMADO" };
       }
-      if (path.startsWith("/api/v1/painel/relatorio-mensal")) {
+      if (path.startsWith("/api/v1/painel/relatorios")) {
         return {
+          tipo: "OPERACIONAL",
+          titulo: "Relatório Operacional Executivo",
+          gabinete: { nome: "Gabinete A", jurisdicao: "Juiz de Fora/MG" },
           periodo: { ano: 2026, mes: 7, inicio: "2026-07-01", fim: "2026-07-31", rotulo: "07/2026" },
           resumo: {
             solicitacoesRecebidas: 5,
             solicitacoesMovimentadas: 6,
             encaminhadas: 3,
             resolvidasOuEncerradas: 2,
-            emAbertoAoFimDoMes: 4,
-            atrasadasAoFimDoMes: 1,
+            emAberto: 4,
+            atrasadas: 1,
+            taxaResolucaoPercentual: 40,
+            cumprimentoPrazoPercentual: 80,
+            documentosLegislativos: 2,
+            acoesGeradas: 7,
           },
+          comparacao: { variacaoVolumePercentual: 25, variacaoResolucaoPercentual: 10 },
+          semaforo: [{ nivel: "aviso", titulo: "Demandas em atraso", descricao: "16,7% terminaram atrasadas.", valor: "16,7%" }],
+          rankings: {
+            eficienciaEquipe: [{ id: "user-1", nome: "Equipe A", score: 86, demandas: 4, resolvidas: 3, cumprimentoPrazoPercentual: 100, interacoes: 8, tarefasConcluidas: 2 }],
+            cidadaosAtuantes: [{ id: "citizen-1", nome: "Maria Silva", total: 3 }],
+          },
+          graficos: {
+            volumePeriodo: [{ nome: "2026-07-01", total: 2 }, { nome: "2026-07-02", total: 5 }],
+            horariosAtendimento: Array.from({ length: 24 }, (_, hora) => ({ hora, rotulo: `${String(hora).padStart(2, "0")}h`, total: hora === 10 ? 5 : 0 })),
+            territorios: [{ nome: "Centro", total: 4 }],
+            demandasRecorrentes: [{ nome: "Saúde", total: 3 }],
+            producaoLegislativa: [{ nome: "REQUERIMENTO", total: 2 }],
+            acoesGeradas: [{ nome: "Tarefas", total: 4 }, { nome: "Encaminhamentos", total: 3 }],
+          },
+          picoAtendimento: { hora: 10, rotulo: "10h", total: 5 },
+          producaoLegislativa: { total: 2, demandasComDocumento: 2, porTipo: [{ nome: "REQUERIMENTO", total: 2 }] },
+          acoesGeradas: { total: 7, porTipo: [{ nome: "Tarefas", total: 4 }] },
           indicadores: {
             porCategoria: [{ nome: "Saúde", total: 3 }],
             porTerritorio: [{ nome: "Centro", total: 3 }],
@@ -296,12 +321,14 @@ describe("OperationalDashboard", () => {
     expect(screen.getByText("4 recentes · base semanal 1")).toBeInTheDocument();
     expect(screen.getByText("Inteligência territorial")).toBeInTheDocument();
     expect(screen.queryByText("PostGIS ativo")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Inteligência territorial" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Inteligência territorial" }));
     expect(screen.getByText("PostGIS ativo")).toBeInTheDocument();
     expect(screen.getAllByText("Juiz de Fora/MG").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Câmara Municipal · MG")).toBeInTheDocument();
     expect(screen.getByText(/Dados territoriais com menos de 3 solicitações/)).toBeInTheDocument();
     expect(screen.getByText("Mapa de calor")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Categoria")).not.toBeInTheDocument();
+    expect(screen.queryByText("Atrasadas")).not.toBeInTheDocument();
     expect(screen.queryByText("Hotspots")).not.toBeInTheDocument();
     expect(screen.queryByText("Pontos geocodificados")).not.toBeInTheDocument();
     expect(screen.getByText("Localizações que exigem revisão")).toBeInTheDocument();
@@ -341,12 +368,18 @@ describe("OperationalDashboard", () => {
       { method: "POST" },
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: "Relatório mensal" }));
-    expect(screen.getByText("Relatório mensal do mandato")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Relatórios" }));
+    expect(screen.getByText("Relatórios do mandato")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tipo de relatório")).toHaveValue("operacional");
+    expect(screen.getByLabelText("Data início do relatório")).toBeInTheDocument();
+    expect(screen.getByLabelText("Data fim do relatório")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Gerar relatório/ }));
     await waitFor(() => expect(screen.getByText("Evidências rastreáveis")).toBeInTheDocument());
-    expect(screen.getByText("07/2026")).toBeInTheDocument();
+    expect(screen.getAllByText(/07\/2026/).length).toBeGreaterThan(0);
     expect(screen.getByText("Tema mais recorrente")).toBeInTheDocument();
+    expect(screen.getByText("Ranking de eficiência da equipe")).toBeInTheDocument();
+    expect(screen.getByText("Maria Silva")).toBeInTheDocument();
+    expect(screen.getByText("Semáforo executivo")).toBeInTheDocument();
     expect(screen.getByText(/GF-2026-000001/)).toBeInTheDocument();
   });
 });

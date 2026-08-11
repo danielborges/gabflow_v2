@@ -189,6 +189,74 @@ com acesso restrito e retenção definida; logs técnicos recebem apenas identif
 - prioridade
 - prazo
 
+## AgendaEvent
+- id
+- tenant_id
+- tipo
+- status
+- titulo
+- descricao
+- local
+- starts_at
+- ends_at
+- presenca_parlamentar
+- participantes
+- cidadao_id
+- organizacao_id
+- territorio_id
+- solicitacao_id
+- ata
+- fotos
+- pendencias
+
+`participantes` contém referências a usuários ativos do mesmo tenant e não admite o
+Parlamentar. Eventos do tipo `FISCALIZACAO` podem originar uma única ação de fiscalização
+depois do horário efetivo de término. A presença parlamentar é um marcador institucional
+e visual, sem efeito automático sobre prioridade ou autorização.
+
+## OversightAction
+- id
+- tenant_id
+- agenda_event_id
+- titulo
+- descricao
+- local
+- occurred_at
+- status
+- agency_id
+- solicitacao_id
+- achados
+- fotos_legadas
+- responsaveis
+- providencias_acompanhamento
+- relatorio
+
+`agenda_event_id` é opcional para permitir o registro direto em campo e único quando
+preenchido, evitando relatórios duplicados para o mesmo compromisso. A conclusão da ação
+sincroniza o evento de agenda vinculado e encerra as notificações dos participantes.
+
+## OversightEvidence
+- id
+- tenant_id
+- oversight_action_id
+- tipo
+- original_name
+- mime_type
+- size_bytes
+- storage_key
+- sha256
+- observation
+- scan_status
+- metadados_da_varredura
+- versao_e_algoritmo_de_criptografia
+- criado_por_id
+- criado_em
+- atualizado_em
+
+O conteúdo binário permanece no armazenamento privado; a tabela conserva somente
+metadados, integridade e chave opaca. As relações incluem `tenant_id`, a leitura exige
+autorização e o upload passa pelas políticas de validação, antimalware e criptografia.
+
 ## Proposicao
 - id
 - tenant_id

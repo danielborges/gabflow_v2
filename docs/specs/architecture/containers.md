@@ -4,6 +4,9 @@
 
 - gestão de atendimento;
 - dashboards;
+- relatórios operacionais e de insights com exportação executiva;
+- agenda institucional diária, semanal e mensal;
+- fiscalização de campo, pendências e gestão de evidências;
 - administração;
 - revisão de IA;
 - produção legislativa.
@@ -15,6 +18,7 @@ Responsável por:
 - regras de negócio;
 - APIs;
 - auditoria;
+- composição síncrona dos PDFs executivo semanal e de relatórios por período;
 - orquestração.
 
 ## Worker Assíncrono
@@ -87,6 +91,7 @@ Sugestão:
 ## Armazenamento de Objetos
 
 - anexos;
+- evidências fotográficas e documentais de fiscalização;
 - áudios;
 - documentos;
 - versões;

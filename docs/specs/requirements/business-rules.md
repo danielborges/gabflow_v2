@@ -77,3 +77,16 @@
 - **RN-078** Nome e aliases continuam únicos no tenant segundo a forma normalizada; a interface cartográfica não pode contornar essa validação nem acessar territórios de outro gabinete.
 - **RN-079** As letras habilitadas da agenda são calculadas sobre todos os cidadãos não anonimizados do tenant, independentemente da página ou da letra selecionada; iniciais acentuadas são agrupadas pela letra latina correspondente.
 - **RN-080** O filtro alfabético usa o nome social quando preenchido e, caso contrário, o nome civil; a troca de letra invalida o cursor anterior e nunca amplia o escopo do tenant.
+- **RN-081** Participantes de compromissos são usuários ativos do mesmo tenant com perfil administrativo, de gestão ou funcionário; o Parlamentar não pode ser selecionado como participante operacional.
+- **RN-082** Alterar a data ou o horário inicial de um compromisso redefine a sugestão de término para exatamente uma hora depois; o usuário pode ajustar o término, desde que permaneça posterior ao início.
+- **RN-083** Compromissos com presença parlamentar devem possuir diferenciação visual sem alterar automaticamente prioridade, status ou permissões.
+- **RN-084** O PDF semanal considera de segunda-feira a domingo da semana de referência e ignora compromissos cancelados.
+- **RN-085** Um compromisso do tipo `FISCALIZACAO` torna-se pendente de relatório após `ends_at`, ou após `starts_at` quando não houver término, e a pendência só pode ser exibida aos participantes registrados no evento.
+- **RN-086** Cada compromisso de fiscalização pode originar no máximo uma ação de fiscalização; a conclusão exige relatório preenchido, marca o compromisso como realizado e resolve os lembretes correspondentes.
+- **RN-087** O lembrete de fiscalização usa entidade idempotente `agenda_oversight_report`, é tenant-scoped e permanece ativo enquanto o relatório associado não estiver concluído.
+- **RN-088** Fiscalizações registradas diretamente em campo não exigem agenda prévia, mas obedecem às mesmas regras de tenant, autoria, auditoria e conclusão.
+- **RN-089** Evidências de fiscalização devem ser isoladas por tenant, validadas por tipo e tamanho, submetidas à verificação antimalware, armazenadas com proteção criptográfica e disponibilizadas somente por download autorizado ou URL assinada.
+- **RN-090** A observação de uma evidência pode ser atualizada sem substituir silenciosamente o arquivo original; inclusão, alteração e download seguem as permissões da fiscalização vinculada.
+- **RN-091** O ranking de eficiência considera somente a equipe operacional elegível e nunca atribui score ao Parlamentar.
+- **RN-092** Relatórios por período devem expor data inicial, data final, filtros e base de cálculo; a leitura em semáforo é explicativa e não pode ser apresentada como causalidade automática.
+- **RN-093** O intervalo dos relatórios é inclusivo nas datas inicial e final, deve ter início anterior ou igual ao fim e não pode exceder 731 dias.
