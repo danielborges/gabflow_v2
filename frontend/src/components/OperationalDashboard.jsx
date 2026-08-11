@@ -4,6 +4,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  Download,
   FileCheck2,
   FileText,
   Forward,
@@ -18,7 +19,7 @@ import {
   UserMinus,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { apiRequest } from "../api";
+import { apiDownload, apiRequest } from "../api";
 import { TerritorialMap } from "./TerritorialMap";
 
 const statusLabels = {
@@ -148,34 +149,40 @@ export function OperationalDashboard({ user, onOpenRequests, onOpenRequest }) {
           <h1>Painel operacional</h1>
           <p>Prioridades, prazos e distribuição territorial das demandas em um único lugar.</p>
         </div>
-        <button className="secondary-button" onClick={load}>Atualizar</button>
       </section>
-      <DashboardFilters
-        filters={filters}
-        options={data.filtros?.opcoes}
-        onChange={changeFilters}
-        onClear={() => setFilters(defaultDashboardFilters)}
-      />
-      <section className="metric-grid">
-        {cards.map(([label, value, Icon, tone]) => (
-          <article key={label} className={`metric-${tone}`}>
-            <Icon size={20} />
-            <div><strong>{value}</strong><span>{label}</span></div>
-          </article>
-        ))}
-      </section>
-      <div className="dashboard-tabs segmented-control" aria-label="Seções do painel operacional">
-        <button className={activePanel === "operation" ? "active" : ""} onClick={() => setActivePanel("operation")}>
-          Operação
+      <nav className="dashboard-tabs segmented-control" aria-label="Seções do painel operacional" role="tablist">
+        <button type="button" role="tab" aria-selected={activePanel === "operation"} aria-controls="dashboard-operation-panel" className={activePanel === "operation" ? "active" : ""} onClick={() => setActivePanel("operation")}>
+          <ListTodo size={17} /> Operação
         </button>
-        <button className={activePanel === "territorial" ? "active" : ""} onClick={openTerritorialPanel}>
-          Inteligência territorial
+        <button type="button" role="tab" aria-selected={activePanel === "territorial"} aria-controls="dashboard-territorial-panel" className={activePanel === "territorial" ? "active" : ""} onClick={openTerritorialPanel}>
+          <MapPinned size={17} /> Inteligência territorial
         </button>
-        <button className={activePanel === "report" ? "active" : ""} onClick={() => setActivePanel("report")}>
-          Relatório mensal
+        <button type="button" role="tab" aria-selected={activePanel === "report"} aria-controls="dashboard-report-panel" className={activePanel === "report" ? "active" : ""} onClick={() => setActivePanel("report")}>
+          <FileText size={17} /> Relatórios
         </button>
-      </div>
-      {activePanel === "operation" && <section className="dashboard-layout">
+      </nav>
+      <section
+        id={`dashboard-${activePanel}-panel`}
+        className="dashboard-tab-panel"
+        role="tabpanel"
+        aria-label={activePanel === "operation" ? "Operação" : activePanel === "territorial" ? "Inteligência territorial" : "Relatórios"}
+      >
+      {activePanel === "operation" && <>
+        <DashboardFilters
+          filters={filters}
+          options={data.filtros?.opcoes}
+          onChange={changeFilters}
+          onClear={() => setFilters(defaultDashboardFilters)}
+        />
+        <section className="metric-grid">
+          {cards.map(([label, value, Icon, tone]) => (
+            <article key={label} className={`metric-${tone}`}>
+              <Icon size={20} />
+              <div><strong>{value}</strong><span>{label}</span></div>
+            </article>
+          ))}
+        </section>
+        <section className="dashboard-layout">
         <div className="dashboard-main">
           <OperationalMetricsPanel metrics={data.metricasOperacionais} />
           <PrivacyAggregationNotice summary={data.privacidadeAgregacao} />
@@ -213,7 +220,8 @@ export function OperationalDashboard({ user, onOpenRequests, onOpenRequest }) {
           <Breakdown title="Por canal" items={data.porCanal || data.porOrigem || []} />
           <Breakdown title="Por período" items={data.porPeriodo || []} labelFormatter={periodLabel} />
         </div>
-      </section>}
+        </section>
+      </>}
       {activePanel === "territorial" && (
         <>
           <TerritorialSavedViews
@@ -234,7 +242,8 @@ export function OperationalDashboard({ user, onOpenRequests, onOpenRequest }) {
           />
         </>
       )}
-      {activePanel === "report" && <MonthlyMandateReport />}
+      {activePanel === "report" && <ReportsWorkspace />}
+      </section>
     </>
   );
 }
@@ -776,20 +785,26 @@ function localDateTimeValue(value) {
   return new Date(value.getTime() - offset).toISOString().slice(0, 16);
 }
 
-function MonthlyMandateReport() {
-  const now = new Date();
-  const [year, setYear] = useState(String(now.getFullYear()));
-  const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, "0"));
+function ReportsWorkspace() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - 29);
+  const [filters, setFilters] = useState({
+    inicio: dateInputValue(start),
+    fim: dateInputValue(end),
+    tipo: "operacional",
+  });
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
 
   async function loadReport() {
     setLoading(true);
     setError("");
     try {
-      const query = new URLSearchParams({ ano: year, mes: month }).toString();
-      setReport(await apiRequest(`/api/v1/painel/relatorio-mensal?${query}`));
+      const query = new URLSearchParams(filters).toString();
+      setReport(await apiRequest(`/api/v1/painel/relatorios?${query}`));
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -797,76 +812,128 @@ function MonthlyMandateReport() {
     }
   }
 
+  async function downloadPdf() {
+    setDownloading(true);
+    setError("");
+    try {
+      const query = new URLSearchParams(filters).toString();
+      const blob = await apiDownload(`/api/v1/painel/relatorios/pdf?${query}`, { method: "GET" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `gabflow-relatorio-${filters.tipo}-${filters.inicio}-${filters.fim}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const update = (key, value) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+    setReport(null);
+  };
+
   return (
     <section className="mandate-report-workspace">
       <section className="mandate-report-panel">
         <header>
           <div>
-            <h2>Relatório mensal do mandato</h2>
-            <p>Resumo auditável do período, com indicadores agregados e evidências por protocolo.</p>
+            <span className="report-product-badge">GabFlow Executive Intelligence</span>
+            <h2>Relatórios do mandato</h2>
+            <p>Transforme a operação do gabinete em resultados claros, comparáveis e prontos para apresentação.</p>
           </div>
-          <FileText size={20} />
+          <div className="report-header-mark"><TrendingUp size={22} /></div>
         </header>
         <div className="mandate-report-controls">
-          <label>Mês<select value={month} onChange={(event) => setMonth(event.target.value)}>
-            {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0")).map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
+          <label>Tipo de relatório<select aria-label="Tipo de relatório" value={filters.tipo} onChange={(event) => update("tipo", event.target.value)}>
+            <option value="operacional">Operacional</option>
+            <option value="insights_mandato">Insights do Mandato</option>
           </select></label>
-          <label>Ano<input value={year} onChange={(event) => setYear(event.target.value)} inputMode="numeric" /></label>
+          <label>Data início<input aria-label="Data início do relatório" type="date" value={filters.inicio} max={filters.fim} onChange={(event) => update("inicio", event.target.value)} /></label>
+          <label>Data fim<input aria-label="Data fim do relatório" type="date" value={filters.fim} min={filters.inicio} onChange={(event) => update("fim", event.target.value)} /></label>
           <button className="primary-button" disabled={loading} onClick={loadReport}>
             <FileText size={16} /> {loading ? "Gerando..." : "Gerar relatório"}
+          </button>
+          <button className="secondary-button report-download-button" disabled={!report || downloading} onClick={downloadPdf}>
+            <Download size={16} /> {downloading ? "Preparando PDF..." : "Baixar PDF executivo"}
           </button>
         </div>
         {error && <p className="form-error">{error}</p>}
         {!report ? (
-          <p className="muted-copy">Selecione o período e gere o relatório para revisar os resultados do mês.</p>
+          <ReportEmptyState type={filters.tipo} />
         ) : (
-          <MonthlyReportContent report={report} />
+          <ExecutiveReportContent report={report} onDownload={downloadPdf} downloading={downloading} />
         )}
       </section>
     </section>
   );
 }
 
-function MonthlyReportContent({ report }) {
+function ReportEmptyState({ type }) {
+  return <section className="report-empty-state">
+    <div className="report-empty-visual">
+      <span className="report-signal positive" /><span className="report-signal warning" /><span className="report-signal danger" />
+      <TrendingUp size={34} />
+    </div>
+    <div>
+      <h3>{type === "operacional" ? "Visão completa da operação" : "Inteligência para posicionar o mandato"}</h3>
+      <p>{type === "operacional" ? "Gere rankings, horários de pico, territórios, recorrências, produção legislativa e ações derivadas." : "Conecte demandas, participação cidadã, territórios e entregas em uma narrativa executiva do período."}</p>
+    </div>
+  </section>;
+}
+
+function ExecutiveReportContent({ report, onDownload, downloading }) {
   const summary = report.resumo || {};
   const summaryItems = [
-    ["Recebidas", summary.solicitacoesRecebidas],
-    ["Movimentadas", summary.solicitacoesMovimentadas],
-    ["Encaminhadas", summary.encaminhadas],
-    ["Resolvidas/encerradas", summary.resolvidasOuEncerradas],
-    ["Em aberto", summary.emAbertoAoFimDoMes],
-    ["Atrasadas", summary.atrasadasAoFimDoMes],
+    ["Recebidas", summary.solicitacoesRecebidas, "neutral"],
+    ["Movimentadas", summary.solicitacoesMovimentadas, "neutral"],
+    ["Resolvidas", summary.resolvidasOuEncerradas, "success"],
+    ["Taxa de resolução", formatPercent(summary.taxaResolucaoPercentual), "success"],
+    ["No prazo", formatPercent(summary.cumprimentoPrazoPercentual), "success"],
+    ["Atrasadas", summary.atrasadas, summary.atrasadas ? "danger" : "success"],
+    ["Docs. legislativos", summary.documentosLegislativos, "accent"],
+    ["Ações geradas", summary.acoesGeradas, "accent"],
   ];
   return (
     <div className="mandate-report-content">
-      <div className="mandate-report-period">
-        <strong>{report.periodo?.rotulo}</strong>
-        <span>{formatDate(`${report.periodo?.inicio}T00:00:00`)} a {formatDate(`${report.periodo?.fim}T00:00:00`)}</span>
-      </div>
+      <section className="report-executive-hero">
+        <div><span>{report.tipo === "OPERACIONAL" ? "Relatório Operacional" : "Insights do Mandato"}</span><h2>{report.titulo}</h2><p>{report.gabinete?.nome} · {report.periodo?.rotulo}</p></div>
+        <div className="report-comparison"><small>Volume vs. período anterior</small><strong className={(report.comparacao?.variacaoVolumePercentual || 0) > 0 ? "up" : "down"}>{formatVariation(report.comparacao?.variacaoVolumePercentual)}</strong><button className="secondary-button compact" onClick={onDownload} disabled={downloading}><Download size={15} /> PDF executivo</button></div>
+      </section>
       <div className="mandate-report-summary">
-        {summaryItems.map(([label, value]) => (
-          <article key={label}><strong>{value || 0}</strong><span>{label}</span></article>
+        {summaryItems.map(([label, value, tone]) => (
+          <article key={label} className={`report-summary-${tone}`}><strong>{value ?? 0}</strong><span>{label}</span></article>
         ))}
       </div>
+      <ExecutiveTrafficLights items={report.semaforo || []} />
+      <ExecutiveInsights items={report.destaques || []} />
       <PrivacyAggregationNotice summary={report.privacidadeAgregacao} />
-      <section className="mandate-report-section">
-        <h3>Destaques</h3>
-        {(report.destaques || []).length ? report.destaques.map((item) => (
-          <article key={`${item.tipo}-${item.titulo}`}>
-            <strong>{item.titulo}</strong>
-            <span>{item.descricao}</span>
-          </article>
-        )) : <p className="muted-copy">Sem destaques com agregação mínima no período.</p>}
+      <section className="report-chart-grid report-chart-grid-wide">
+        <ReportChartCard title="Volume no período" subtitle="Demandas recebidas ao longo do recorte">
+          <ReportLineChart items={report.graficos?.volumePeriodo || []} />
+        </ReportChartCard>
+        <ReportChartCard title="Horários com mais atendimentos" subtitle={report.picoAtendimento?.total ? `Pico às ${report.picoAtendimento.rotulo}` : "Sem pico identificado"}>
+          <ReportHourChart items={report.graficos?.horariosAtendimento || []} />
+        </ReportChartCard>
       </section>
-      <section className="mandate-report-breakdowns">
-        <Breakdown title="Por categoria" items={report.indicadores?.porCategoria || []} />
-        <Breakdown title="Por território" items={report.indicadores?.porTerritorio || []} />
-        <Breakdown title="Por órgão" items={report.indicadores?.porOrgao || []} />
+      <section className="report-chart-grid">
+        <ReportChartCard title="Regiões com maiores demandas" subtitle="Concentração territorial"><ReportBarChart items={report.graficos?.territorios || []} /></ReportChartCard>
+        <ReportChartCard title="Demandas mais recorrentes" subtitle="Temas que mais mobilizaram o gabinete"><ReportBarChart items={report.graficos?.demandasRecorrentes || []} /></ReportChartCard>
+        <ReportChartCard title="Documentos por demandas" subtitle={`${report.producaoLegislativa?.demandasComDocumento || 0} demandas geraram documentos`}><ReportBarChart items={report.graficos?.producaoLegislativa || []} labelFormatter={reportDocumentTypeLabel} /></ReportChartCard>
+        <ReportChartCard title="Ações geradas das demandas" subtitle="Desdobramentos concretos no período"><ReportBarChart items={report.graficos?.acoesGeradas || []} /></ReportChartCard>
       </section>
-      <section className="mandate-report-section">
-        <h3>Evidências rastreáveis</h3>
+      <EfficiencyRanking items={report.rankings?.eficienciaEquipe || []} />
+      <section className="report-spotlight-grid">
+        <ReportSpotlight title="Cidadão mais atuante" value={report.rankings?.cidadaosAtuantes?.[0]?.nome || "Sem recorrência"} helper={report.rankings?.cidadaosAtuantes?.[0] ? `${report.rankings.cidadaosAtuantes[0].total} demandas no período` : "Nenhum destaque no recorte"} />
+        <ReportSpotlight title="Horário de pico" value={report.picoAtendimento?.total ? report.picoAtendimento.rotulo : "Sem pico"} helper={report.picoAtendimento?.total ? `${report.picoAtendimento.total} atendimentos registrados` : "Sem dados no período"} />
+        <ReportSpotlight title="Território prioritário" value={report.graficos?.territorios?.[0]?.nome || "Sem território"} helper={report.graficos?.territorios?.[0] ? `${report.graficos.territorios[0].total} demandas movimentadas` : "Sem concentração identificada"} />
+      </section>
+      <details className="report-evidence-disclosure">
+        <summary>Evidências rastreáveis <span>{(report.evidencias || []).length} protocolos</span></summary>
+        <section className="mandate-report-section">
         {(report.evidencias || []).length ? report.evidencias.map((item) => (
           <article key={item.protocolo}>
             <strong>{item.protocolo} · {item.titulo}</strong>
@@ -880,9 +947,62 @@ function MonthlyReportContent({ report }) {
             </ul>
           </article>
         )) : <p className="muted-copy">Sem evidências registradas para o período.</p>}
-      </section>
+        </section>
+      </details>
     </div>
   );
+}
+
+function ExecutiveTrafficLights({ items }) {
+  return <section className="report-traffic-section"><header><div><h3>Semáforo executivo</h3><p>Problemas, avisos e resultados positivos do período.</p></div></header><div className="report-traffic-grid">{items.map((item) => <article key={item.titulo} className={`report-traffic-${item.nivel}`}><span className="report-traffic-light" /><div><small>{item.nivel === "problema" ? "Problema" : item.nivel === "aviso" ? "Aviso" : "Positivo"}</small><strong>{item.titulo}</strong><p>{item.descricao}</p></div><b>{item.valor}</b></article>)}</div></section>;
+}
+
+function ExecutiveInsights({ items }) {
+  if (!items.length) return null;
+  return <section className="report-insights"><header><h3>Insights do período</h3><p>Sinais para orientar prioridades e comunicação do mandato.</p></header><div>{items.map((item) => <article key={item.titulo}><span><TrendingUp size={16} /></span><div><strong>{item.titulo}</strong><p>{item.descricao}</p></div></article>)}</div></section>;
+}
+
+function ReportChartCard({ title, subtitle, children }) {
+  return <article className="report-chart-card"><header><div><h3>{title}</h3><p>{subtitle}</p></div></header>{children}</article>;
+}
+
+function ReportLineChart({ items }) {
+  if (!items.length) return <p className="report-chart-empty">Sem dados suficientes.</p>;
+  const maximum = Math.max(...items.map((item) => item.total || 0), 1);
+  const points = items.map((item, index) => {
+    const x = items.length === 1 ? 50 : (index / (items.length - 1)) * 100;
+    const y = 92 - ((item.total || 0) / maximum) * 72;
+    return `${x},${y}`;
+  }).join(" ");
+  return <div className="report-line-chart"><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Evolução do volume no período"><defs><linearGradient id="reportLineFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#168e9b" stopOpacity=".28" /><stop offset="100%" stopColor="#168e9b" stopOpacity="0" /></linearGradient></defs><polygon points={`0,100 ${points} 100,100`} fill="url(#reportLineFill)" /><polyline points={points} fill="none" stroke="#0f7582" strokeWidth="2.2" vectorEffect="non-scaling-stroke" /></svg><div><span>{reportPeriodLabel(items[0].nome)}</span><strong>Pico {maximum}</strong><span>{reportPeriodLabel(items.at(-1).nome)}</span></div></div>;
+}
+
+function ReportHourChart({ items }) {
+  const maximum = Math.max(...items.map((item) => item.total || 0), 1);
+  return <div className="report-hour-chart" role="img" aria-label="Distribuição dos atendimentos por hora">{items.map((item) => <span key={item.hora} title={`${item.rotulo}: ${item.total}`}><i style={{ height: `${Math.max(((item.total || 0) / maximum) * 100, item.total ? 5 : 1)}%` }} className={item.total === maximum && item.total ? "peak" : ""} /><small>{item.hora % 3 === 0 ? item.rotulo : ""}</small></span>)}</div>;
+}
+
+function ReportBarChart({ items, labelFormatter = (value) => value }) {
+  if (!items.length) return <p className="report-chart-empty">Sem dados suficientes.</p>;
+  const maximum = Math.max(...items.map((item) => item.total || 0), 1);
+  return <div className="report-bar-chart">{items.slice(0, 7).map((item) => <div key={item.nome}><span title={labelFormatter(item.nome)}>{labelFormatter(item.nome)}</span><i><b style={{ width: `${((item.total || 0) / maximum) * 100}%` }} /></i><strong>{item.total}</strong></div>)}</div>;
+}
+
+function EfficiencyRanking({ items }) {
+  return <section className="report-ranking"><header><div><h3>Ranking de eficiência da equipe</h3><p>Índice combina resolução, cumprimento de prazo e atividade registrada.</p></div></header>{items.length ? <div className="report-ranking-table-wrap"><table className="report-efficiency-table"><colgroup><col className="report-rank-col" /><col className="report-collaborator-col" /><col className="report-score-col" /><col className="report-demands-col" /><col className="report-resolved-col" /><col className="report-deadline-col" /><col className="report-interactions-col" /><col className="report-tasks-col" /></colgroup><thead><tr><th>#</th><th>Colaborador</th><th>Score</th><th>Demandas</th><th>Resolvidas</th><th>No prazo</th><th>Interações</th><th>Tarefas</th></tr></thead><tbody>{items.map((item, index) => <tr key={item.id}><td><span className={`report-rank-position rank-${index + 1}`}>{index + 1}</span></td><td><strong>{item.nome}</strong></td><td><b>{formatNumber(item.score)}</b></td><td>{item.demandas}</td><td>{item.resolvidas}</td><td>{formatPercent(item.cumprimentoPrazoPercentual)}</td><td>{item.interacoes}</td><td>{item.tarefasConcluidas}</td></tr>)}</tbody></table></div> : <p className="muted-copy">Sem atividade suficiente para compor o ranking.</p>}</section>;
+}
+
+function ReportSpotlight({ title, value, helper }) {
+  return <article><span>{title}</span><strong>{value}</strong><small>{helper}</small></article>;
+}
+
+function reportDocumentTypeLabel(value) {
+  return String(value || "").replaceAll("_", " ").toLocaleLowerCase("pt-BR").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function reportPeriodLabel(value) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return formatDate(`${value}T12:00:00`);
+  return periodLabel(value);
 }
 
 function OperationalMetricsPanel({ metrics = {} }) {

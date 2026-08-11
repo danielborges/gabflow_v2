@@ -5,6 +5,30 @@
 > orientada a confiabilidade, investigacao e acao. O plano vigente esta em
 > [`Territorial-intelligence-evolution-strategy.md`](Territorial-intelligence-evolution-strategy.md).
 
+## Evolucao posterior dos relatorios
+
+A funcionalidade originalmente entregue como **Relatorio mensal** foi promovida para
+**Relatorios**. O registro abaixo permanece fiel ao escopo da Release 5, mas a versao
+vigente aceita data inicial e data final e oferece os tipos **Operacional** e **Insights
+do Mandato**. A tela atual combina indicadores e graficos com um semaforo executivo de
+problemas, avisos e resultados positivos, e permite gerar PDF de apresentacao do gabinete.
+
+O relatorio operacional passou a incluir ranking de eficiencia da equipe sem o
+Parlamentar, horario de maior atendimento, cidadao mais atuante, regioes e demandas mais
+recorrentes, documentos legislativos relacionados e acoes geradas no periodo. O painel
+de indicadores operacionais permanece dentro da aba Operacao, sem acao redundante de
+atualizacao manual, e as abas usam continuidade visual com o corpo da pagina.
+
+Contratos vigentes da funcionalidade:
+
+```text
+GET /api/v1/painel/relatorios?inicio=YYYY-MM-DD&fim=YYYY-MM-DD&tipo=operacional
+GET /api/v1/painel/relatorios/pdf?inicio=YYYY-MM-DD&fim=YYYY-MM-DD&tipo=insights_mandato
+```
+
+O intervalo e inclusivo nas duas extremidades e limitado a 731 dias. O tipo tambem aceita
+`insights` como alias de `insights_mandato`.
+
 ## Escopo entregue
 
 | Spec | Implementacao |
@@ -98,5 +122,8 @@
 ## Validacao
 
 - testes backend cobrem dashboard operacional, relatorio mensal, geocodificacao e privacidade por agregacao;
+- a evolucao para relatorios por periodo possui cobertura backend para payload executivo,
+  exclusao do Parlamentar no ranking e resposta PDF, e cobertura frontend para os dois
+  tipos de relatorio e seus indicadores;
 - testes frontend cobrem a visualizacao dos indicadores, abas territoriais, mapa, relatorio mensal e acao de geocodificacao;
 - testes PostgreSQL cobrem migracoes territoriais, campos de jurisdicao e ativacao de PostGIS.

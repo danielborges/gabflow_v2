@@ -16,7 +16,7 @@ from app.models import (
     Tenant,
     User,
 )
-from app.operations.routes import _territorial_period_metrics
+from app.operations.routes import _staff_efficiency, _territorial_period_metrics
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -35,6 +35,38 @@ def post(client, path, csrf, payload):
 
 def patch(client, path, csrf, payload):
     return client.patch(path, json=payload, headers={"X-CSRF-TOKEN": csrf})
+
+
+def test_staff_efficiency_excludes_representative():
+    now = datetime.now(UTC)
+    representative_id = uuid.uuid4()
+    staff_id = uuid.uuid4()
+    item = SimpleNamespace(
+        responsible_id=representative_id,
+        closed_at=None,
+        due_at=None,
+        created_at=now,
+        interactions=[
+            SimpleNamespace(author_id=representative_id, created_at=now),
+            SimpleNamespace(author_id=staff_id, created_at=now),
+        ],
+        tasks=[
+            SimpleNamespace(assignee_id=representative_id, completed_at=now),
+            SimpleNamespace(assignee_id=staff_id, completed_at=now),
+        ],
+    )
+
+    ranking = _staff_efficiency(
+        [item],
+        now - timedelta(days=1),
+        now + timedelta(days=1),
+        {representative_id: "Parlamentar", staff_id: "Assessora"},
+        1,
+        {representative_id},
+    )
+
+    assert [entry["id"] for entry in ranking] == [str(staff_id)]
+    assert ranking[0]["nome"] == "Assessora"
 
 
 def test_classification_forwarding_response_and_dashboard(app, client):
@@ -145,6 +177,24 @@ def test_classification_forwarding_response_and_dashboard(app, client):
         "resposta_orgao",
         "comunicacao_cidadao",
     }
+    today = datetime.now(UTC).date().isoformat()
+    executive = client.get(
+        "/api/v1/painel/relatorios",
+        query_string={"inicio": today, "fim": today, "tipo": "operacional"},
+    )
+    assert executive.status_code == 200
+    assert executive.json["tipo"] == "OPERACIONAL"
+    assert executive.json["resumo"]["solicitacoesRecebidas"] == 1
+    assert executive.json["graficos"]["horariosAtendimento"]
+    assert executive.json["rankings"]["eficienciaEquipe"]
+    assert executive.json["semaforo"]
+    pdf = client.get(
+        "/api/v1/painel/relatorios/pdf",
+        query_string={"inicio": today, "fim": today, "tipo": "insights_mandato"},
+    )
+    assert pdf.status_code == 200
+    assert pdf.mimetype == "application/pdf"
+    assert pdf.data.startswith(b"%PDF")
 
     filtered = client.get(
         "/api/v1/painel/operacional",

@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: GabFlow WhatsApp Management API
+  version: 1.0.0
+  description: API administrativa. Webhook público da Meta é separado do contexto autenticado do tenant.
+servers:
+  - url: https://api.gabflow.app/v1
+security:
+  - bearerAuth: []
+paths:
+  /tenants/{tenantId}/whatsapp/integration:
+    get:
+      operationId: getWhatsAppIntegration
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '200': {description: Estado da integração, content: {application/json: {schema: {$ref: '#/components/schemas/Integration'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      operationId: disconnectWhatsAppIntegration
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, maxLength: 128}
+      responses:
+        '202': {description: Desconexão iniciada}
+  /tenants/{tenantId}/whatsapp/onboarding-sessions:
+    post:
+      operationId: createWhatsAppOnboardingSession
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, maxLength: 128}
+      responses:
+        '201':
+          description: Sessão criada
+          content: {application/json: {schema: {$ref: '#/components/schemas/OnboardingSession'}}}
+        '409': {description: Tenant já possui integração ou existe conflito}
+  /tenants/{tenantId}/whatsapp/onboarding-callback:
+    post:
+      operationId: completeWhatsAppOnboarding
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, state]
+              properties:
+                code: {type: string, maxLength: 4096}
+                state: {type: string, maxLength: 512}
+      responses:
+        '202': {description: Validação e ativação iniciadas}
+        '400': {description: Callback inválido, expirado ou reutilizado}
+  /tenants/{tenantId}/whatsapp/health:
+    get:
+      operationId: getWhatsAppHealth
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '200':
+          description: Saúde sem segredos
+          content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /tenants/{tenantId}/conversations/{conversationId}/handoff:
+    post:
+      operationId: startHumanHandoff
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assigneeId: {type: [string, 'null'], format: uuid}
+                reason: {type: string, maxLength: 500}
+      responses:
+        '200': {description: Conversa em modo humano}
+  /webhooks/meta/whatsapp:
+    get:
+      security: []
+      operationId: verifyMetaWebhook
+      parameters:
+        - {name: hub.mode, in: query, required: true, schema: {type: string}}
+        - {name: hub.verify_token, in: query, required: true, schema: {type: string}}
+        - {name: hub.challenge, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Challenge confirmado}
+        '403': {description: Verificação inválida}
+    post:
+      security: []
+      operationId: receiveMetaWebhook
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, additionalProperties: true}}}
+      responses:
+        '200': {description: Evento aceito ou duplicado}
+        '401': {description: Autenticidade inválida}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    TenantId: {name: tenantId, in: path, required: true, schema: {type: string, format: uuid}}
+    ConversationId: {name: conversationId, in: path, required: true, schema: {type: string, format: uuid}}
+  responses:
+    NotFound: {description: Recurso não encontrado no tenant autorizado}
+  schemas:
+    Integration:
+      type: object
+      required: [id, tenantId, status]
+      properties:
+        id: {type: string, format: uuid}
+        tenantId: {type: string, format: uuid}
+        status: {enum: [PENDING, ACTIVE, DEGRADED, SUSPENDED, DISCONNECTED, REVOKED]}
+        displayPhone: {type: [string, 'null']}
+        displayName: {type: [string, 'null']}
+        connectedAt: {type: [string, 'null'], format: date-time}
+    OnboardingSession:
+      type: object
+      required: [state, expiresAt, configurationId]
+      properties:
+        state: {type: string}
+        expiresAt: {type: string, format: date-time}
+        configurationId: {type: string}
+    Health:
+      type: object
+      required: [status, webhook, messaging]
+      properties:
+        status: {enum: [HEALTHY, DEGRADED, DOWN]}
+        webhook: {type: boolean}
+        messaging: {type: boolean}
+        lastInboundAt: {type: [string, 'null'], format: date-time}
+        lastOutboundAt: {type: [string, 'null'], format: date-time}
+        issues: {type: array, items: {type: string}}

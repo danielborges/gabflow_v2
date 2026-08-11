@@ -1,19 +1,56 @@
 import base64
 import hashlib
 import hmac
+import io
 import json
 import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.auth.security import hash_password
 from app.extensions import db
-from app.models import AgendaEvent, ChannelMessage, IntegrationSetting, OversightAction
+from app.models import (
+    AgendaEvent,
+    ChannelMessage,
+    IntegrationSetting,
+    Notification,
+    OversightAction,
+    OversightEvidence,
+    Role,
+    Tenant,
+    User,
+)
 from tests.test_p1_operations import PASSWORD_B, create_service_request, login, patch, post
 
 
 def test_agenda_visit_records_minutes_and_creates_request(app, client):
     auth = login(client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        staff = User(
+            tenant_id=tenant.id,
+            name="Assessora de Agenda",
+            email="assessora-agenda@teste.local",
+            password_hash=hash_password("SenhaAgenda123!"),
+            role=Role.STAFF,
+        )
+        representative = User(
+            tenant_id=tenant.id,
+            name="Parlamentar",
+            email="parlamentar-agenda@teste.local",
+            password_hash=hash_password("SenhaAgenda123!"),
+            role=Role.REPRESENTATIVE,
+        )
+        db.session.add_all([staff, representative])
+        db.session.commit()
+        staff_id = str(staff.id)
+        representative_id = str(representative.id)
+
+    participants = client.get("/api/v1/agenda/participantes")
+    assert participants.status_code == 200
+    assert staff_id in {item["id"] for item in participants.json["content"]}
+    assert representative_id not in {item["id"] for item in participants.json["content"]}
     territory = post(client, "/api/v1/admin/territorios", auth["csrf"], {"nome": "Centro"})
     assert territory.status_code == 201
     create_service_request(
@@ -36,12 +73,47 @@ def test_agenda_visit_records_minutes_and_creates_request(app, client):
             "local": "Praça Central",
             "inicio": starts_at,
             "territorioId": territory.json["id"],
-            "participantes": ["Equipe do gabinete"],
+            "participanteIds": [staff_id],
+            "presencaParlamentar": True,
         },
     )
     assert created.status_code == 201
     assert created.json["tipo"] == "VISITA"
     assert created.json["territorioId"] == territory.json["id"]
+    assert created.json["presencaParlamentar"] is True
+    assert created.json["participantes"] == [
+        {"id": staff_id, "nome": "Assessora de Agenda", "perfil": "staff"}
+    ]
+
+    edited = patch(
+        client,
+        f"/api/v1/agenda/compromissos/{created.json['id']}",
+        auth["csrf"],
+        {"tipo": "REUNIAO", "titulo": "Reunião de acompanhamento no Centro"},
+    )
+    assert edited.status_code == 200
+    assert edited.json["tipo"] == "REUNIAO"
+    assert edited.json["titulo"] == "Reunião de acompanhamento no Centro"
+
+    weekly_pdf = client.get(
+        f"/api/v1/agenda/relatorio-semanal.pdf?data={starts_at[:10]}"
+    )
+    assert weekly_pdf.status_code == 200
+    assert weekly_pdf.content_type == "application/pdf"
+    assert weekly_pdf.data.startswith(b"%PDF-")
+
+    invalid_participant = post(
+        client,
+        "/api/v1/agenda/compromissos",
+        auth["csrf"],
+        {
+            "tipo": "REUNIAO",
+            "titulo": "Reunião inválida",
+            "inicio": starts_at,
+            "participanteIds": [representative_id],
+        },
+    )
+    assert invalid_participant.status_code == 422
 
     recorded = post(
         client,
@@ -118,6 +190,93 @@ def test_oversight_action_report_and_tenant_isolation(app, client):
     with app.app_context():
         assert db.session.execute(select(OversightAction)).scalars().one().request_id is not None
         assert other["user"]["tenant"]["slug"] == "gabinete-b"
+
+
+def test_agenda_oversight_pending_notification_report_and_evidence(app, client):
+    auth = login(client)
+    admin_id = auth["user"]["id"]
+    starts_at = datetime.now(UTC) - timedelta(hours=2)
+    event = post(
+        client,
+        "/api/v1/agenda/compromissos",
+        auth["csrf"],
+        {
+            "tipo": "FISCALIZACAO",
+            "titulo": "Fiscalização da escola municipal",
+            "descricao": "Verificar as condições de acessibilidade.",
+            "local": "Escola Municipal Centro",
+            "inicio": starts_at.isoformat(),
+            "fim": (starts_at + timedelta(hours=1)).isoformat(),
+            "participanteIds": [admin_id],
+        },
+    )
+    assert event.status_code == 201
+    assert event.json["tipo"] == "FISCALIZACAO"
+
+    pending = client.get("/api/v1/fiscalizacoes/pendentes-relatorio")
+    assert pending.status_code == 200
+    assert pending.json["content"][0]["agendaEventoId"] == event.json["id"]
+    assert pending.json["content"][0]["statusRelatorio"] == "NAO_INICIADO"
+
+    notifications = client.get("/api/v1/notificacoes")
+    assert notifications.status_code == 200
+    reminder = next(
+        item for item in notifications.json["content"]
+        if item["entidadeTipo"] == "agenda_oversight_report"
+    )
+    assert reminder["lidaEm"] is None
+    assert notifications.json["naoLidas"] >= 1
+
+    action = post(
+        client,
+        "/api/v1/fiscalizacoes",
+        auth["csrf"],
+        {
+            "agendaEventoId": event.json["id"],
+            "status": "CONCLUIDA",
+            "relatorio": "A escola possui rampa, mas precisa adequar a sinalização tátil.",
+            "achados": ["Sinalização tátil incompleta"],
+            "providencias": ["Oficiar a Secretaria de Educação"],
+        },
+    )
+    assert action.status_code == 201
+    assert action.json["agendaEventoId"] == event.json["id"]
+    assert action.json["status"] == "CONCLUIDA"
+
+    evidence = client.post(
+        f"/api/v1/fiscalizacoes/{action.json['id']}/evidencias",
+        data={
+            "tipo": "FOTO",
+            "observacao": "Entrada principal e rampa de acesso.",
+            "arquivo": (
+                io.BytesIO(base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                )),
+                "entrada.png",
+                "image/png",
+            ),
+        },
+        headers={"X-CSRF-TOKEN": auth["csrf"]},
+        content_type="multipart/form-data",
+    )
+    assert evidence.status_code == 201
+    assert evidence.json["tipo"] == "FOTO"
+    assert evidence.json["observacao"] == "Entrada principal e rampa de acesso."
+    assert evidence.json["downloadUrl"]
+
+    assert client.get("/api/v1/fiscalizacoes/pendentes-relatorio").json["content"] == []
+    notifications = client.get("/api/v1/notificacoes")
+    reminder = next(
+        item for item in notifications.json["content"]
+        if item["entidadeTipo"] == "agenda_oversight_report"
+    )
+    assert reminder["lidaEm"] is not None
+
+    with app.app_context():
+        saved = db.session.execute(select(OversightAction)).scalars().one()
+        assert saved.agenda_event_id is not None
+        assert db.session.execute(select(OversightEvidence)).scalars().one().observation
+        assert db.session.execute(select(Notification)).scalars().one().read_at is not None
 
 
 def test_admin_integration_upsert_sanitizes_secret(app, client):

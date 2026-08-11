@@ -1,11 +1,14 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
+from io import BytesIO
+from zoneinfo import ZoneInfo
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select
 
 from app.audit import add_audit
+from app.agenda.exports import weekly_agenda_pdf
 from app.extensions import db
 from app.models import (
     AgendaEvent,
@@ -15,8 +18,12 @@ from app.models import (
     Organization,
     RequestSource,
     RequestStatus,
+    Role,
     ServiceRequest,
+    Tenant,
     Territory,
+    User,
+    UserStatus,
 )
 from app.requests.service import creation_event, next_protocol
 
@@ -49,13 +56,73 @@ def list_events():
     return jsonify(content=[event_data(item) for item in items])
 
 
+@agenda_bp.get("/agenda/participantes")
+@jwt_required()
+def list_participants():
+    tenant_id, _ = _context()
+    users = db.session.execute(
+        select(User).where(
+            User.tenant_id == tenant_id,
+            User.status == UserStatus.ACTIVE,
+            User.role.in_({Role.ADMIN, Role.MANAGER, Role.STAFF}),
+        ).order_by(User.name)
+    ).scalars()
+    return jsonify(content=[{
+        "id": str(item.id),
+        "nome": item.name,
+        "perfil": item.role.value,
+    } for item in users])
+
+
+@agenda_bp.get("/agenda/relatorio-semanal.pdf")
+@jwt_required()
+def weekly_report():
+    tenant_id, user_id = _context()
+    tenant = db.session.get(Tenant, tenant_id)
+    user = db.session.get(User, user_id)
+    try:
+        reference_date = date.fromisoformat(str(request.args.get("data") or date.today()))
+    except ValueError:
+        return jsonify(error="validation_error", message="Data de referência inválida."), 422
+    timezone = ZoneInfo(tenant.timezone or "America/Sao_Paulo")
+    week_start_date = reference_date - timedelta(days=reference_date.weekday())
+    starts_at = datetime.combine(week_start_date, time.min, tzinfo=timezone)
+    next_week = starts_at + timedelta(days=7)
+    events = list(db.session.execute(
+        select(AgendaEvent).where(
+            AgendaEvent.tenant_id == tenant_id,
+            AgendaEvent.starts_at >= starts_at,
+            AgendaEvent.starts_at < next_week,
+            AgendaEvent.status != AgendaEventStatus.CANCELADO,
+        ).order_by(AgendaEvent.starts_at)
+    ).scalars())
+    for event in events:
+        db.session.expunge(event)
+        event.starts_at = _aware(event.starts_at).astimezone(timezone)
+        if event.ends_at:
+            event.ends_at = _aware(event.ends_at).astimezone(timezone)
+    content = weekly_agenda_pdf(
+        tenant,
+        events,
+        starts_at,
+        next_week - timedelta(days=1),
+        user.name if user else "Usuário do gabinete",
+    )
+    return send_file(
+        BytesIO(content),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"agenda-executiva-{week_start_date.isoformat()}.pdf",
+    )
+
+
 @agenda_bp.post("/agenda/compromissos")
 @jwt_required()
 def create_event():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
     try:
-        values = _event_values(payload)
+        values = _event_values(payload, tenant_id)
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
     relationships = _event_relationships(payload, tenant_id)
@@ -159,6 +226,11 @@ def update_event(event_id: uuid.UUID):
         return jsonify(error="resource_not_found", message="Compromisso não encontrado."), 404
     payload = request.get_json(silent=True) or {}
     before = event_data(event)
+    if "tipo" in payload:
+        try:
+            event.event_type = AgendaEventType(str(payload["tipo"]).upper())
+        except ValueError:
+            return jsonify(error="validation_error", message="Tipo de compromisso inválido."), 422
     if "status" in payload:
         try:
             event.status = AgendaEventStatus(str(payload["status"]).upper())
@@ -180,6 +252,26 @@ def update_event(event_id: uuid.UUID):
             return jsonify(error="validation_error", message=str(error)), 422
     if "fim" in payload:
         event.ends_at = _optional_datetime(payload["fim"])
+    if event.ends_at and event.ends_at <= event.starts_at:
+        return (
+            jsonify(
+                error="validation_error",
+                message="A data final deve ser posterior à data inicial.",
+            ),
+            422,
+        )
+    if "presencaParlamentar" in payload:
+        try:
+            event.representative_presence = _boolean_value(
+                payload["presencaParlamentar"], "presencaParlamentar"
+            )
+        except ValueError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
+    if "participanteIds" in payload:
+        try:
+            event.participants = _participant_values(payload, tenant_id)
+        except ValueError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
     for field_name, attr in (
         ("fotos", "photos"),
         ("participantes", "participants"),
@@ -284,6 +376,7 @@ def event_data(item: AgendaEvent) -> dict:
         "local": item.location,
         "inicio": item.starts_at.isoformat(),
         "fim": item.ends_at.isoformat() if item.ends_at else None,
+        "presencaParlamentar": item.representative_presence,
         "cidadaoId": str(item.citizen_id) if item.citizen_id else None,
         "organizacaoId": str(item.organization_id) if item.organization_id else None,
         "territorioId": str(item.territory_id) if item.territory_id else None,
@@ -296,7 +389,7 @@ def event_data(item: AgendaEvent) -> dict:
     }
 
 
-def _event_values(payload: dict) -> dict:
+def _event_values(payload: dict, tenant_id: uuid.UUID) -> dict:
     title = str(payload.get("titulo", "")).strip()
     if len(title) < 3:
         raise ValueError("Informe o título do compromisso.")
@@ -305,14 +398,20 @@ def _event_values(payload: dict) -> dict:
         starts_at = _parse_datetime(payload.get("inicio"), "Informe a data de início.")
     except ValueError as error:
         raise ValueError(str(error)) from error
+    ends_at = _optional_datetime(payload.get("fim"))
+    if ends_at and ends_at <= starts_at:
+        raise ValueError("A data final deve ser posterior à data inicial.")
     return {
         "event_type": event_type,
         "title": title,
         "description": str(payload.get("descricao", "")).strip() or None,
         "location": str(payload.get("local", "")).strip() or None,
         "starts_at": starts_at,
-        "ends_at": _optional_datetime(payload.get("fim")),
-        "participants": _list_value(payload.get("participantes", []), "participantes"),
+        "ends_at": ends_at,
+        "representative_presence": _boolean_value(
+            payload.get("presencaParlamentar", False), "presencaParlamentar"
+        ),
+        "participants": _participant_values(payload, tenant_id),
         "pending_items": _list_value(payload.get("pendencias", []), "pendencias"),
         "photos": _list_value(payload.get("fotos", []), "fotos"),
     }
@@ -367,9 +466,56 @@ def _optional_datetime(value) -> datetime | None:
     return _parse_datetime(value, "Data inválida.")
 
 
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
 def _list_value(value, label: str) -> list:
     if value in (None, ""):
         return []
     if not isinstance(value, list):
         raise ValueError(f"{label} deve ser uma lista.")
+    return value
+
+
+def _participant_values(payload: dict, tenant_id: uuid.UUID) -> list:
+    if "participanteIds" not in payload:
+        return _list_value(payload.get("participantes", []), "participantes")
+    raw_ids = payload.get("participanteIds")
+    if not isinstance(raw_ids, list):
+        raise ValueError("participanteIds deve ser uma lista.")
+    participant_ids = []
+    for value in raw_ids:
+        try:
+            participant_id = uuid.UUID(str(value))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Selecione participantes válidos.") from error
+        if participant_id not in participant_ids:
+            participant_ids.append(participant_id)
+    if not participant_ids:
+        return []
+    users = list(db.session.execute(
+        select(User).where(
+            User.tenant_id == tenant_id,
+            User.id.in_(participant_ids),
+            User.status == UserStatus.ACTIVE,
+            User.role.in_({Role.ADMIN, Role.MANAGER, Role.STAFF}),
+        )
+    ).scalars())
+    users_by_id = {item.id: item for item in users}
+    if len(users_by_id) != len(participant_ids):
+        raise ValueError("Um ou mais participantes não são funcionários ativos do gabinete.")
+    return [
+        {
+            "id": str(user_id),
+            "nome": users_by_id[user_id].name,
+            "perfil": users_by_id[user_id].role.value,
+        }
+        for user_id in participant_ids
+    ]
+
+
+def _boolean_value(value, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} deve ser verdadeiro ou falso.")
     return value

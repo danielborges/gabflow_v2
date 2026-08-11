@@ -19,6 +19,13 @@ parlamentares.
 - cidadãos e organizações com contatos, consentimentos e base legal;
 - categorias e SLA parametrizáveis;
 - responsáveis, tarefas e notificações internas;
+- agenda institucional nos modos dia, semana e mês, com compromissos editáveis,
+  participantes do gabinete e destaque para presença parlamentar;
+- agenda executiva semanal exportável em PDF;
+- fiscalizações originadas da agenda ou registradas em campo, com pendências por
+  participante, vínculo a solicitações e evidências fotográficas/documentais;
+- relatórios operacionais e de insights do mandato por período, com indicadores,
+  semáforo executivo e exportação em PDF;
 - agrupamento de duplicidades sem perda de histórico;
 - anexos isolados por tenant, validados e acessados por URL assinada;
 - templates, retornos agendados e envio transacional de e-mail pelo Resend;

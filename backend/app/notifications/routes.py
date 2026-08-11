@@ -9,6 +9,7 @@ from app.audit import add_audit
 from app.communications.service import generate_return_reminders
 from app.extensions import db
 from app.models import Notification, NotificationPreference, NotificationType
+from app.oversight.service import generate_oversight_report_reminders
 
 notifications_bp = Blueprint("notifications", __name__)
 
@@ -41,7 +42,9 @@ def _preference_data(item_type: NotificationType, preference: NotificationPrefer
 @jwt_required()
 def list_notifications():
     tenant_id, user_id = _context()
-    if generate_return_reminders(tenant_id, user_id):
+    generated = generate_return_reminders(tenant_id, user_id)
+    generated += generate_oversight_report_reminders(tenant_id, user_id)
+    if generated:
         db.session.commit()
     items = db.session.execute(
         select(Notification)

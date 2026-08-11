@@ -69,6 +69,10 @@
 - **RF-052** Sugerir roteiros de visita. **Implementado na Release 6 por concentração de demandas abertas e prioridade.**
 - **RF-053** Registrar ata, fotos, participantes e pendências. **Implementado na Release 6.**
 - **RF-054** Criar solicitações a partir de uma visita. **Implementado na Release 6.**
+- **RF-055** Exibir a agenda institucional nos modos dia, semana e mês, com navegação temporal e identidade visual consistente com o restante do sistema. **Implementado.**
+- **RF-056** Permitir criar e editar compromissos com tipo, título, descrição, local, início, fim, presença parlamentar e múltiplos participantes pesquisáveis entre os usuários ativos do gabinete, excluído o Parlamentar. **Implementado.**
+- **RF-057** Ao alterar o início de um compromisso, sugerir automaticamente o término uma hora depois, mantendo a validação de término posterior ao início. **Implementado.**
+- **RF-058** Gerar PDF executivo dos compromissos da semana de referência, com identidade do gabinete, indicadores, alertas e agenda agrupada por dia. **Implementado.**
 
 ## Produção legislativa
 
@@ -89,6 +93,10 @@
 - **RF-072** Gerar relatório. **Implementado na Release 6.**
 - **RF-073** Relacionar fiscalização a contratos, serviços públicos e solicitações. **Implementado parcialmente na Release 6 com órgão externo e solicitação.**
 - **RF-074** Acompanhar providências decorrentes. **Implementado na Release 6.**
+- **RF-075** Criar automaticamente uma pendência de relatório quando um compromisso do tipo Fiscalização ultrapassar seu término, visível somente aos participantes do compromisso. **Implementado.**
+- **RF-076** Notificar o participante sobre fiscalizações não reportadas ao entrar na aplicação e manter o lembrete até a conclusão válida do relatório. **Implementado.**
+- **RF-077** Permitir registrar uma fiscalização diretamente em campo, sem compromisso prévio na agenda, em rascunho ou já concluída. **Implementado.**
+- **RF-078** Permitir anexar fotos capturadas pelo dispositivo e documentos, editar a observação de cada evidência e realizar download autorizado, com vínculo opcional a uma solicitação de cidadão. **Implementado.**
 
 ## Dashboards e relatórios
 
@@ -97,9 +105,12 @@
 - **RF-082** Exibir taxa de reabertura e reincidência. **Implementado na Release 5 com contagem de reaberturas e alertas de reincidência.**
 - **RF-083** Exibir mapa de calor. **Base implementada na Release 5; consistência integral dos filtros, interação e drill-down planejados para os incrementos 5.1 e 5.2.**
 - **RF-084** Permitir filtros e exportação. **Filtros básicos implementados na Release 5; contrato analítico único e exportação agregada permanecem planejados para 5.1 e 5.3.**
-- **RF-085** Gerar relatório mensal do mandato. **Implementado na Release 5.**
+- **RF-085** Gerar relatório completo do mandato para intervalo definido por data inicial e data final. **Evoluído a partir do relatório mensal da Release 5.**
 - **RF-086** Exibir indicadores por órgão destinatário. **Implementado na Release 5.**
 - **RF-087** Exibir solicitações sem retorno ou próximas do prazo. **Implementado na Release 5 para prazos, retornos e fila prioritária.**
+- **RF-088** Permitir selecionar relatório Operacional ou Insights do Mandato e apresentar indicadores, gráficos e um semáforo de problemas, avisos e resultados positivos do período. **Implementado.**
+- **RF-089** No relatório Operacional, exibir eficiência da equipe sem incluir o Parlamentar, horário de maior atendimento, cidadão mais atuante, regiões e demandas recorrentes, documentos legislativos relacionados e ações geradas. **Implementado.**
+- **RF-REP-001** Exportar o relatório selecionado em PDF executivo com composição visual adequada à prestação de contas e apresentação institucional do gabinete. **Implementado.**
 - **RF-TERR-001** Aplicar o mesmo contexto de tenant, período, comparação, categoria, canal, território, órgão, status, prioridade e responsável a todas as métricas, rankings, pontos e células do painel territorial.
 - **RF-TERR-002** Diferenciar território identificado, coordenada aproximada e coordenada verificada, expondo fonte, método, confiança e data de atualização sem tratar aproximação como verificação.
 - **RF-TERR-003** Validar coordenadas contra a jurisdição configurada e encaminhar endereços não resolvidos, ambíguos ou externos para revisão autorizada.

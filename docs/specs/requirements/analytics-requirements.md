@@ -24,7 +24,7 @@
 - **RA-022** Qualidade cadastral. **Qualidade territorial planejada para 5.1 e painel administrativo para 5.3.**
 - **RA-023** Carga de trabalho por equipe. **Planejado para 5.2 no painel territorial.**
 - **RA-024** Previsão de volume, com faixa de incerteza. **Condicionada aos gates do incremento 5.5.**
-- **RA-025** Relatório de prestação de contas. **Implementado na Release 5 como relatório mensal do mandato.**
+- **RA-025** Relatório de prestação de contas por intervalo de datas. **Evoluído a partir do relatório mensal da Release 5.**
 - **RA-026** Percentual de solicitações atrasadas por território, categoria e órgão, com numerador e denominador explícitos. **Implementado por território no incremento 5.2.**
 - **RA-027** Taxa de solução por território, categoria e órgão, distinguindo resolução, encerramento e cancelamento. **Implementado por território no incremento 5.2.**
 - **RA-028** Mediana e percentis de primeira resposta e resolução por território, evitando depender somente da média. **Medianas implementadas no incremento 5.2; percentis permanecem planejados.**
@@ -36,6 +36,13 @@
 - **RA-034** Qualidade por fonte e método de geocodificação, incluindo confiança, idade, falhas e correções humanas.
 - **RA-035** Latência P50, P95 e P99 das consultas territoriais por volume e combinação de filtros.
 - **RA-036** Efetividade operacional após ação territorial, apresentada como evolução observada e nunca como causalidade automática.
+- **RA-037** Ranking de eficiência dos funcionários do gabinete, combinando resolução, cumprimento de prazo e atividade registrada, sem incluir o Parlamentar. **Implementado.**
+- **RA-038** Distribuição de atendimentos por horário e identificação da faixa de maior atividade. **Implementado.**
+- **RA-039** Identificação do cidadão mais atuante e das regiões e categorias com maior volume de demandas no período, respeitando permissões e agregação mínima. **Implementado.**
+- **RA-040** Quantidade de documentos legislativos relacionados às demandas e ações operacionais geradas a partir delas. **Implementado.**
+- **RA-041** Classificação executiva dos achados em problemas, avisos e resultados positivos, com critério determinístico e base de cálculo visível. **Implementado.**
+- **RA-042** Relatório de Insights do Mandato com leitura estratégica dos indicadores do período, sem inferência de preferência ou propensão eleitoral individual. **Implementado.**
+- **RA-043** Agenda executiva semanal com volume de compromissos, presença parlamentar, distribuição por tipo, ritmo diário e alertas de conflito ou concentração. **Implementado.**
 
 ## Dimensões mínimas
 
