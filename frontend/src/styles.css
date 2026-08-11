@@ -1677,19 +1677,45 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .territorial-jurisdiction { display: grid !important; grid-template-columns: minmax(0, 1fr) auto !important; gap: 6px 10px !important; padding: 9px 10px !important; border: 1px solid #d8e5ee; border-radius: 6px; color: #29425f; background: #fbfdff; }
 .territorial-jurisdiction strong { overflow: hidden; color: #08285c; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
 .territorial-jurisdiction span { color: var(--muted); font-size: .64rem; white-space: nowrap; }
-.territorial-hotspots, .territorial-points, .territorial-heatmap { display: grid; grid-template-columns: 1fr !important; gap: 7px; padding-bottom: 0 !important; }
+.territorial-heatmap { display: grid; grid-template-columns: 1fr !important; gap: 7px; padding-bottom: 0 !important; }
 .territorial-heatmap .territorial-map { grid-column: 1 / -1; }
-.territorial-hotspots h3, .territorial-points h3, .territorial-heatmap h3 { margin: 0; color: #29425f; font-size: .7rem; text-transform: uppercase; }
-.territorial-hotspots div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid #edf2f7; }
-.territorial-hotspots span, .territorial-hotspots strong { font-size: .68rem; }
-.territorial-heatmap article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 7px 8px; border: 1px solid #d8e5ee; border-radius: 5px; background: #fbfdff; }
-.territorial-heatmap span, .territorial-heatmap strong { font-size: .68rem; }
-.territorial-heatmap small { grid-column: 1 / -1; color: var(--muted); font-size: .61rem; }
+.territorial-heatmap h3 { margin: 0; color: #29425f; font-size: .7rem; text-transform: uppercase; }
 .territorial-map { display: grid !important; grid-template-columns: 1fr !important; gap: 7px !important; padding: 0 0 5px !important; }
+.territorial-map-stage { position: relative; width: 100%; height: 210px; overflow: hidden; border-radius: 7px; }
+.territorial-map.expanded .territorial-map-stage { height: clamp(340px, 48vh, 560px); }
 .territorial-map svg { width: 100%; height: 210px; overflow: hidden; border: 1px solid #cce3e7; border-radius: 7px; background: #eefbfc; box-shadow: inset 0 0 0 1px #ffffffa8; }
 .territorial-map.expanded svg { height: clamp(340px, 48vh, 560px); }
 .territorial-map-canvas { width: 100%; height: 210px; overflow: hidden; border: 1px solid #cce3e7; border-radius: 7px; background: #eefbfc; box-shadow: inset 0 0 0 1px #ffffffa8; }
+.territorial-map-stage .territorial-map-canvas { height: 100%; }
 .territorial-map.expanded .territorial-map-canvas { height: clamp(340px, 48vh, 560px); }
+.territorial-map-stage .territorial-map-operational-overlay { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; pointer-events: none; overflow: hidden; border: 0; border-radius: 7px; background: transparent; box-shadow: none; }
+.territorial-map-outside-mask { fill: rgba(248, 254, 255, .58); }
+.territorial-map-overlay-heat { fill: url("#territorialOperationalHeat"); pointer-events: auto; cursor: pointer; }
+.territorial-map-overlay-boundary { fill: none; stroke: #087f8c; stroke-width: 3.5; vector-effect: non-scaling-stroke; filter: drop-shadow(0 1px 1px #ffffff); }
+.territorial-map-overlay-point { fill: #08285c; stroke: #ffffff; stroke-width: 1.2; vector-effect: non-scaling-stroke; pointer-events: auto; cursor: pointer; }
+.territorial-map-selection { display: grid; gap: 9px; padding: 11px; border: 1px solid #9fd7de; border-radius: 7px; background: #f4fbfc; }
+.territorial-map-selection > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.territorial-map-selection h4 { margin: 0; color: #08285c; font-size: .76rem; }
+.territorial-map-selection header p { margin: 3px 0 0; color: #52677f; font-size: .63rem; }
+.territorial-map-request-list { display: grid; gap: 6px; }
+.territorial-map-request-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid #d8e5ee; border-radius: 5px; background: white; }
+.territorial-map-request-list article span { display: grid; gap: 2px; }
+.territorial-map-request-list article strong { color: #08285c; font-size: .69rem; }
+.territorial-map-request-list article small { color: #52677f; font-size: .6rem; }
+.territorial-map-selection > footer { display: flex; justify-content: flex-end; }
+.territorial-location-review { display: grid; gap: 8px; padding: 11px; border: 1px solid #f1d58c; border-radius: 7px; background: #fffdf5; }
+.territorial-location-review > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.territorial-location-review h3 { margin: 0; color: #7a4a08; font-size: .72rem; text-transform: uppercase; }
+.territorial-location-review header p { margin: 3px 0 0; color: #7b684e; font-size: .62rem; }
+.territorial-location-review > header > strong { min-width: 30px; padding: 5px 7px; border-radius: 999px; color: #7a4a08; background: #fef3c7; font-size: .7rem; text-align: center; }
+.territorial-location-review-list { display: grid; gap: 6px; }
+.territorial-location-review-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 8px; border: 1px solid #f1dfaf; border-radius: 5px; background: white; }
+.territorial-location-review-list article > span { display: grid; gap: 2px; }
+.territorial-location-review-list article strong { color: #08285c; font-size: .69rem; }
+.territorial-location-review-list article small { color: #7b684e; font-size: .6rem; }
+.territorial-location-review-list details { grid-column: 1 / -1; color: #52677f; font-size: .6rem; }
+.territorial-location-review-list details summary { width: fit-content; cursor: pointer; font-weight: 800; }
+.territorial-location-review-list details p { margin: 5px 0 0; }
 .territorial-map-canvas .maplibregl-canvas { outline: none; }
 .territorial-map-canvas .maplibregl-ctrl-attrib { color: #52677f; font-size: 9px; }
 .territorial-map-canvas .maplibregl-ctrl-attrib a { color: #29425f; }

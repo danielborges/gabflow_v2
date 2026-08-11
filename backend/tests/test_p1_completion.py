@@ -195,6 +195,9 @@ def test_classification_forwarding_response_and_dashboard(app, client):
     assert territorial["heatmap"] == []
     assert territorial["qualidadeDados"]["coordenadasAproximadas"] == 1
     assert territorial["qualidadeDados"]["coordenadasVerificadas"] == 0
+    assert territorial["revisoesLocalizacao"]["total"] == 1
+    assert territorial["revisoesLocalizacao"]["content"][0]["status"] == "APPROXIMATE"
+    assert territorial["revisoesLocalizacao"]["detalhesTecnicosPermitidos"] is True
 
     with app.app_context():
         item = db.session.execute(select(ServiceRequest)).scalar_one()
@@ -344,6 +347,8 @@ def test_territorial_points_follow_role_privacy(app, client):
     assert territorial["pontos"] == []
     assert territorial["heatmap"][0]["total"] == 3
     assert territorial["privacidade"]["visualizacaoPontosPermitida"] is False
+    assert territorial["revisoesLocalizacao"]["content"] == []
+    assert territorial["revisoesLocalizacao"]["detalhesTecnicosPermitidos"] is False
     assert territorial["versaoMetodo"] == "5.2.1"
     assert territorial["filtrosAplicados"]["granularidade"] == "dia"
     assert territorial["geradoEm"]

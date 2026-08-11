@@ -192,9 +192,26 @@ describe("OperationalDashboard", () => {
             hotspotsSuprimidos: 1,
             visualizacaoPontosPermitida: true,
           },
+          revisoesLocalizacao: {
+            total: 1,
+            detalhesTecnicosPermitidos: true,
+            content: [{
+              id: "1",
+              protocolo: "GF-2026-000001",
+              titulo: "Demanda urgente",
+              status: "APPROXIMATE",
+              territorio: "Centro",
+              territorioId: "territory-1",
+              latitude: -21.7619,
+              longitude: -43.3496,
+              confianca: 0.72,
+              metodo: "LOCAL_APPROXIMATE",
+            }],
+          },
           hotspots: [{ nome: "Centro", total: 2, abertas: 2, atrasadas: 1 }],
           heatmap: [{
             territorio: "Centro",
+            territorioId: "territory-1",
             latitude: -21.7619,
             longitude: -43.3496,
             total: 2,
@@ -208,6 +225,7 @@ describe("OperationalDashboard", () => {
             status: "NOVA",
             categoria: "Saúde",
             territorio: "Centro",
+            territorioId: "territory-1",
             latitude: -21.7619,
             longitude: -43.3496,
             atrasada: true,
@@ -251,7 +269,8 @@ describe("OperationalDashboard", () => {
     });
 
     const onOpenRequests = vi.fn();
-    render(<OperationalDashboard onOpenRequests={onOpenRequests} />);
+    const onOpenRequest = vi.fn();
+    render(<OperationalDashboard onOpenRequests={onOpenRequests} onOpenRequest={onOpenRequest} />);
     await waitFor(() => expect(screen.getByText("Demanda urgente")).toBeInTheDocument());
     expect(screen.getByText("Atrasadas")).toBeInTheDocument();
     expect(screen.getByLabelText("Categoria")).toBeInTheDocument();
@@ -283,12 +302,20 @@ describe("OperationalDashboard", () => {
     expect(screen.getByText("Câmara Municipal · MG")).toBeInTheDocument();
     expect(screen.getByText(/Dados territoriais com menos de 3 solicitações/)).toBeInTheDocument();
     expect(screen.getByText("Mapa de calor")).toBeInTheDocument();
+    expect(screen.queryByText("Hotspots")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pontos geocodificados")).not.toBeInTheDocument();
+    expect(screen.getByText("Localizações que exigem revisão")).toBeInTheDocument();
+    expect(screen.getByText("Baixa precisão · Centro")).toBeInTheDocument();
     expect(screen.getByLabelText("Mapa visual de calor territorial")).toBeInTheDocument();
-    expect(screen.getByText("2 demanda(s)")).toBeInTheDocument();
+    expect(screen.queryByText("2 demanda(s)")).not.toBeInTheDocument();
     expect(screen.getAllByText("50%").length).toBeGreaterThan(0);
     expect(screen.getByText("território identificado")).toBeInTheDocument();
     expect(screen.getByText("coordenadas aproximadas")).toBeInTheDocument();
     expect(screen.getAllByText("GF-2026-000001").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Abrir solicitação GF-2026-000001" }));
+    expect(screen.getByLabelText("Demandas selecionadas no mapa")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir solicitação" }));
+    expect(onOpenRequest).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
     expect(screen.getByText("Tabela territorial")).toBeInTheDocument();
     expect(screen.getByText("Comparação temporal")).toBeInTheDocument();
     expect(screen.getByText("Crescimento")).toBeInTheDocument();
