@@ -71,13 +71,17 @@ def upgrade():
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["created_by_id"], ["users.id"], ondelete="RESTRICT"),
-        sa.ForeignKeyConstraint(["oversight_action_id"], ["oversight_actions.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["oversight_action_id"], ["oversight_actions.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("storage_key"),
     )
     op.create_index("ix_oversight_evidence_tenant_id", "oversight_evidence", ["tenant_id"])
-    op.create_index("ix_oversight_evidence_action_id", "oversight_evidence", ["oversight_action_id"])
+    op.create_index(
+        "ix_oversight_evidence_action_id", "oversight_evidence", ["oversight_action_id"]
+    )
     op.create_index("ix_oversight_evidence_type", "oversight_evidence", ["evidence_type"])
     op.create_index("ix_oversight_evidence_sha256", "oversight_evidence", ["sha256"])
     op.create_index("ix_oversight_evidence_created_at", "oversight_evidence", ["created_at"])
@@ -85,7 +89,7 @@ def upgrade():
         app_user = os.getenv("APP_DB_USER", "gabflow_app")
         worker_user = os.getenv("WORKER_DB_USER", "gabflow_worker")
         op.execute(
-            f'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE oversight_evidence '
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE oversight_evidence "
             f'TO "{app_user}", "{worker_user}"'
         )
         op.execute("ALTER TABLE oversight_evidence ENABLE ROW LEVEL SECURITY")

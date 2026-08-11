@@ -20,16 +20,21 @@ NOTIFICATION_ENTITY = "agenda_oversight_report"
 
 def pending_oversight_events(tenant_id: uuid.UUID, user_id: uuid.UUID) -> list[dict]:
     now = datetime.now(UTC)
-    events = list(db.session.execute(
-        select(AgendaEvent).where(
-            AgendaEvent.tenant_id == tenant_id,
-            AgendaEvent.event_type == AgendaEventType.FISCALIZACAO,
-            AgendaEvent.status != AgendaEventStatus.CANCELADO,
-            AgendaEvent.starts_at <= now,
-        ).order_by(AgendaEvent.starts_at)
-    ).scalars())
+    events = list(
+        db.session.execute(
+            select(AgendaEvent)
+            .where(
+                AgendaEvent.tenant_id == tenant_id,
+                AgendaEvent.event_type == AgendaEventType.FISCALIZACAO,
+                AgendaEvent.status != AgendaEventStatus.CANCELADO,
+                AgendaEvent.starts_at <= now,
+            )
+            .order_by(AgendaEvent.starts_at)
+        ).scalars()
+    )
     events = [
-        event for event in events
+        event
+        for event in events
         if _aware(event.ends_at or event.starts_at) <= now and _is_participant(event, user_id)
     ]
     if not events:
@@ -48,30 +53,34 @@ def pending_oversight_events(tenant_id: uuid.UUID, user_id: uuid.UUID) -> list[d
         action = actions.get(event.id)
         if action and action.status == OversightActionStatus.CONCLUIDA and action.report:
             continue
-        pending.append({
-            "agendaEventoId": str(event.id),
-            "fiscalizacaoId": str(action.id) if action else None,
-            "titulo": event.title,
-            "descricao": event.description,
-            "local": event.location,
-            "inicio": event.starts_at.isoformat(),
-            "fim": event.ends_at.isoformat() if event.ends_at else None,
-            "solicitacaoId": str(event.request_id) if event.request_id else None,
-            "participantes": event.participants,
-            "statusRelatorio": "RASCUNHO" if action else "NAO_INICIADO",
-        })
+        pending.append(
+            {
+                "agendaEventoId": str(event.id),
+                "fiscalizacaoId": str(action.id) if action else None,
+                "titulo": event.title,
+                "descricao": event.description,
+                "local": event.location,
+                "inicio": event.starts_at.isoformat(),
+                "fim": event.ends_at.isoformat() if event.ends_at else None,
+                "solicitacaoId": str(event.request_id) if event.request_id else None,
+                "participantes": event.participants,
+                "statusRelatorio": "RASCUNHO" if action else "NAO_INICIADO",
+            }
+        )
     return pending
 
 
 def generate_oversight_report_reminders(tenant_id: uuid.UUID, user_id: uuid.UUID) -> int:
     created = 0
     for item in pending_oversight_events(tenant_id, user_id):
-        exists = db.session.execute(select(Notification.id).where(
-            Notification.tenant_id == tenant_id,
-            Notification.user_id == user_id,
-            Notification.entity_type == NOTIFICATION_ENTITY,
-            Notification.entity_id == item["agendaEventoId"],
-        )).scalar_one_or_none()
+        exists = db.session.execute(
+            select(Notification.id).where(
+                Notification.tenant_id == tenant_id,
+                Notification.user_id == user_id,
+                Notification.entity_type == NOTIFICATION_ENTITY,
+                Notification.entity_id == item["agendaEventoId"],
+            )
+        ).scalar_one_or_none()
         if exists:
             continue
         notify_user(
@@ -79,7 +88,10 @@ def generate_oversight_report_reminders(tenant_id: uuid.UUID, user_id: uuid.UUID
             user_id,
             NotificationType.TAREFA,
             "Relatório de fiscalização pendente",
-            f"A fiscalização “{item['titulo']}” já foi realizada. Registre o relatório e as evidências.",
+            (
+                f"A fiscalização “{item['titulo']}” já foi realizada. "
+                "Registre o relatório e as evidências."
+            ),
             NOTIFICATION_ENTITY,
             item["agendaEventoId"],
         )
@@ -89,12 +101,14 @@ def generate_oversight_report_reminders(tenant_id: uuid.UUID, user_id: uuid.UUID
 
 def resolve_oversight_reminders(tenant_id: uuid.UUID, agenda_event_id: uuid.UUID) -> None:
     now = datetime.now(UTC)
-    notifications = db.session.execute(select(Notification).where(
-        Notification.tenant_id == tenant_id,
-        Notification.entity_type == NOTIFICATION_ENTITY,
-        Notification.entity_id == str(agenda_event_id),
-        Notification.read_at.is_(None),
-    )).scalars()
+    notifications = db.session.execute(
+        select(Notification).where(
+            Notification.tenant_id == tenant_id,
+            Notification.entity_type == NOTIFICATION_ENTITY,
+            Notification.entity_id == str(agenda_event_id),
+            Notification.read_at.is_(None),
+        )
+    ).scalars()
     for notification in notifications:
         notification.read_at = now
 

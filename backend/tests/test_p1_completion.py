@@ -311,9 +311,7 @@ def test_dashboard_detects_recurrent_and_anomalous_demands(client):
     assert len(dashboard.json["territorial"]["pontos"]) == 3
     assert dashboard.json["territorial"]["heatmap"][0]["total"] == 3
 
-    empty_slice = client.get(
-        "/api/v1/painel/operacional", query_string={"canal": "EMAIL"}
-    )
+    empty_slice = client.get("/api/v1/painel/operacional", query_string={"canal": "EMAIL"})
     assert empty_slice.status_code == 200
     assert empty_slice.json["territorial"]["hotspots"] == []
     assert empty_slice.json["territorial"]["heatmap"] == []

@@ -95,9 +95,7 @@ def test_agenda_visit_records_minutes_and_creates_request(app, client):
     assert edited.json["tipo"] == "REUNIAO"
     assert edited.json["titulo"] == "Reunião de acompanhamento no Centro"
 
-    weekly_pdf = client.get(
-        f"/api/v1/agenda/relatorio-semanal.pdf?data={starts_at[:10]}"
-    )
+    weekly_pdf = client.get(f"/api/v1/agenda/relatorio-semanal.pdf?data={starts_at[:10]}")
     assert weekly_pdf.status_code == 200
     assert weekly_pdf.content_type == "application/pdf"
     assert weekly_pdf.data.startswith(b"%PDF-")
@@ -221,7 +219,8 @@ def test_agenda_oversight_pending_notification_report_and_evidence(app, client):
     notifications = client.get("/api/v1/notificacoes")
     assert notifications.status_code == 200
     reminder = next(
-        item for item in notifications.json["content"]
+        item
+        for item in notifications.json["content"]
         if item["entidadeTipo"] == "agenda_oversight_report"
     )
     assert reminder["lidaEm"] is None
@@ -249,9 +248,11 @@ def test_agenda_oversight_pending_notification_report_and_evidence(app, client):
             "tipo": "FOTO",
             "observacao": "Entrada principal e rampa de acesso.",
             "arquivo": (
-                io.BytesIO(base64.b64decode(
-                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-                )),
+                io.BytesIO(
+                    base64.b64decode(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                    )
+                ),
                 "entrada.png",
                 "image/png",
             ),
@@ -267,7 +268,8 @@ def test_agenda_oversight_pending_notification_report_and_evidence(app, client):
     assert client.get("/api/v1/fiscalizacoes/pendentes-relatorio").json["content"] == []
     notifications = client.get("/api/v1/notificacoes")
     reminder = next(
-        item for item in notifications.json["content"]
+        item
+        for item in notifications.json["content"]
         if item["entidadeTipo"] == "agenda_oversight_report"
     )
     assert reminder["lidaEm"] is not None

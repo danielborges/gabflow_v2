@@ -627,9 +627,6 @@ def _truncate(value, width, font_size):
     if pdfmetrics.stringWidth(value, "GabFlowSans", font_size) <= width:
         return value
     shortened = value
-    while (
-        shortened
-        and pdfmetrics.stringWidth(shortened + "...", "GabFlowSans", font_size) > width
-    ):
+    while shortened and pdfmetrics.stringWidth(shortened + "...", "GabFlowSans", font_size) > width:
         shortened = shortened[:-1]
     return shortened.rstrip() + "..."

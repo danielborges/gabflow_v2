@@ -2762,9 +2762,7 @@ class ServiceRequest(db.Model):
 
 class TerritorialSavedView(db.Model):
     __tablename__ = "territorial_saved_views"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "user_id", "name"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "user_id", "name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

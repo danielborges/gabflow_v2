@@ -470,9 +470,7 @@ def _build_operational_dashboard():
     }
     responsible_names = {
         item.id: item.name
-        for item in db.session.execute(
-            select(User).where(User.tenant_id == tenant_id)
-        ).scalars()
+        for item in db.session.execute(select(User).where(User.tenant_id == tenant_id)).scalars()
     }
     if filters["territorioId"] and filters["territorioId"] not in territory_names:
         return (
@@ -483,12 +481,14 @@ def _build_operational_dashboard():
         return jsonify(error="validation_error", message="Ã“rgÃ£o invÃ¡lido para o gabinete."), 422
     tenant = db.session.get(Tenant, tenant_id)
     filtered_request_ids = {item.id for item in items}
-    pending_tasks = list(db.session.execute(
-        select(RequestTask).where(
-            RequestTask.tenant_id == tenant_id,
-            RequestTask.status.in_([TaskStatus.PENDENTE, TaskStatus.EM_ANDAMENTO]),
-        )
-    ).scalars())
+    pending_tasks = list(
+        db.session.execute(
+            select(RequestTask).where(
+                RequestTask.tenant_id == tenant_id,
+                RequestTask.status.in_([TaskStatus.PENDENTE, TaskStatus.EM_ANDAMENTO]),
+            )
+        ).scalars()
+    )
     if filtered_request_ids:
         pending_tasks = [item for item in pending_tasks if item.request_id in filtered_request_ids]
     elif items == []:
@@ -509,9 +509,7 @@ def _build_operational_dashboard():
         ]
     elif items == []:
         active_returns = []
-    overdue_returns = [
-        item for item in active_returns if _utc(item.scheduled_at) < now
-    ]
+    overdue_returns = [item for item in active_returns if _utc(item.scheduled_at) < now]
     near_returns = [
         item
         for item in active_returns
@@ -625,20 +623,15 @@ def monthly_mandate_report():
             .order_by(ServiceRequest.created_at.desc())
         ).scalars()
     )
-    created_items = [
-        item for item in all_items if starts_at <= _utc(item.created_at) < ends_at
-    ]
+    created_items = [item for item in all_items if starts_at <= _utc(item.created_at) < ends_at]
     closed_items = [
-        item
-        for item in all_items
-        if item.closed_at and starts_at <= _utc(item.closed_at) < ends_at
+        item for item in all_items if item.closed_at and starts_at <= _utc(item.closed_at) < ends_at
     ]
     forwarded_items = [
         item
         for item in all_items
         if any(
-            starts_at <= _utc(forwarding.created_at) < ends_at
-            for forwarding in item.forwardings
+            starts_at <= _utc(forwarding.created_at) < ends_at for forwarding in item.forwardings
         )
     ]
     touched_items = _unique_requests([*created_items, *closed_items, *forwarded_items])
@@ -768,9 +761,7 @@ def save_territorial_view():
     name = str(payload.get("nome", "")).strip()
     if not 2 <= len(name) <= 80:
         return (
-            jsonify(
-                error="validation_error", message="Informe um nome entre 2 e 80 caracteres."
-            ),
+            jsonify(error="validation_error", message="Informe um nome entre 2 e 80 caracteres."),
             422,
         )
     try:
@@ -786,17 +777,19 @@ def save_territorial_view():
         )
     ).scalar_one_or_none()
     if item is None:
-        count = db.session.execute(
-            select(TerritorialSavedView).where(
-                TerritorialSavedView.tenant_id == tenant_id,
-                TerritorialSavedView.user_id == user_id,
+        count = (
+            db.session.execute(
+                select(TerritorialSavedView).where(
+                    TerritorialSavedView.tenant_id == tenant_id,
+                    TerritorialSavedView.user_id == user_id,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if len(count) >= 10:
             return (
-                jsonify(
-                    error="validation_error", message="Limite de 10 visões salvas atingido."
-                ),
+                jsonify(error="validation_error", message="Limite de 10 visões salvas atingido."),
                 422,
             )
         item = TerritorialSavedView(tenant_id=tenant_id, user_id=user_id, name=name)
@@ -1049,9 +1042,7 @@ def _territorial_dashboard(
             metric["somaLatitude"] += item.latitude
             metric["somaLongitude"] += item.longitude
             metric["latitude"] = round(metric["somaLatitude"] / metric["geocodificadas"], 6)
-            metric["longitude"] = round(
-                metric["somaLongitude"] / metric["geocodificadas"], 6
-            )
+            metric["longitude"] = round(metric["somaLongitude"] / metric["geocodificadas"], 6)
     for metric in territory_metrics.values():
         metric.pop("somaLatitude", None)
         metric.pop("somaLongitude", None)
@@ -1073,32 +1064,33 @@ def _territorial_dashboard(
     ]
     review_priority = {"OUTSIDE_JURISDICTION": 0, "AMBIGUOUS": 1, "APPROXIMATE": 2}
     review_items = sorted(
-        (
-            item for item in items
-            if _location_status(item) in review_priority
-        ),
+        (item for item in items if _location_status(item) in review_priority),
         key=lambda item: (
             review_priority[_location_status(item)],
             item.geocode_confidence if item.geocode_confidence is not None else -1,
             item.updated_at,
         ),
     )
-    location_reviews = [
-        {
-            "id": str(item.id),
-            "protocolo": item.protocol,
-            "titulo": item.title,
-            "categoria": item.category,
-            "territorio": territory_names.get(item.territory_id, "Sem territÃ³rio"),
-            "territorioId": str(item.territory_id) if item.territory_id else None,
-            "status": _location_status(item),
-            "confianca": item.geocode_confidence,
-            "metodo": item.geocode_method,
-            "latitude": item.latitude,
-            "longitude": item.longitude,
-        }
-        for item in review_items[:20]
-    ] if can_view_points else []
+    location_reviews = (
+        [
+            {
+                "id": str(item.id),
+                "protocolo": item.protocol,
+                "titulo": item.title,
+                "categoria": item.category,
+                "territorio": territory_names.get(item.territory_id, "Sem territÃ³rio"),
+                "territorioId": str(item.territory_id) if item.territory_id else None,
+                "status": _location_status(item),
+                "confianca": item.geocode_confidence,
+                "metodo": item.geocode_method,
+                "latitude": item.latitude,
+                "longitude": item.longitude,
+            }
+            for item in review_items[:20]
+        ]
+        if can_view_points
+        else []
+    )
     hotspots = sorted(
         territory_metrics.values(),
         key=lambda item: (item["abertas"], item["atrasadas"], item["total"]),
@@ -1106,9 +1098,7 @@ def _territorial_dashboard(
     )
     cell_safe_points = _privacy_points(points)
     private_points = cell_safe_points if can_view_points else []
-    private_hotspots = [
-        item for item in hotspots if item["total"] >= MIN_ANALYTICS_GROUP_SIZE
-    ]
+    private_hotspots = [item for item in hotspots if item["total"] >= MIN_ANALYTICS_GROUP_SIZE]
     postgis = _postgis_heatmap(tenant_id, {item.id for item in geocoded})
     heatmap = postgis if postgis is not None else _local_heatmap(cell_safe_points)
     comparison = _territorial_comparison(
@@ -1205,9 +1195,7 @@ def _territorial_comparison(
             continue
         previous_group = comparison_groups.get(key, [])
         current_metrics = _territorial_period_metrics(current_group, current_cutoff)
-        previous_metrics = _territorial_period_metrics(
-            previous_group, comparison_cutoff
-        )
+        previous_metrics = _territorial_period_metrics(previous_group, comparison_cutoff)
         comparison_available = len(previous_group) >= MIN_ANALYTICS_GROUP_SIZE
         territory_id = current_group[0].territory_id
         territory_name = _territory_name(current_group[0], territory_names)
@@ -1247,24 +1235,33 @@ def _territorial_comparison(
                     "metricasAnteriores": previous_metrics if comparison_available else None,
                     "variacaoVolumePercentual": _percent_change(
                         current_metrics["total"], previous_metrics["total"]
-                    ) if comparison_available else None,
+                    )
+                    if comparison_available
+                    else None,
                     "variacaoAtrasoPontosPercentuais": round(
-                        current_metrics["percentualAtraso"]
-                        - previous_metrics["percentualAtraso"],
+                        current_metrics["percentualAtraso"] - previous_metrics["percentualAtraso"],
                         1,
-                    ) if comparison_available else None,
+                    )
+                    if comparison_available
+                    else None,
                     "variacaoSolucaoPontosPercentuais": round(
                         current_metrics["taxaSolucao"] - previous_metrics["taxaSolucao"],
                         1,
-                    ) if comparison_available else None,
+                    )
+                    if comparison_available
+                    else None,
                     "variacaoPrimeiraRespostaPercentual": _percent_change(
                         current_metrics["tempoMedianoPrimeiraRespostaHoras"],
                         previous_metrics["tempoMedianoPrimeiraRespostaHoras"],
-                    ) if comparison_available else None,
+                    )
+                    if comparison_available
+                    else None,
                     "variacaoResolucaoPercentual": _percent_change(
                         current_metrics["tempoMedianoResolucaoHoras"],
                         previous_metrics["tempoMedianoResolucaoHoras"],
-                    ) if comparison_available else None,
+                    )
+                    if comparison_available
+                    else None,
                 },
                 "detalhes": {
                     "categorias": _counter(
@@ -1286,10 +1283,13 @@ def _territorial_comparison(
                             "status": item.status.value,
                         }
                         for item in sorted(
-                            current_group, key=lambda request_item: _utc(request_item.created_at),
+                            current_group,
+                            key=lambda request_item: _utc(request_item.created_at),
                             reverse=True,
                         )[:3]
-                    ] if can_view_examples else [],
+                    ]
+                    if can_view_examples
+                    else [],
                 },
                 "filtroSolicitacoes": {
                     key: value for key, value in request_filters.items() if value is not None
@@ -1345,9 +1345,7 @@ def _group_requests_by_territory(
     return groups
 
 
-def _territorial_period_metrics(
-    items: list[ServiceRequest], cutoff: datetime
-) -> dict:
+def _territorial_period_metrics(items: list[ServiceRequest], cutoff: datetime) -> dict:
     total = len(items)
     overdue_ids = _overdue_ids_at(items, cutoff)
     overdue_total = sum(item.id in overdue_ids for item in items)
@@ -1422,9 +1420,7 @@ def _jurisdiction_data(tenant: Tenant | None) -> dict | None:
     }
 
 
-def _postgis_heatmap(
-    tenant_id: uuid.UUID, request_ids: set[uuid.UUID]
-) -> list[dict] | None:
+def _postgis_heatmap(tenant_id: uuid.UUID, request_ids: set[uuid.UUID]) -> list[dict] | None:
     if db.engine.dialect.name != "postgresql":
         return None
     if not request_ids:
@@ -1508,12 +1504,10 @@ def _local_heatmap(points: list[dict]) -> list[dict]:
         )
         cell["total"] += 1
         cell["abertas"] += int(point["status"] not in {status.value for status in CLOSED_STATUSES})
-    private_cells = [
-        item for item in cells.values() if item["total"] >= MIN_ANALYTICS_GROUP_SIZE
+    private_cells = [item for item in cells.values() if item["total"] >= MIN_ANALYTICS_GROUP_SIZE]
+    return sorted(private_cells, key=lambda item: (item["total"], item["abertas"]), reverse=True)[
+        :20
     ]
-    return sorted(
-        private_cells, key=lambda item: (item["total"], item["abertas"]), reverse=True
-    )[:20]
 
 
 def _privacy_points(points: list[dict]) -> list[dict]:
@@ -1609,7 +1603,9 @@ def _recurrent_demands(
                         "titulo": item.title or "Sem título",
                     }
                     for item in sorted_group[:3]
-                ] if can_view_examples else [],
+                ]
+                if can_view_examples
+                else [],
                 "regra": (
                     f"{len(group)} demandas em {RECURRENCE_WINDOW_DAYS} dias no mesmo recorte"
                 ),
@@ -1794,9 +1790,7 @@ def _status_at(item: ServiceRequest, cutoff: datetime) -> RequestStatus:
     return status
 
 
-def _overdue_ids_at(
-    items: list[ServiceRequest], cutoff: datetime
-) -> set[uuid.UUID]:
+def _overdue_ids_at(items: list[ServiceRequest], cutoff: datetime) -> set[uuid.UUID]:
     return {
         item.id
         for item in items
@@ -1831,9 +1825,7 @@ def _geocode_reference(item: ServiceRequest, territory_names: dict) -> str | Non
         item.title,
         item.description[:120] if item.description else None,
     ]
-    reference = " | ".join(
-        str(value).strip() for value in values if value and str(value).strip()
-    )
+    reference = " | ".join(str(value).strip() for value in values if value and str(value).strip())
     return reference or None
 
 
@@ -1860,12 +1852,12 @@ def _local_coordinates(reference: str, tenant: Tenant) -> tuple[float, float]:
         isinstance(bounds.get(key), int | float)
         for key in ("minLatitude", "maxLatitude", "minLongitude", "maxLongitude")
     ):
-        latitude = bounds["minLatitude"] + (
-            bounds["maxLatitude"] - bounds["minLatitude"]
-        ) * (0.2 + seed_a * 0.6)
-        longitude = bounds["minLongitude"] + (
-            bounds["maxLongitude"] - bounds["minLongitude"]
-        ) * (0.2 + seed_b * 0.6)
+        latitude = bounds["minLatitude"] + (bounds["maxLatitude"] - bounds["minLatitude"]) * (
+            0.2 + seed_a * 0.6
+        )
+        longitude = bounds["minLongitude"] + (bounds["maxLongitude"] - bounds["minLongitude"]) * (
+            0.2 + seed_b * 0.6
+        )
         return round(latitude, 6), round(longitude, 6)
     angle = seed_a * 2 * pi
     radius = 0.005 + seed_b * 0.02
@@ -1874,9 +1866,7 @@ def _local_coordinates(reference: str, tenant: Tenant) -> tuple[float, float]:
     return round(latitude, 6), round(longitude, 6)
 
 
-def _coordinates_in_jurisdiction(
-    latitude: float, longitude: float, tenant: Tenant | None
-) -> bool:
+def _coordinates_in_jurisdiction(latitude: float, longitude: float, tenant: Tenant | None) -> bool:
     if tenant is None:
         return False
     bounds = tenant.jurisdiction_bounds or {}
@@ -2225,11 +2215,11 @@ def _executive_report_payload(
     )
     created_items = [item for item in all_items if starts_at <= _utc(item.created_at) < ends_at]
     closed_items = [
-        item for item in all_items
-        if item.closed_at and starts_at <= _utc(item.closed_at) < ends_at
+        item for item in all_items if item.closed_at and starts_at <= _utc(item.closed_at) < ends_at
     ]
     touched_items = [
-        item for item in all_items
+        item
+        for item in all_items
         if item in created_items
         or item in closed_items
         or any(starts_at <= _utc(entry.created_at) < ends_at for entry in item.interactions)
@@ -2256,28 +2246,34 @@ def _executive_report_payload(
         ).scalars()
     )
     user_names = {item.id: item.name for item in users}
-    representative_user_ids = {
-        item.id for item in users if item.role == Role.REPRESENTATIVE
-    }
+    representative_user_ids = {item.id for item in users if item.role == Role.REPRESENTATIVE}
     citizen_ids = {item.citizen_id for item in touched_items if item.citizen_id}
-    citizens = {
-        item.id: item.name
-        for item in db.session.execute(
-            select(Citizen).where(Citizen.tenant_id == tenant_id, Citizen.id.in_(citizen_ids))
-        ).scalars()
-    } if citizen_ids else {}
+    citizens = (
+        {
+            item.id: item.name
+            for item in db.session.execute(
+                select(Citizen).where(Citizen.tenant_id == tenant_id, Citizen.id.in_(citizen_ids))
+            ).scalars()
+        }
+        if citizen_ids
+        else {}
+    )
 
     overdue = [
-        item for item in touched_items
+        item
+        for item in touched_items
         if item.status not in CLOSED_STATUSES and item.due_at and _utc(item.due_at) < ends_at
     ]
     unassigned = [item for item in touched_items if not item.responsible_id]
     forwarded = [
-        forwarding for item in touched_items for forwarding in item.forwardings
+        forwarding
+        for item in touched_items
+        for forwarding in item.forwardings
         if starts_at <= _utc(forwarding.created_at) < ends_at
     ]
     completed_on_time = [
-        item for item in closed_items
+        item
+        for item in closed_items
         if not item.due_at or _utc(item.closed_at) <= _utc(item.due_at)
     ]
     resolution_rate = _report_percentage(len(closed_items), len(touched_items))
@@ -2324,16 +2320,15 @@ def _executive_report_payload(
     ]
     request_ids = {item.id for item in touched_items}
     legislative = _legislative_report_data(tenant_id, request_ids)
-    actions = _generated_actions_data(
-        tenant_id, touched_items, starts_at, ends_at, forwarded
-    )
+    actions = _generated_actions_data(tenant_id, touched_items, starts_at, ends_at, forwarded)
 
     previous_starts_at = starts_at - (ends_at - starts_at)
     previous_created = [
         item for item in all_items if previous_starts_at <= _utc(item.created_at) < starts_at
     ]
     previous_closed = [
-        item for item in all_items
+        item
+        for item in all_items
         if item.closed_at and previous_starts_at <= _utc(item.closed_at) < starts_at
     ]
     volume_variation = _report_variation(len(created_items), len(previous_created))
@@ -2445,11 +2440,19 @@ def _staff_efficiency(
     def row(user_id):
         if not user_id or user_id in excluded_user_ids:
             return None
-        return stats.setdefault(user_id, {
-            "id": str(user_id), "nome": user_names.get(user_id, "Equipe"),
-            "demandas": 0, "resolvidas": 0, "noPrazo": 0,
-            "interacoes": 0, "tarefasConcluidas": 0, "horasResolucao": [],
-        })
+        return stats.setdefault(
+            user_id,
+            {
+                "id": str(user_id),
+                "nome": user_names.get(user_id, "Equipe"),
+                "demandas": 0,
+                "resolvidas": 0,
+                "noPrazo": 0,
+                "interacoes": 0,
+                "tarefasConcluidas": 0,
+                "horasResolucao": [],
+            },
+        )
 
     for item in items:
         responsible = row(item.responsible_id)
@@ -2482,35 +2485,46 @@ def _staff_efficiency(
             100,
         )
         score = round(resolution * 0.5 + on_time * 0.3 + activity * 0.2, 1)
-        result.append({
-            **{key: value for key, value in item.items() if key != "horasResolucao"},
-            "taxaResolucaoPercentual": resolution,
-            "cumprimentoPrazoPercentual": on_time,
-            "tempoMedioResolucaoHoras": (
-                round(sum(item["horasResolucao"]) / len(item["horasResolucao"]), 1)
-                if item["horasResolucao"] else None
-            ),
-            "score": score,
-        })
+        result.append(
+            {
+                **{key: value for key, value in item.items() if key != "horasResolucao"},
+                "taxaResolucaoPercentual": resolution,
+                "cumprimentoPrazoPercentual": on_time,
+                "tempoMedioResolucaoHoras": (
+                    round(sum(item["horasResolucao"]) / len(item["horasResolucao"]), 1)
+                    if item["horasResolucao"]
+                    else None
+                ),
+                "score": score,
+            }
+        )
     return sorted(result, key=lambda item: (-item["score"], item["nome"]))[:10]
 
 
 def _legislative_report_data(tenant_id, request_ids) -> dict:
     if not request_ids:
         return {"total": 0, "demandasComDocumento": 0, "porTipo": []}
-    links = list(db.session.execute(
-        select(LegislativeDraftRequest).where(
-            LegislativeDraftRequest.tenant_id == tenant_id,
-            LegislativeDraftRequest.request_id.in_(request_ids),
-        )
-    ).scalars())
+    links = list(
+        db.session.execute(
+            select(LegislativeDraftRequest).where(
+                LegislativeDraftRequest.tenant_id == tenant_id,
+                LegislativeDraftRequest.request_id.in_(request_ids),
+            )
+        ).scalars()
+    )
     draft_ids = {item.draft_id for item in links}
-    drafts = list(db.session.execute(
-        select(LegislativeDraft).where(
-            LegislativeDraft.tenant_id == tenant_id,
-            LegislativeDraft.id.in_(draft_ids),
+    drafts = (
+        list(
+            db.session.execute(
+                select(LegislativeDraft).where(
+                    LegislativeDraft.tenant_id == tenant_id,
+                    LegislativeDraft.id.in_(draft_ids),
+                )
+            ).scalars()
         )
-    ).scalars()) if draft_ids else []
+        if draft_ids
+        else []
+    )
     counter = Counter(item.document_type.value for item in drafts)
     return {
         "total": len(drafts),
@@ -2521,16 +2535,21 @@ def _legislative_report_data(tenant_id, request_ids) -> dict:
 
 def _generated_actions_data(tenant_id, items, starts_at, ends_at, forwarded) -> dict:
     tasks = [
-        task for item in items for task in item.tasks
+        task
+        for item in items
+        for task in item.tasks
         if starts_at <= _utc(task.created_at) < ends_at
     ]
     returns = [
-        scheduled for item in items for scheduled in item.scheduled_returns
+        scheduled
+        for item in items
+        for scheduled in item.scheduled_returns
         if starts_at <= _utc(scheduled.created_at) < ends_at
     ]
     request_ids = {str(item.id) for item in items}
     territorial = [
-        item for item in db.session.execute(
+        item
+        for item in db.session.execute(
             select(TerritorialAction).where(
                 TerritorialAction.tenant_id == tenant_id,
                 TerritorialAction.created_at >= starts_at,
@@ -2550,104 +2569,140 @@ def _generated_actions_data(tenant_id, items, starts_at, ends_at, forwarded) -> 
 
 def _executive_traffic_lights(overdue, unassigned, resolution, on_time, actions) -> list[dict]:
     result = []
-    result.append({
-        "nivel": "problema" if overdue >= 20 else "aviso" if overdue >= 10 else "positivo",
-        "titulo": "Demandas em atraso",
-        "descricao": f"{overdue:.1f}% das demandas movimentadas terminaram o período em atraso.",
-        "valor": f"{overdue:.1f}%",
-    })
-    result.append({
-        "nivel": "problema" if unassigned >= 15 else "aviso" if unassigned > 0 else "positivo",
-        "titulo": "Cobertura de responsáveis",
-        "descricao": f"{unassigned:.1f}% das demandas movimentadas estão sem responsável definido.",
-        "valor": f"{unassigned:.1f}%",
-    })
-    result.append({
-        "nivel": "positivo" if resolution >= 70 else "aviso" if resolution >= 45 else "problema",
-        "titulo": "Capacidade de resolução",
-        "descricao": (
-            f"O gabinete resolveu ou encerrou {resolution:.1f}% "
-            "das demandas movimentadas."
-        ),
-        "valor": f"{resolution:.1f}%",
-    })
-    result.append({
-        "nivel": "positivo" if on_time >= 80 else "aviso" if on_time >= 60 else "problema",
-        "titulo": "Cumprimento de prazo",
-        "descricao": f"{on_time:.1f}% das demandas concluídas respeitaram o prazo acordado.",
-        "valor": f"{on_time:.1f}%",
-    })
-    if actions:
-        result.append({
-            "nivel": "positivo",
-            "titulo": "Desdobramentos concretos",
+    result.append(
+        {
+            "nivel": "problema" if overdue >= 20 else "aviso" if overdue >= 10 else "positivo",
+            "titulo": "Demandas em atraso",
             "descricao": (
-                f"As demandas originaram {actions} ações, tarefas ou "
-                "encaminhamentos no período."
+                f"{overdue:.1f}% das demandas movimentadas terminaram o período em atraso."
             ),
-            "valor": str(actions),
-        })
+            "valor": f"{overdue:.1f}%",
+        }
+    )
+    result.append(
+        {
+            "nivel": "problema" if unassigned >= 15 else "aviso" if unassigned > 0 else "positivo",
+            "titulo": "Cobertura de responsáveis",
+            "descricao": (
+                f"{unassigned:.1f}% das demandas movimentadas estão sem responsável definido."
+            ),
+            "valor": f"{unassigned:.1f}%",
+        }
+    )
+    result.append(
+        {
+            "nivel": "positivo"
+            if resolution >= 70
+            else "aviso"
+            if resolution >= 45
+            else "problema",
+            "titulo": "Capacidade de resolução",
+            "descricao": (
+                f"O gabinete resolveu ou encerrou {resolution:.1f}% das demandas movimentadas."
+            ),
+            "valor": f"{resolution:.1f}%",
+        }
+    )
+    result.append(
+        {
+            "nivel": "positivo" if on_time >= 80 else "aviso" if on_time >= 60 else "problema",
+            "titulo": "Cumprimento de prazo",
+            "descricao": f"{on_time:.1f}% das demandas concluídas respeitaram o prazo acordado.",
+            "valor": f"{on_time:.1f}%",
+        }
+    )
+    if actions:
+        result.append(
+            {
+                "nivel": "positivo",
+                "titulo": "Desdobramentos concretos",
+                "descricao": (
+                    f"As demandas originaram {actions} ações, tarefas ou "
+                    "encaminhamentos no período."
+                ),
+                "valor": str(actions),
+            }
+        )
     return result
 
 
 def _executive_insights(
-    report_type, received, volume_variation, resolution, resolution_variation,
-    top_category, top_territory, top_citizen, peak_hour, actions, legislative,
+    report_type,
+    received,
+    volume_variation,
+    resolution,
+    resolution_variation,
+    top_category,
+    top_territory,
+    top_citizen,
+    peak_hour,
+    actions,
+    legislative,
 ) -> list[dict]:
-    insights = [{
-        "tom": "neutro",
-        "titulo": "Leitura do período",
-        "descricao": (
-            f"Foram recebidas {received} demandas, uma variação de "
-            f"{volume_variation:+.1f}% em relação ao período anterior equivalente."
-        ),
-    }]
+    insights = [
+        {
+            "tom": "neutro",
+            "titulo": "Leitura do período",
+            "descricao": (
+                f"Foram recebidas {received} demandas, uma variação de "
+                f"{volume_variation:+.1f}% em relação ao período anterior equivalente."
+            ),
+        }
+    ]
     if top_category:
-        insights.append({
-            "tom": "atencao",
-            "titulo": "Pauta dominante",
-            "descricao": (
-                f"{top_category[0][0]} liderou o período com "
-                f"{top_category[0][1]} demandas."
-            ),
-        })
+        insights.append(
+            {
+                "tom": "atencao",
+                "titulo": "Pauta dominante",
+                "descricao": (
+                    f"{top_category[0][0]} liderou o período com {top_category[0][1]} demandas."
+                ),
+            }
+        )
     if top_territory:
-        insights.append({
-            "tom": "territorio",
-            "titulo": "Pressão territorial",
-            "descricao": (
-                f"{top_territory[0][0]} concentrou {top_territory[0][1]} "
-                "demandas movimentadas."
-            ),
-        })
+        insights.append(
+            {
+                "tom": "territorio",
+                "titulo": "Pressão territorial",
+                "descricao": (
+                    f"{top_territory[0][0]} concentrou {top_territory[0][1]} demandas movimentadas."
+                ),
+            }
+        )
     if report_type == "INSIGHTS_MANDATO" and top_citizen:
-        insights.append({
-            "tom": "relacionamento",
-            "titulo": "Engajamento cidadão",
-            "descricao": (
-                f"{top_citizen['nome']} foi o cidadão mais atuante, com "
-                f"{top_citizen['total']} demandas no recorte."
-            ),
-        })
+        insights.append(
+            {
+                "tom": "relacionamento",
+                "titulo": "Engajamento cidadão",
+                "descricao": (
+                    f"{top_citizen['nome']} foi o cidadão mais atuante, com "
+                    f"{top_citizen['total']} demandas no recorte."
+                ),
+            }
+        )
     if peak_hour and peak_hour["total"]:
-        insights.append({
-            "tom": "operacao",
-            "titulo": "Pico de atendimento",
+        insights.append(
+            {
+                "tom": "operacao",
+                "titulo": "Pico de atendimento",
+                "descricao": (
+                    f"O maior volume de entradas ocorreu às {peak_hour['rotulo']}, "
+                    f"com {peak_hour['total']} registros."
+                ),
+            }
+        )
+    insights.append(
+        {
+            "tom": "resultado",
+            "titulo": "Entrega e mobilização",
             "descricao": (
-                f"O maior volume de entradas ocorreu às {peak_hour['rotulo']}, "
-                f"com {peak_hour['total']} registros."
+                f"Taxa de resolução de {resolution:.1f}% "
+                f"({resolution_variation:+.1f}% vs. período anterior), "
+                f"{actions['total']} ações derivadas e {legislative['total']} "
+                "documentos legislativos vinculados."
             ),
-        })
-    insights.append({
-        "tom": "resultado",
-        "titulo": "Entrega e mobilização",
-        "descricao": (
-            f"Taxa de resolução de {resolution:.1f}% "
-            f"({resolution_variation:+.1f}% vs. período anterior), "
-            f"{actions['total']} ações derivadas e {legislative['total']} "
-            "documentos legislativos vinculados."
-        ),
-    })
+        }
+    )
     return insights
 
 
@@ -2685,9 +2740,9 @@ def _monthly_highlights(
     territories = _private_counter(
         territory_names.get(item.territory_id, "Sem território") for item in items
     )["items"]
-    agencies = _private_counter(
-        agency_names.get(item.agency_id, "Sem órgão") for item in items
-    )["items"]
+    agencies = _private_counter(agency_names.get(item.agency_id, "Sem órgão") for item in items)[
+        "items"
+    ]
     highlights = []
     if categories:
         highlights.append(
@@ -2695,8 +2750,7 @@ def _monthly_highlights(
                 "tipo": "categoria",
                 "titulo": "Tema mais recorrente",
                 "descricao": (
-                    f"{categories[0]['nome']} concentrou "
-                    f"{categories[0]['total']} solicitações."
+                    f"{categories[0]['nome']} concentrou {categories[0]['total']} solicitações."
                 ),
             }
         )
@@ -2706,8 +2760,7 @@ def _monthly_highlights(
                 "tipo": "territorio",
                 "titulo": "Território com maior volume",
                 "descricao": (
-                    f"{territories[0]['nome']} concentrou "
-                    f"{territories[0]['total']} solicitações."
+                    f"{territories[0]['nome']} concentrou {territories[0]['total']} solicitações."
                 ),
             }
         )
@@ -2717,8 +2770,7 @@ def _monthly_highlights(
                 "tipo": "orgao",
                 "titulo": "Órgão mais acionado",
                 "descricao": (
-                    f"{agencies[0]['nome']} aparece em "
-                    f"{agencies[0]['total']} solicitações."
+                    f"{agencies[0]['nome']} aparece em {agencies[0]['total']} solicitações."
                 ),
             }
         )
@@ -2764,9 +2816,7 @@ def _monthly_evidence_events(
                 "tipo": "encerramento",
                 "data": _utc(item.closed_at).isoformat(),
                 "descricao": (
-                    item.closing_evidence
-                    or item.closing_reason
-                    or "Encerramento registrado."
+                    item.closing_evidence or item.closing_reason or "Encerramento registrado."
                 ),
             }
         )

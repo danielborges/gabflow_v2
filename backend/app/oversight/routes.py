@@ -74,10 +74,12 @@ def create_action():
             return jsonify(error="resource_not_found", message="Pendência não encontrada."), 404
         if _aware(agenda_event.ends_at or agenda_event.starts_at) > datetime.now(UTC):
             return _validation_error("O compromisso ainda não foi realizado.")
-        existing = db.session.execute(select(OversightAction).where(
-            OversightAction.tenant_id == tenant_id,
-            OversightAction.agenda_event_id == agenda_event.id,
-        )).scalar_one_or_none()
+        existing = db.session.execute(
+            select(OversightAction).where(
+                OversightAction.tenant_id == tenant_id,
+                OversightAction.agenda_event_id == agenda_event.id,
+            )
+        ).scalar_one_or_none()
         if existing:
             return jsonify(
                 error="conflict",
@@ -88,7 +90,9 @@ def create_action():
         payload.setdefault("descricao", agenda_event.description or "")
         payload.setdefault("local", agenda_event.location or "")
         payload.setdefault("realizadaEm", agenda_event.starts_at.isoformat())
-        payload.setdefault("solicitacaoId", str(agenda_event.request_id) if agenda_event.request_id else None)
+        payload.setdefault(
+            "solicitacaoId", str(agenda_event.request_id) if agenda_event.request_id else None
+        )
     try:
         values = _action_values(payload)
     except ValueError as error:
@@ -111,7 +115,12 @@ def create_action():
         _complete_agenda_event(agenda_event, tenant_id)
     data = action_data(item)
     add_audit(
-        tenant_id, user_id, "oversight.action.created", "oversight_action", item.id, after=data,
+        tenant_id,
+        user_id,
+        "oversight.action.created",
+        "oversight_action",
+        item.id,
+        after=data,
     )
     db.session.commit()
     return jsonify(data), 201
@@ -132,7 +141,9 @@ def update_action(action_id: uuid.UUID):
         except ValueError:
             return _validation_error("Status inválido.")
     for field_name, attr in (
-        ("titulo", "title"), ("descricao", "description"), ("local", "location"),
+        ("titulo", "title"),
+        ("descricao", "description"),
+        ("local", "location"),
         ("relatorio", "report"),
     ):
         if field_name in payload:
@@ -143,8 +154,10 @@ def update_action(action_id: uuid.UUID):
         except ValueError as error:
             return _validation_error(str(error))
     for field_name, attr in (
-        ("achados", "findings"), ("fotos", "photos"),
-        ("responsaveis", "responsible_parties"), ("providencias", "follow_up_actions"),
+        ("achados", "findings"),
+        ("fotos", "photos"),
+        ("responsaveis", "responsible_parties"),
+        ("providencias", "follow_up_actions"),
     ):
         if field_name in payload:
             try:
@@ -152,12 +165,15 @@ def update_action(action_id: uuid.UUID):
             except ValueError as error:
                 return _validation_error(str(error))
     if "orgaoId" in payload or "solicitacaoId" in payload:
-        relationships = _relationships({
-            "orgaoId": payload.get("orgaoId", str(item.agency_id) if item.agency_id else None),
-            "solicitacaoId": payload.get(
-                "solicitacaoId", str(item.request_id) if item.request_id else None
-            ),
-        }, tenant_id)
+        relationships = _relationships(
+            {
+                "orgaoId": payload.get("orgaoId", str(item.agency_id) if item.agency_id else None),
+                "solicitacaoId": payload.get(
+                    "solicitacaoId", str(item.request_id) if item.request_id else None
+                ),
+            },
+            tenant_id,
+        )
         if isinstance(relationships, tuple):
             return relationships
         item.agency_id = relationships["agency_id"]
@@ -170,8 +186,13 @@ def update_action(action_id: uuid.UUID):
             _complete_agenda_event(agenda_event, tenant_id)
     after = action_data(item)
     add_audit(
-        tenant_id, user_id, "oversight.action.updated", "oversight_action", item.id,
-        before, after,
+        tenant_id,
+        user_id,
+        "oversight.action.updated",
+        "oversight_action",
+        item.id,
+        before,
+        after,
     )
     db.session.commit()
     return jsonify(after)
@@ -209,7 +230,11 @@ def create_evidence(action_id: uuid.UUID):
     db.session.flush()
     data = evidence_data(item)
     add_audit(
-        tenant_id, user_id, "oversight.evidence.created", "oversight_evidence", item.id,
+        tenant_id,
+        user_id,
+        "oversight.evidence.created",
+        "oversight_evidence",
+        item.id,
         after=data,
     )
     db.session.commit()
@@ -230,8 +255,13 @@ def update_evidence(evidence_id: uuid.UUID):
     item.observation = str(payload.get("observacao", "")).strip()[:3000] or None
     after = evidence_data(item)
     add_audit(
-        tenant_id, user_id, "oversight.evidence.updated", "oversight_evidence", item.id,
-        before, after,
+        tenant_id,
+        user_id,
+        "oversight.evidence.updated",
+        "oversight_evidence",
+        item.id,
+        before,
+        after,
     )
     db.session.commit()
     return jsonify(after)
@@ -281,7 +311,9 @@ def action_report(action_id: uuid.UUID):
 
 def action_data(item: OversightAction) -> dict:
     service_request = db.session.get(ServiceRequest, item.request_id) if item.request_id else None
-    agenda_event = db.session.get(AgendaEvent, item.agenda_event_id) if item.agenda_event_id else None
+    agenda_event = (
+        db.session.get(AgendaEvent, item.agenda_event_id) if item.agenda_event_id else None
+    )
     return {
         "id": str(item.id),
         "status": item.status.value,
@@ -291,16 +323,24 @@ def action_data(item: OversightAction) -> dict:
         "realizadaEm": item.occurred_at.isoformat() if item.occurred_at else None,
         "orgaoId": str(item.agency_id) if item.agency_id else None,
         "solicitacaoId": str(item.request_id) if item.request_id else None,
-        "solicitacao": ({
-            "id": str(service_request.id),
-            "protocolo": service_request.protocol,
-            "titulo": service_request.title,
-        } if service_request else None),
+        "solicitacao": (
+            {
+                "id": str(service_request.id),
+                "protocolo": service_request.protocol,
+                "titulo": service_request.title,
+            }
+            if service_request
+            else None
+        ),
         "agendaEventoId": str(item.agenda_event_id) if item.agenda_event_id else None,
-        "agenda": ({
-            "inicio": agenda_event.starts_at.isoformat(),
-            "participantes": agenda_event.participants,
-        } if agenda_event else None),
+        "agenda": (
+            {
+                "inicio": agenda_event.starts_at.isoformat(),
+                "participantes": agenda_event.participants,
+            }
+            if agenda_event
+            else None
+        ),
         "achados": item.findings,
         "fotos": item.photos,
         "responsaveis": item.responsible_parties,
@@ -330,10 +370,14 @@ def evidence_data(item: OversightEvidence) -> dict:
 
 
 def _evidence_list(action: OversightAction) -> list[dict]:
-    items = db.session.execute(select(OversightEvidence).where(
-        OversightEvidence.tenant_id == action.tenant_id,
-        OversightEvidence.oversight_action_id == action.id,
-    ).order_by(OversightEvidence.created_at.desc())).scalars()
+    items = db.session.execute(
+        select(OversightEvidence)
+        .where(
+            OversightEvidence.tenant_id == action.tenant_id,
+            OversightEvidence.oversight_action_id == action.id,
+        )
+        .order_by(OversightEvidence.created_at.desc())
+    ).scalars()
     return [evidence_data(item) for item in items]
 
 
@@ -378,17 +422,21 @@ def _complete_agenda_event(event: AgendaEvent, tenant_id: uuid.UUID) -> None:
 
 
 def _action_or_none(action_id: uuid.UUID, tenant_id: uuid.UUID) -> OversightAction | None:
-    return db.session.execute(select(OversightAction).where(
-        OversightAction.id == action_id,
-        OversightAction.tenant_id == tenant_id,
-    )).scalar_one_or_none()
+    return db.session.execute(
+        select(OversightAction).where(
+            OversightAction.id == action_id,
+            OversightAction.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
 
 
 def _evidence_or_none(evidence_id: uuid.UUID, tenant_id: uuid.UUID) -> OversightEvidence | None:
-    return db.session.execute(select(OversightEvidence).where(
-        OversightEvidence.id == evidence_id,
-        OversightEvidence.tenant_id == tenant_id,
-    )).scalar_one_or_none()
+    return db.session.execute(
+        select(OversightEvidence).where(
+            OversightEvidence.id == evidence_id,
+            OversightEvidence.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
 
 
 def _agenda_event_or_none(value, tenant_id: uuid.UUID) -> AgendaEvent | None:
@@ -402,9 +450,12 @@ def _tenant_entity(model, value, tenant_id: uuid.UUID):
         entity_id = uuid.UUID(str(value))
     except (TypeError, ValueError):
         return None
-    return db.session.execute(select(model).where(
-        model.id == entity_id, model.tenant_id == tenant_id,
-    )).scalar_one_or_none()
+    return db.session.execute(
+        select(model).where(
+            model.id == entity_id,
+            model.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
 
 
 def _optional_datetime(value) -> datetime | None:

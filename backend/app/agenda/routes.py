@@ -7,8 +7,8 @@ from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select
 
-from app.audit import add_audit
 from app.agenda.exports import weekly_agenda_pdf
+from app.audit import add_audit
 from app.extensions import db
 from app.models import (
     AgendaEvent,
@@ -61,17 +61,24 @@ def list_events():
 def list_participants():
     tenant_id, _ = _context()
     users = db.session.execute(
-        select(User).where(
+        select(User)
+        .where(
             User.tenant_id == tenant_id,
             User.status == UserStatus.ACTIVE,
             User.role.in_({Role.ADMIN, Role.MANAGER, Role.STAFF}),
-        ).order_by(User.name)
+        )
+        .order_by(User.name)
     ).scalars()
-    return jsonify(content=[{
-        "id": str(item.id),
-        "nome": item.name,
-        "perfil": item.role.value,
-    } for item in users])
+    return jsonify(
+        content=[
+            {
+                "id": str(item.id),
+                "nome": item.name,
+                "perfil": item.role.value,
+            }
+            for item in users
+        ]
+    )
 
 
 @agenda_bp.get("/agenda/relatorio-semanal.pdf")
@@ -88,14 +95,18 @@ def weekly_report():
     week_start_date = reference_date - timedelta(days=reference_date.weekday())
     starts_at = datetime.combine(week_start_date, time.min, tzinfo=timezone)
     next_week = starts_at + timedelta(days=7)
-    events = list(db.session.execute(
-        select(AgendaEvent).where(
-            AgendaEvent.tenant_id == tenant_id,
-            AgendaEvent.starts_at >= starts_at,
-            AgendaEvent.starts_at < next_week,
-            AgendaEvent.status != AgendaEventStatus.CANCELADO,
-        ).order_by(AgendaEvent.starts_at)
-    ).scalars())
+    events = list(
+        db.session.execute(
+            select(AgendaEvent)
+            .where(
+                AgendaEvent.tenant_id == tenant_id,
+                AgendaEvent.starts_at >= starts_at,
+                AgendaEvent.starts_at < next_week,
+                AgendaEvent.status != AgendaEventStatus.CANCELADO,
+            )
+            .order_by(AgendaEvent.starts_at)
+        ).scalars()
+    )
     for event in events:
         db.session.expunge(event)
         event.starts_at = _aware(event.starts_at).astimezone(timezone)
@@ -494,14 +505,16 @@ def _participant_values(payload: dict, tenant_id: uuid.UUID) -> list:
             participant_ids.append(participant_id)
     if not participant_ids:
         return []
-    users = list(db.session.execute(
-        select(User).where(
-            User.tenant_id == tenant_id,
-            User.id.in_(participant_ids),
-            User.status == UserStatus.ACTIVE,
-            User.role.in_({Role.ADMIN, Role.MANAGER, Role.STAFF}),
-        )
-    ).scalars())
+    users = list(
+        db.session.execute(
+            select(User).where(
+                User.tenant_id == tenant_id,
+                User.id.in_(participant_ids),
+                User.status == UserStatus.ACTIVE,
+                User.role.in_({Role.ADMIN, Role.MANAGER, Role.STAFF}),
+            )
+        ).scalars()
+    )
     users_by_id = {item.id: item for item in users}
     if len(users_by_id) != len(participant_ids):
         raise ValueError("Um ou mais participantes não são funcionários ativos do gabinete.")
