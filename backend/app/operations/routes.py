@@ -1030,6 +1030,34 @@ def _territorial_dashboard(
         }
         for item in geocoded
     ]
+    review_priority = {"OUTSIDE_JURISDICTION": 0, "AMBIGUOUS": 1, "APPROXIMATE": 2}
+    review_items = sorted(
+        (
+            item for item in items
+            if _location_status(item) in review_priority
+        ),
+        key=lambda item: (
+            review_priority[_location_status(item)],
+            item.geocode_confidence if item.geocode_confidence is not None else -1,
+            item.updated_at,
+        ),
+    )
+    location_reviews = [
+        {
+            "id": str(item.id),
+            "protocolo": item.protocol,
+            "titulo": item.title,
+            "categoria": item.category,
+            "territorio": territory_names.get(item.territory_id, "Sem territÃ³rio"),
+            "territorioId": str(item.territory_id) if item.territory_id else None,
+            "status": _location_status(item),
+            "confianca": item.geocode_confidence,
+            "metodo": item.geocode_method,
+            "latitude": item.latitude,
+            "longitude": item.longitude,
+        }
+        for item in review_items[:20]
+    ] if can_view_points else []
     hotspots = sorted(
         territory_metrics.values(),
         key=lambda item: (item["abertas"], item["atrasadas"], item["total"]),
@@ -1088,6 +1116,11 @@ def _territorial_dashboard(
             "visualizacaoPontosPermitida": can_view_points,
         },
         "pontos": private_points[:200],
+        "revisoesLocalizacao": {
+            "total": len(review_items),
+            "content": location_reviews,
+            "detalhesTecnicosPermitidos": can_view_points,
+        },
         "hotspots": private_hotspots[:8],
         "heatmap": heatmap,
         "comparacao": comparison["resumo"],

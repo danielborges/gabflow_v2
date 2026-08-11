@@ -16,6 +16,7 @@ export function TerritorialMap({
   jurisdiction = null,
   selectedTerritoryId = null,
   onSelectTerritory,
+  onSelectFeature,
   expanded = false,
   fallback,
 }) {
@@ -28,6 +29,8 @@ export function TerritorialMap({
   const selectRef = useRef(onSelectTerritory);
   const [mapReady, setMapReady] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
+  const [mapDiagnostic, setMapDiagnostic] = useState("waiting");
+  const [overlay, setOverlay] = useState(null);
   const mapData = useMemo(
     () => buildMapData(cells, points, jurisdiction),
     [cells, points, jurisdiction],
@@ -42,6 +45,7 @@ export function TerritorialMap({
 
     let active = true;
     let map = null;
+    let stylePoll = null;
     async function initializeMap() {
       try {
         const maplibregl = await import("maplibre-gl");
@@ -51,31 +55,50 @@ export function TerritorialMap({
           style: geoapifyRasterStyle(apiKey),
           center: mapData.center,
           zoom: 11,
+          ...(mapData.bounds ? {
+            bounds: mapData.bounds,
+            fitBoundsOptions: { padding: 18, maxZoom: 13, duration: 0 },
+          } : {}),
           minZoom: 3,
           maxZoom: 20,
           attributionControl: true,
         });
         mapRef.current = map;
+        setMapDiagnostic("style-wait");
         map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
-        map.once("load", () => {
-          if (!active) return;
-          installOperationalLayers(map, mapData);
-          fitOperationalBounds(map, mapData.bounds);
-          setMapReady(true);
-        });
-        map.on("error", (event) => {
-          if (active && event?.error) setMapFailed(true);
-        });
-        map.on("click", (event) => {
-          const features = map.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYER_IDS });
-          const territoryId = features.find((feature) => feature.properties?.territorioId)?.properties?.territorioId;
-          if (territoryId) selectRef.current?.(territoryId);
-        });
-        map.on("mouseenter", INTERACTIVE_LAYER_IDS[0], () => { map.getCanvas().style.cursor = "pointer"; });
-        map.on("mouseleave", INTERACTIVE_LAYER_IDS[0], () => { map.getCanvas().style.cursor = ""; });
-        map.on("mouseenter", INTERACTIVE_LAYER_IDS[1], () => { map.getCanvas().style.cursor = "pointer"; });
-        map.on("mouseleave", INTERACTIVE_LAYER_IDS[1], () => { map.getCanvas().style.cursor = ""; });
+        let operationalLayersInstalled = false;
+        const installWhenStyleIsReady = () => {
+          if (!active || operationalLayersInstalled || !styleAcceptsOperationalLayers(map)) return;
+          operationalLayersInstalled = true;
+          try {
+            setMapDiagnostic("installing");
+            installOperationalLayers(map, mapData);
+            installOperationalInteractions(map, selectRef);
+            fitOperationalBounds(map, mapData.bounds);
+            const installedLayerCount = map.getStyle().layers
+              .filter((layer) => layer.id.startsWith("gabflow-")).length;
+            setMapDiagnostic(`ready:${installedLayerCount}:${mapData.heatmap.features.length}`);
+            const refreshOverlay = () => {
+              if (active) setOverlay(projectOperationalOverlay(map, mapData));
+            };
+            map.on("move", refreshOverlay);
+            map.on("resize", refreshOverlay);
+            refreshOverlay();
+            setMapReady(true);
+            if (stylePoll) window.clearInterval(stylePoll);
+            map.once("idle", () => {
+              if (active) fitOperationalBounds(map, mapData.bounds);
+            });
+          } catch (error) {
+            setMapDiagnostic(`layer-error:${error?.message || "unknown"}`);
+            setMapFailed(true);
+          }
+        };
+        map.on("styledata", installWhenStyleIsReady);
+        map.once("load", installWhenStyleIsReady);
+        stylePoll = window.setInterval(installWhenStyleIsReady, 100);
+        installWhenStyleIsReady();
       } catch {
         if (active) setMapFailed(true);
       }
@@ -84,8 +107,10 @@ export function TerritorialMap({
 
     return () => {
       active = false;
+      if (stylePoll) window.clearInterval(stylePoll);
       mapRef.current = null;
       setMapReady(false);
+      setOverlay(null);
       map?.remove();
     };
   }, [apiKey, enabled, mapData, mapFailed]);
@@ -114,12 +139,73 @@ export function TerritorialMap({
 
   return (
     <div className={`territorial-map territorial-map-interactive${expanded ? " expanded" : ""}`}>
-      <div
-        ref={containerRef}
-        className="territorial-map-canvas"
-        aria-label="Mapa interativo de calor territorial"
-        role="region"
-      />
+      <div className="territorial-map-stage">
+        <div
+          ref={containerRef}
+          className="territorial-map-canvas"
+          data-map-state={mapDiagnostic}
+          aria-label="Mapa interativo de calor territorial"
+          role="region"
+        />
+        {mapReady && overlay && (
+          <svg
+            className="territorial-map-operational-overlay"
+            data-testid="territorial-map-operational-overlay"
+            viewBox={`0 0 ${overlay.width} ${overlay.height}`}
+          >
+            <defs>
+              <radialGradient id="territorialOperationalHeat">
+                <stop offset="0%" stopColor="#ef4444" stopOpacity="0.88" />
+                <stop offset="42%" stopColor="#f97316" stopOpacity="0.68" />
+                <stop offset="75%" stopColor="#fb923c" stopOpacity="0.32" />
+                <stop offset="100%" stopColor="#fed7aa" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+            {!!overlay.boundaries.length && (
+              <path
+                className="territorial-map-outside-mask"
+                d={`M0 0H${overlay.width}V${overlay.height}H0Z ${overlay.boundaries.join(" ")}`}
+                fillRule="evenodd"
+              />
+            )}
+            {overlay.heat.map((item) => (
+              <circle
+                key={item.id}
+                className="territorial-map-overlay-heat"
+                role="button"
+                tabIndex="0"
+                aria-label={`Abrir concentração em ${item.properties.territorio}`}
+                cx={item.x}
+                cy={item.y}
+                r={24 + item.weight * 34}
+                onClick={() => onSelectFeature?.({ type: "concentration", ...item.properties })}
+                onKeyDown={(event) => {
+                  if (["Enter", " "].includes(event.key)) onSelectFeature?.({ type: "concentration", ...item.properties });
+                }}
+              />
+            ))}
+            {overlay.boundaries.map((path, index) => (
+              <path key={`boundary-${index}`} className="territorial-map-overlay-boundary" d={path} />
+            ))}
+            {overlay.points.map((item) => (
+              <circle
+                key={item.id}
+                className="territorial-map-overlay-point"
+                role="button"
+                tabIndex="0"
+                aria-label={`Abrir solicitação ${item.properties.protocolo}`}
+                cx={item.x}
+                cy={item.y}
+                r="4.5"
+                onClick={() => onSelectFeature?.({ type: "request", id: item.id, ...item.properties })}
+                onKeyDown={(event) => {
+                  if (["Enter", " "].includes(event.key)) onSelectFeature?.({ type: "request", id: item.id, ...item.properties });
+                }}
+              />
+            ))}
+          </svg>
+        )}
+      </div>
       <div className="territorial-map-legend" aria-label="Legenda do mapa">
         <span><i className="low" /> Menor concentração</span>
         <span><i className="high" /> Maior concentração</span>
@@ -131,7 +217,15 @@ export function TerritorialMap({
 
 function buildMapData(cells = [], points = [], jurisdiction = null) {
   const jurisdictionGeojson = normalizeJurisdictionGeojson(jurisdiction?.geojson);
-  const heatmap = featureCollection(cells.filter(hasCoordinates).map((item, index) => ({
+  const jurisdictionCoordinates = geometryCoordinates(jurisdictionGeojson);
+  const validCells = cells.filter((item) => (
+    hasCoordinates(item) && coordinateInsideJurisdiction(item, jurisdictionGeojson)
+  ));
+  const validPoints = points.filter((item) => (
+    hasCoordinates(item) && coordinateInsideJurisdiction(item, jurisdictionGeojson)
+  ));
+  const maximumTotal = Math.max(...validCells.map((item) => Number(item.total || 0)), 1);
+  const heatmap = featureCollection(validCells.map((item, index) => ({
     type: "Feature",
     id: `heat-${index}`,
     properties: {
@@ -139,10 +233,11 @@ function buildMapData(cells = [], points = [], jurisdiction = null) {
       territorioId: item.territorioId || "",
       total: Number(item.total || 0),
       abertas: Number(item.abertas || 0),
+      peso: Math.max(Number(item.total || 0) / maximumTotal, 0.25),
     },
     geometry: pointGeometry(item),
   })));
-  const requestPoints = featureCollection(points.filter(hasCoordinates).map((item, index) => ({
+  const requestPoints = featureCollection(validPoints.map((item, index) => ({
     type: "Feature",
     id: item.id || `request-${index}`,
     properties: {
@@ -165,11 +260,12 @@ function buildMapData(cells = [], points = [], jurisdiction = null) {
     geometry: pointGeometry(centerItem),
   }] : []);
   const coordinatePairs = [
-    ...geometryCoordinates(jurisdictionGeojson),
-    ...cells.filter(hasCoordinates).map((item) => [Number(item.longitude), Number(item.latitude)]),
-    ...points.filter(hasCoordinates).map((item) => [Number(item.longitude), Number(item.latitude)]),
+    ...jurisdictionCoordinates,
+    ...validCells.map((item) => [Number(item.longitude), Number(item.latitude)]),
+    ...validPoints.map((item) => [Number(item.longitude), Number(item.latitude)]),
   ];
   const configuredBounds = normalizeBounds(jurisdiction?.limites);
+  const jurisdictionBounds = boundsFromCoordinates(jurisdictionCoordinates);
 
   return {
     jurisdiction: jurisdictionGeojson,
@@ -177,7 +273,7 @@ function buildMapData(cells = [], points = [], jurisdiction = null) {
     points: requestPoints,
     center,
     centerPoint,
-    bounds: configuredBounds || boundsFromCoordinates(coordinatePairs),
+    bounds: jurisdictionBounds || configuredBounds || boundsFromCoordinates(coordinatePairs),
     hasCoordinates: coordinatePairs.length > 0 || Boolean(centerItem),
   };
 }
@@ -205,13 +301,16 @@ function installOperationalLayers(map, data) {
     id: "gabflow-jurisdiction-fill",
     type: "fill",
     source: SOURCE_IDS.jurisdiction,
-    paint: { "fill-color": "#17a9b8", "fill-opacity": 0.08 },
+    paint: { "fill-color": "#17a9b8", "fill-opacity": 0.04 },
   });
   map.addLayer({
     id: "gabflow-jurisdiction-line",
     type: "line",
     source: SOURCE_IDS.jurisdiction,
-    paint: { "line-color": "#168e9b", "line-width": 2.5 },
+    paint: {
+      "line-color": "#087f8c",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 13, 4],
+    },
   });
 
   map.addSource(SOURCE_IDS.heatmap, { type: "geojson", data: data.heatmap });
@@ -220,16 +319,16 @@ function installOperationalLayers(map, data) {
     type: "heatmap",
     source: SOURCE_IDS.heatmap,
     paint: {
-      "heatmap-weight": ["interpolate", ["linear"], ["get", "total"], 0, 0, 20, 1],
-      "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.7, 15, 1.8],
-      "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 18, 15, 42],
-      "heatmap-opacity": 0.72,
+      "heatmap-weight": ["get", "peso"],
+      "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.9, 15, 2.2],
+      "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 24, 15, 58],
+      "heatmap-opacity": 0.88,
       "heatmap-color": [
         "interpolate", ["linear"], ["heatmap-density"],
         0, "rgba(254, 215, 170, 0)",
-        0.3, "#fed7aa",
-        0.55, "#fb923c",
-        0.8, "#f97316",
+        0.18, "#fed7aa",
+        0.42, "#fb923c",
+        0.72, "#f97316",
         1, "#ef4444",
       ],
     },
@@ -241,6 +340,7 @@ function installOperationalLayers(map, data) {
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["get", "total"], 1, 5, 20, 12],
       "circle-color": "#ef4444",
+      "circle-opacity": 0.78,
       "circle-stroke-color": "#fff7ed",
       "circle-stroke-width": 2,
     },
@@ -285,13 +385,74 @@ function installOperationalLayers(map, data) {
   });
 }
 
+function styleAcceptsOperationalLayers(map) {
+  try {
+    return Boolean(map.getStyle()?.layers?.length);
+  } catch {
+    return false;
+  }
+}
+
+function installOperationalInteractions(map, selectRef) {
+  map.on("click", (event) => {
+    const features = map.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYER_IDS });
+    const territoryId = features.find((feature) => feature.properties?.territorioId)?.properties?.territorioId;
+    if (territoryId) selectRef.current?.(territoryId);
+  });
+  map.on("mouseenter", INTERACTIVE_LAYER_IDS[0], () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", INTERACTIVE_LAYER_IDS[0], () => { map.getCanvas().style.cursor = ""; });
+  map.on("mouseenter", INTERACTIVE_LAYER_IDS[1], () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", INTERACTIVE_LAYER_IDS[1], () => { map.getCanvas().style.cursor = ""; });
+}
+
+function projectOperationalOverlay(map, data) {
+  const canvas = map.getCanvas();
+  const width = canvas.clientWidth || canvas.width || 1;
+  const height = canvas.clientHeight || canvas.height || 1;
+  const projectFeature = (feature) => {
+    const projected = map.project(feature.geometry.coordinates);
+    return {
+      id: feature.id,
+      x: projected.x,
+      y: projected.y,
+      weight: Number(feature.properties?.peso || 0.25),
+      properties: feature.properties || {},
+    };
+  };
+  return {
+    width,
+    height,
+    boundaries: projectedJurisdictionPaths(map, data.jurisdiction),
+    heat: data.heatmap.features.map(projectFeature),
+    points: data.points.features.map(projectFeature),
+  };
+}
+
+function projectedJurisdictionPaths(map, geojson) {
+  const paths = [];
+  const addPolygon = (polygon) => polygon.forEach((ring) => {
+    const commands = ring.map((coordinates, index) => {
+      const point = map.project(coordinates);
+      return `${index ? "L" : "M"}${point.x} ${point.y}`;
+    });
+    if (commands.length) paths.push(`${commands.join(" ")}Z`);
+  });
+  geojson.features.forEach((feature) => {
+    const geometry = feature?.geometry;
+    if (geometry?.type === "Polygon") addPolygon(geometry.coordinates);
+    if (geometry?.type === "MultiPolygon") geometry.coordinates.forEach(addPolygon);
+  });
+  return paths;
+}
+
 function setSourceData(map, sourceId, data) {
   map.getSource(sourceId)?.setData(data);
 }
 
 function fitOperationalBounds(map, bounds) {
   if (!bounds) return;
-  map.fitBounds(bounds, { padding: 36, maxZoom: 15, duration: 0 });
+  map.resize();
+  map.fitBounds(bounds, { padding: 18, maxZoom: 13, duration: 0 });
 }
 
 function pointGeometry(item) {
@@ -322,6 +483,38 @@ function normalizeJurisdictionGeojson(value) {
     return featureCollection([{ type: "Feature", properties: {}, geometry: parsed }]);
   }
   return featureCollection();
+}
+
+function coordinateInsideJurisdiction(item, geojson) {
+  if (!geojson.features.length) return true;
+  const point = [Number(item.longitude), Number(item.latitude)];
+  return geojson.features.some((feature) => geometryContainsPoint(feature?.geometry, point));
+}
+
+function geometryContainsPoint(geometry, point) {
+  if (geometry?.type === "Polygon") return polygonContainsPoint(geometry.coordinates, point);
+  if (geometry?.type === "MultiPolygon") {
+    return geometry.coordinates.some((polygon) => polygonContainsPoint(polygon, point));
+  }
+  return false;
+}
+
+function polygonContainsPoint(rings, point) {
+  if (!rings?.length || !ringContainsPoint(rings[0], point)) return false;
+  return !rings.slice(1).some((ring) => ringContainsPoint(ring, point));
+}
+
+function ringContainsPoint(ring, [longitude, latitude]) {
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+    const [currentLongitude, currentLatitude] = ring[index];
+    const [previousLongitude, previousLatitude] = ring[previous];
+    const intersects = ((currentLatitude > latitude) !== (previousLatitude > latitude))
+      && longitude < ((previousLongitude - currentLongitude) * (latitude - currentLatitude))
+        / (previousLatitude - currentLatitude) + currentLongitude;
+    if (intersects) inside = !inside;
+  }
+  return inside;
 }
 
 function geometryCoordinates(geojson) {

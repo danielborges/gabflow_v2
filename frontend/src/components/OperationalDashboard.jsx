@@ -11,7 +11,6 @@ import {
   MapPin,
   MapPinned,
   MessageSquareReply,
-  Navigation,
   Repeat2,
   RotateCcw,
   ShieldCheck,
@@ -45,7 +44,7 @@ const defaultDashboardFilters = {
   granularidade: "dia",
 };
 
-export function OperationalDashboard({ user, onOpenRequests }) {
+export function OperationalDashboard({ user, onOpenRequests, onOpenRequest }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [geocoding, setGeocoding] = useState(false);
@@ -231,6 +230,7 @@ export function OperationalDashboard({ user, onOpenRequests }) {
             busy={geocoding}
             onGeocode={geocodePending}
             onInvestigate={investigateTerritory}
+            onOpenRequest={onOpenRequest}
           />
         </>
       )}
@@ -309,7 +309,7 @@ function TerritorialSavedViews({ items, name, error, onNameChange, onApply, onSa
   );
 }
 
-function TerritorialWorkspace({ user, data, busy, onGeocode, onInvestigate }) {
+function TerritorialWorkspace({ user, data, busy, onGeocode, onInvestigate, onOpenRequest }) {
   const rows = data.territorial?.tabelaTerritorial || emptyTerritorialRows;
   const [selectedId, setSelectedId] = useState(rows[0]?.id || null);
   const [sort, setSort] = useState({ key: "total", direction: "desc" });
@@ -377,6 +377,11 @@ function TerritorialWorkspace({ user, data, busy, onGeocode, onInvestigate }) {
           onGeocode={onGeocode}
           selectedTerritoryId={selectedId}
           onSelectTerritory={setSelectedId}
+          onOpenRequest={onOpenRequest}
+          onCreateTerritorialAction={(feature) => {
+            if (feature?.territorioId) setSelectedId(feature.territorioId);
+            setActionModalOpen(true);
+          }}
           expanded
         />
         <TerritorialTable
@@ -1000,17 +1005,24 @@ function DemandAlertList({ title, icon: Icon, empty, items, renderItem }) {
   );
 }
 
-function TerritorialPanel({ data, busy, onGeocode, selectedTerritoryId, onSelectTerritory, expanded = false }) {
+function TerritorialPanel({ data, busy, onGeocode, selectedTerritoryId, onSelectTerritory, onOpenRequest, onCreateTerritorialAction, expanded = false }) {
   const points = data?.pontos || [];
-  const hotspots = data?.hotspots || [];
   const heatmap = data?.heatmap || [];
   const jurisdiction = data?.jurisdicao;
   const privacy = data?.privacidade;
   const quality = data?.qualidadeDados || {};
+  const locationReviews = data?.revisoesLocalizacao || { total: 0, content: [], detalhesTecnicosPermitidos: false };
+  const [mapSelection, setMapSelection] = useState(null);
+  const selectedRequests = mapSelection?.type === "request"
+    ? points.filter((item) => item.id === mapSelection.id)
+    : points.filter((item) => (
+      mapSelection?.territorioId
+        ? item.territorioId === mapSelection.territorioId
+        : item.territorio === mapSelection?.territorio
+    )).slice(0, 8);
   const hasSuppressedTerritorialData = Boolean(
     privacy?.pontosSuprimidos || privacy?.hotspotsSuprimidos,
   );
-  const visibleLimit = expanded ? 8 : 4;
   return (
     <section className={`breakdown territorial-panel${expanded ? " territorial-panel-expanded" : ""}`}>
       <header>
@@ -1041,49 +1053,55 @@ function TerritorialPanel({ data, busy, onGeocode, selectedTerritoryId, onSelect
           <span>Dados territoriais com menos de {privacy.minimoPorGrupo} solicitações foram ocultados para evitar reidentificação.</span>
         </div>
       )}
-      <div className="territorial-hotspots">
-        <h3>Hotspots</h3>
-        {hotspots.length ? hotspots.slice(0, visibleLimit).map((item) => (
-          <div key={item.nome}>
-            <span>{item.nome}</span>
-            <strong>{item.abertas} abertas</strong>
-          </div>
-        )) : <p className="muted-copy">Sem agrupamentos territoriais.</p>}
-      </div>
       <div className="territorial-heatmap">
         <h3>Mapa de calor</h3>
-        <TerritorialHeatmapMap cells={heatmap} points={points} jurisdiction={jurisdiction} selectedTerritoryId={selectedTerritoryId} onSelectTerritory={onSelectTerritory} expanded={expanded} />
-        {heatmap.length ? heatmap.slice(0, visibleLimit).map((item) => (
-          <article key={`${item.territorio}-${item.latitude}-${item.longitude}`}>
-            <span>{item.territorio}</span>
-            <strong>{item.total} demanda(s)</strong>
-            <small>{Number(item.latitude).toFixed(4)}, {Number(item.longitude).toFixed(4)}</small>
-          </article>
-        )) : <p className="muted-copy">Sem células de calor calculadas.</p>}
+        <TerritorialHeatmapMap
+          cells={heatmap}
+          points={points}
+          jurisdiction={jurisdiction}
+          selectedTerritoryId={selectedTerritoryId}
+          onSelectTerritory={onSelectTerritory}
+          onSelectFeature={(feature) => {
+            setMapSelection(feature);
+            if (feature.territorioId) onSelectTerritory?.(feature.territorioId);
+          }}
+          expanded={expanded}
+        />
+        {mapSelection && <section className="territorial-map-selection" aria-label="Demandas selecionadas no mapa">
+          <header>
+            <div><h4>{mapSelection.type === "request" ? "Solicitação selecionada" : mapSelection.territorio || "Concentração selecionada"}</h4><p>{selectedRequests.length ? `${selectedRequests.length} demanda(s) autorizada(s) neste recorte` : "Dados individuais indisponíveis para este perfil"}</p></div>
+            <button className="icon-button" aria-label="Fechar seleção do mapa" onClick={() => setMapSelection(null)}>×</button>
+          </header>
+          {!!selectedRequests.length && <div className="territorial-map-request-list">{selectedRequests.map((request) => <article key={request.id}>
+            <span><strong>{request.protocolo}</strong><small>{request.categoria} · {statusLabels[request.status] || request.status}{request.atrasada ? " · Atrasada" : ""}</small></span>
+            <button className="secondary-button compact" onClick={() => onOpenRequest?.(request)}>Abrir solicitação</button>
+          </article>)}</div>}
+          <footer><button className="primary-button compact" disabled={!mapSelection.territorioId} onClick={() => onCreateTerritorialAction?.(mapSelection)}>Criar ação territorial</button></footer>
+        </section>}
+        {!heatmap.length && <p className="muted-copy">Sem células de calor calculadas.</p>}
       </div>
-      <div className="territorial-points">
-        <h3>Pontos geocodificados</h3>
-        {points.length ? points.slice(0, expanded ? 12 : 4).map((item) => (
-          <article key={item.id}>
-            <Navigation size={14} />
-            <span><strong>{item.protocolo}</strong><small>{item.territorio} · {coordinateLabel(item)}</small></span>
-          </article>
-        )) : <p className="muted-copy">
-          {privacy?.visualizacaoPontosPermitida === false
-            ? "Seu perfil visualiza apenas dados agregados por célula territorial."
-            : "Nenhuma solicitação em uma célula com agregação segura."}
-        </p>}
-      </div>
+      <section className="territorial-location-review">
+        <header><div><h3>Localizações que exigem revisão</h3><p>Registros ambíguos, fora da jurisdição ou com baixa precisão.</p></div><strong>{locationReviews.total || 0}</strong></header>
+        {locationReviews.detalhesTecnicosPermitidos ? (
+          locationReviews.content?.length ? <div className="territorial-location-review-list">
+            {locationReviews.content.slice(0, expanded ? 8 : 4).map((item) => <article key={item.id}>
+              <span><strong>{item.protocolo}</strong><small>{locationReviewLabel(item.status)} · {item.territorio}</small></span>
+              <button className="secondary-button compact" onClick={() => onOpenRequest?.(item)}>Revisar</button>
+              <details><summary>Detalhes técnicos</summary><p>{coordinateLabel(item)} · confiança {formatConfidence(item.confianca)} · {item.metodo || "método não informado"}</p></details>
+            </article>)}
+          </div> : <p className="muted-copy">Nenhuma localização pendente de revisão.</p>
+        ) : <p className="muted-copy">Detalhes individuais disponíveis somente para administradores e gestores responsáveis pela qualidade dos dados.</p>}
+      </section>
     </section>
   );
 }
 
-function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, expanded = false }) {
-  const mapProps = { cells, points, jurisdiction, selectedTerritoryId, onSelectTerritory, expanded };
+function TerritorialHeatmapMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, onSelectFeature, expanded = false }) {
+  const mapProps = { cells, points, jurisdiction, selectedTerritoryId, onSelectTerritory, onSelectFeature, expanded };
   return <TerritorialMap {...mapProps} fallback={<TerritorialFallbackMap {...mapProps} />} />;
 }
 
-function TerritorialFallbackMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, expanded = false }) {
+function TerritorialFallbackMap({ cells = [], points = [], jurisdiction = null, selectedTerritoryId = null, onSelectTerritory, onSelectFeature, expanded = false }) {
   const geojsonCoordinates = extractGeojsonCoordinates(jurisdiction?.geojson);
   const coordinates = [...cells, ...points].filter(hasCoordinates);
   const mapCoordinates = coordinates.length ? coordinates : geojsonCoordinates;
@@ -1142,9 +1160,15 @@ function TerritorialFallbackMap({ cells = [], points = [], jurisdiction = null, 
             className={item.territorioId === selectedTerritoryId ? "selected" : ""}
             role="button"
             tabIndex="0"
-            onClick={() => onSelectTerritory?.(item.territorioId || "sem-territorio")}
+            onClick={() => {
+              onSelectTerritory?.(item.territorioId || "sem-territorio");
+              onSelectFeature?.({ type: "concentration", ...item });
+            }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") onSelectTerritory?.(item.territorioId || "sem-territorio");
+              if (event.key === "Enter" || event.key === " ") {
+                onSelectTerritory?.(item.territorioId || "sem-territorio");
+                onSelectFeature?.({ type: "concentration", ...item });
+              }
             }}
           >
             <circle
@@ -1159,7 +1183,20 @@ function TerritorialFallbackMap({ cells = [], points = [], jurisdiction = null, 
           </g>
         ))}
         {projectedPoints.map((item) => (
-          <circle key={item.id || `${item.latitude}-${item.longitude}`} className="territorial-map-point" cx={item.x} cy={item.y} r="2.8">
+          <circle
+            key={item.id || `${item.latitude}-${item.longitude}`}
+            className="territorial-map-point"
+            role="button"
+            tabIndex="0"
+            aria-label={`Abrir solicitação ${item.protocolo}`}
+            cx={item.x}
+            cy={item.y}
+            r="3.8"
+            onClick={() => onSelectFeature?.({ type: "request", ...item })}
+            onKeyDown={(event) => {
+              if (["Enter", " "].includes(event.key)) onSelectFeature?.({ type: "request", ...item });
+            }}
+          >
             <title>{`${item.protocolo || item.territorio}: ${item.titulo || "Solicitação"}`}</title>
           </circle>
         ))}
@@ -1286,7 +1323,21 @@ function formatHours(value) {
 }
 
 function coordinateLabel(item) {
+  if (!hasCoordinates(item)) return "Sem coordenadas";
   return `${Number(item.latitude).toFixed(4)}, ${Number(item.longitude).toFixed(4)}`;
+}
+
+function locationReviewLabel(value) {
+  return {
+    APPROXIMATE: "Baixa precisão",
+    AMBIGUOUS: "Localização ambígua",
+    OUTSIDE_JURISDICTION: "Fora da jurisdição",
+  }[value] || value;
+}
+
+function formatConfidence(value) {
+  if (value === null || value === undefined) return "não informada";
+  return formatPercent(Number(value) * 100);
 }
 
 function hasCoordinates(item) {
