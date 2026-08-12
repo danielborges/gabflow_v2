@@ -1,5 +1,14 @@
 # 3. Arquitetura
 
+## Plano operacional do piloto
+
+O plano de dados continua recebendo webhooks e processando filas de forma assíncrona. O plano de controle adiciona um cockpit autenticado por tenant, gates de evidência e um interruptor de saída consultado no enfileiramento e no dispatch. Health e Prometheus expõem apenas agregados globais protegidos; o dashboard CloudWatch acompanha SQS e DLQ sem cardinalidade por cidadão ou tenant.
+
+Os ambientes de `staging` e `production` seguem o
+[`ADR-012`](../specs/adr/ADR-012-aws-production-platform.md). Para WhatsApp, API e workers
+executam no ECS, tokens ficam no AWS Secrets Manager com KMS e somente a referência opaca é
+persistida no PostgreSQL/RDS.
+
 ## Componentes
 
 - **Portal React:** onboarding, caixa de entrada, configuração e auditoria.
@@ -8,7 +17,8 @@
 - **Message Orchestrator:** máquina de estados, janela de atendimento e handoff.
 - **Meta Adapter:** Cloud API, mídia, templates, Flows e status.
 - **AI Gateway:** transcrição, extração, classificação, redaction e versionamento.
-- **Worker Queue:** processamento assíncrono, retries e dead-letter queue.
+- **Worker Queue:** Amazon SQS FIFO com agrupamento por conversa, retries e DLQ FIFO; inbox
+  PostgreSQL garante persistencia antes do ACK e reconciliacao cobre falha de publicacao.
 - **PostgreSQL:** estado transacional com isolamento por tenant.
 - **Object Storage:** anexos criptografados e URLs temporárias.
 - **Observability:** métricas, traces, logs e alertas.
@@ -65,6 +75,20 @@ Eventos inválidos não avançam estado. Cada transição registra ator, origem,
 - RAG consulta somente documentos autorizados do tenant e base pública aprovada.
 - PII é minimizada antes de provedores externos quando possível.
 - Guardar resultado, confiança, modelo, prompt version e revisão humana; não guardar raciocínio interno.
+
+## Pipeline de mídia do Incremento 6
+
+O evento normalizado cria a referência de mídia e um comando de download no outbox. Download,
+verificação, armazenamento criptografado e transcrição/OCR rodam em etapas independentes depois
+do ACK. Cada etapa tem retry e estado terminal próprio. A triagem assistiva consome apenas texto
+extraído e metadados aprovados para o tenant; falha de IA nunca altera a confirmação do protocolo.
+
+## Política de saída do Incremento 7
+
+Antes de enfileirar e novamente antes de enviar, o serviço valida tenant, integração ativa,
+opt-out, janela de 24 horas e aprovação/categoria do template. O outbox conserva idempotência e o
+webhook de status avança `QUEUED -> SENT -> DELIVERED -> READ`, sem regressão. Falhas permanentes
+ficam associadas à mensagem; destinatário e credenciais nunca são aceitos do frontend.
 
 ## Observabilidade mínima
 

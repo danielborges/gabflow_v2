@@ -34,6 +34,8 @@ parlamentares.
 - memória operacional versionada para solicitações, encaminhamentos, minutas,
   tramitações, conteúdo revisado, agenda, fiscalização e memórias temáticas;
 - roteamento documental, estruturado e híbrido, com avaliação por tenant.
+- canais WhatsApp com onboarding Meta, webhook idempotente, caixa de entrada 2.0, Flows,
+  mídia assistida, templates, opt-out, cockpit operacional e gates de piloto;
 
 ## Evolução do conhecimento operacional
 
@@ -142,3 +144,17 @@ Em produção, habilite TLS no proxy, configure `COOKIE_SECURE=true`, use um bac
 compartilhado para rate limiting e armazene segredos em um cofre. O Sentry não envia
 PII por padrão; configure `SENTRY_DSN` e `VITE_SENTRY_DSN` somente no deploy.
 Conecte também o pipeline de anexos a um scanner antimalware dedicado.
+
+A plataforma integral de produção foi definida como AWS no
+[`ADR-012`](docs/specs/adr/ADR-012-aws-production-platform.md). Docker Compose permanece voltado
+ao desenvolvimento local; `staging` e `production` usam infraestrutura Terraform, ECS, RDS,
+S3, CloudFront, Secrets Manager/KMS e CloudWatch.
+
+A fundação versionada está em [`infra/terraform`](infra/terraform/README.md), com organização de
+contas, state remoto, OIDC do GitHub, redes isoladas, KMS e Secrets Manager.
+
+O staging AWS foi implantado em 12/08/2026 com ECR, ECS Fargate, ALB/WAF, RDS, EFS, SQS/DLQ e
+CloudWatch. API, web e workers estão estáveis. O certificado ACM de
+`staging.gabflow.app` aguarda validação DNS no Cloudflare antes da ativação de HTTPS e da conexão
+do número Meta. Consulte o
+[`registro da implantação`](docs/implementation/AWS-staging-deployment-2026-08-12.md).

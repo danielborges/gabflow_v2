@@ -4,7 +4,11 @@ from flask import Blueprint, Response, current_app, jsonify, request
 from sqlalchemy import text
 
 from app.extensions import db
-from app.observability import prometheus_metrics, rag_pipeline_snapshot
+from app.observability import (
+    prometheus_metrics,
+    rag_pipeline_snapshot,
+    whatsapp_prometheus_metrics,
+)
 
 health_bp = Blueprint("health", __name__)
 
@@ -35,10 +39,23 @@ def rag_health():
 def metrics():
     if not _authorized_metrics_request():
         return Response(status=401)
+    from app.communications.whatsapp_pilot import operations_snapshot
+
     return Response(
-        prometheus_metrics(rag_pipeline_snapshot()),
+        prometheus_metrics(rag_pipeline_snapshot())
+        + whatsapp_prometheus_metrics(operations_snapshot(None)),
         content_type="text/plain; version=0.0.4; charset=utf-8",
     )
+
+
+@health_bp.get("/health/whatsapp")
+def whatsapp_health():
+    if not _authorized_metrics_request():
+        return jsonify(error="unauthorized", message="Token de metricas invalido."), 401
+    from app.communications.whatsapp_pilot import operations_snapshot
+
+    snapshot = operations_snapshot(None)
+    return jsonify(snapshot), 503 if snapshot["status"] == "PROBLEM" else 200
 
 
 def _authorized_metrics_request() -> bool:

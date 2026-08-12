@@ -8,6 +8,16 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /tenants/{tenantId}/whatsapp/readiness:
+    get:
+      operationId: getWhatsAppReadiness
+      description: Retorna somente o estado dos gates; nunca retorna IDs, tokens ou segredos configurados.
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '200':
+          description: Prontidao tecnica e externa do tenant autorizado
+          content: {application/json: {schema: {$ref: '#/components/schemas/Readiness'}}}
+        '404': {$ref: '#/components/responses/NotFound'}
   /tenants/{tenantId}/whatsapp/integration:
     get:
       operationId: getWhatsAppIntegration
@@ -38,7 +48,11 @@ paths:
         '201':
           description: Sessão criada
           content: {application/json: {schema: {$ref: '#/components/schemas/OnboardingSession'}}}
+        '200':
+          description: Repetição idempotente da mesma sessão ainda válida
+          content: {application/json: {schema: {$ref: '#/components/schemas/OnboardingSession'}}}
         '409': {description: Tenant já possui integração ou existe conflito}
+        '503': {description: Gates do Incremento 0 ainda não permitem onboarding}
   /tenants/{tenantId}/whatsapp/onboarding-callback:
     post:
       operationId: completeWhatsAppOnboarding
@@ -54,8 +68,13 @@ paths:
                 code: {type: string, maxLength: 4096}
                 state: {type: string, maxLength: 512}
       responses:
-        '202': {description: Validação e ativação iniciadas}
+        '202':
+          description: Ativos confirmados pela Meta e integração criada em PENDING
+          content: {application/json: {schema: {$ref: '#/components/schemas/Integration'}}}
         '400': {description: Callback inválido, expirado ou reutilizado}
+        '409': {description: Número ou integração conflitante}
+        '502': {description: Falha segura ao consultar a Meta}
+        '503': {description: Cofre de segredos indisponível}
   /tenants/{tenantId}/whatsapp/health:
     get:
       operationId: getWhatsAppHealth
@@ -64,6 +83,66 @@ paths:
         '200':
           description: Saúde sem segredos
           content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /tenants/{tenantId}/whatsapp/operations:
+    get:
+      operationId: getWhatsAppOperations
+      description: Métricas e semáforo do tenant autorizado, sem conteúdo de mensagens ou segredos.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: windowHours
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 720, default: 24}
+      responses:
+        '200': {description: Snapshot operacional, content: {application/json: {schema: {$ref: '#/components/schemas/OperationsSnapshot'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/whatsapp/pilot:
+    get:
+      operationId: getWhatsAppPilot
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '200': {description: Gate consolidado do piloto, content: {application/json: {schema: {$ref: '#/components/schemas/Pilot'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/whatsapp/pilot/gates/{gateKey}:
+    put:
+      operationId: reviewWhatsAppPilotGate
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: gateKey
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: {enum: [PENDING, PASSED, FAILED]}
+                evidenciaReferencia: {type: [string, 'null'], maxLength: 500}
+                observacao: {type: [string, 'null'], maxLength: 500}
+                expiraEm: {type: [string, 'null'], format: date-time}
+      responses:
+        '200': {description: Gate revisado, content: {application/json: {schema: {$ref: '#/components/schemas/Pilot'}}}}
+        '422': {description: Gate, status ou evidência inválida}
+  /tenants/{tenantId}/whatsapp/pilot/actions:
+    post:
+      operationId: changeWhatsAppPilotStatus
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {enum: [START, PAUSE, RESUME, COMPLETE]}
+                reason: {type: [string, 'null'], maxLength: 500}
+      responses:
+        '200': {description: Estado alterado, content: {application/json: {schema: {$ref: '#/components/schemas/Pilot'}}}}
+        '422': {description: Transição ou pré-condição inválida}
   /tenants/{tenantId}/conversations/{conversationId}/handoff:
     post:
       operationId: startHumanHandoff
@@ -80,6 +159,232 @@ paths:
                 reason: {type: string, maxLength: 500}
       responses:
         '200': {description: Conversa em modo humano}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Estado ou responsavel invalido}
+  /tenants/{tenantId}/conversations:
+    get:
+      operationId: listWhatsAppConversations
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - {name: estado, in: query, schema: {type: string}}
+        - {name: modo, in: query, schema: {enum: [BOT, HUMAN]}}
+        - {name: responsavelId, in: query, schema: {type: string}}
+        - {name: naoLidas, in: query, schema: {type: boolean}}
+        - {name: q, in: query, schema: {type: string, maxLength: 120}}
+      responses:
+        '200': {description: Caixa de entrada tenant-safe}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/conversations/{conversationId}:
+    get:
+      operationId: getWhatsAppConversation
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200': {description: Conversa com mensagens e transicoes}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/conversations/{conversationId}/read:
+    post:
+      operationId: markWhatsAppConversationRead
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200': {description: Conversa marcada como lida}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/conversations/{conversationId}/assignment:
+    put:
+      operationId: assignWhatsAppConversation
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                responsavelId: {type: [string, 'null'], format: uuid}
+      responses:
+        '200': {description: Responsavel atualizado}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Responsavel invalido ou fora do tenant}
+  /tenants/{tenantId}/conversations/{conversationId}/resume-bot:
+    post:
+      operationId: resumeWhatsAppConversationBot
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, maxLength: 500}
+      responses:
+        '200': {description: Automacao retomada explicitamente}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Conversa nao permite retomada}
+  /tenants/{tenantId}/conversations/{conversationId}/privacy:
+    post:
+      operationId: acknowledgeWhatsAppPrivacy
+      description: Registra base legal, versão do aviso e evidência minimizada antes da identificação.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseLegal]
+              properties:
+                baseLegal: {type: string, maxLength: 120}
+                consentimentoNecessario: {type: boolean, default: false}
+                concedido: {type: [boolean, 'null']}
+                mensagemEvidenciaId: {type: [string, 'null'], maxLength: 160}
+      responses:
+        '200': {description: Aviso reconhecido e conversa pronta para identificação}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Base, consentimento ou estado inválido}
+  /tenants/{tenantId}/conversations/{conversationId}/citizen:
+    post:
+      operationId: identifyWhatsAppCitizen
+      description: Vincula cadastro tenant-safe ou cria cadastro mínimo sem exigir CPF.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmado]
+              properties:
+                cidadaoId: {type: [string, 'null'], format: uuid}
+                nome: {type: [string, 'null'], minLength: 2, maxLength: 180}
+                confirmado: {const: true}
+      responses:
+        '200': {description: Cidadão existente vinculado}
+        '201': {description: Cadastro mínimo confirmado e criado}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Confirmação, estado ou cidadão inválido}
+  /tenants/{tenantId}/conversations/{conversationId}/request-draft:
+    put:
+      operationId: saveWhatsAppRequestDraft
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RequestDraft'}
+      responses:
+        '200': {description: Dados prontos para revisão explícita}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Dados, cidadão ou categoria inválida}
+  /tenants/{tenantId}/conversations/{conversationId}/request-draft/confirm:
+    post:
+      operationId: confirmWhatsAppRequestDraft
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 8, maxLength: 120}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmado]
+              properties:
+                confirmado: {const: true}
+      responses:
+        '201': {description: Solicitação criada com protocolo público não sequencial}
+        '200': {description: Repetição idempotente retorna a mesma solicitação}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Confirmação, estado ou chave inválida}
+  /tenants/{tenantId}/whatsapp/flows:
+    get:
+      operationId: listWhatsAppFlowDefinitions
+      description: Lista versoes do ambiente derivado pelo servidor; nunca aceita ambiente ou tenant do frontend como autoridade.
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '200':
+          description: Definicoes versionadas do tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content]
+                properties:
+                  content: {type: array, items: {$ref: '#/components/schemas/FlowDefinition'}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/whatsapp/flows/bootstrap:
+    post:
+      operationId: bootstrapWhatsAppFlows
+      description: Cria de forma idempotente a primeira versao dos tres Flows padrao. Exclusivo de administrador.
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '201': {description: Definicoes preparadas}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/whatsapp/flows/versions:
+    post:
+      operationId: createWhatsAppFlowVersion
+      description: Cria nova versao imutavel a partir do schema canonico. Exclusivo de administrador.
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chave]
+              properties:
+                chave: {enum: [citizen_registration, new_service_request, request_complement]}
+      responses:
+        '201': {description: Nova versao em rascunho, content: {application/json: {schema: {$ref: '#/components/schemas/FlowDefinition'}}}}
+        '422': {description: Chave invalida}
+  /tenants/{tenantId}/whatsapp/flows/{flowDefinitionId}/activate:
+    post:
+      operationId: activateWhatsAppFlowVersion
+      description: Associa o ID publicado na Meta e aposenta atomicamente a versao ativa anterior. Exclusivo de administrador.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/FlowDefinitionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metaFlowId]
+              properties:
+                metaFlowId: {type: string, minLength: 4, maxLength: 100}
+      responses:
+        '200': {description: Versao ativa, content: {application/json: {schema: {$ref: '#/components/schemas/FlowDefinition'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Versao ou ID invalido}
+  /tenants/{tenantId}/conversations/{conversationId}/flows/{flowKey}/launch:
+    post:
+      operationId: launchWhatsAppFlow
+      description: Cria sessao vinculada a conversa e versao ativa ou inicia coleta guiada quando o Flow estiver indisponivel.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+        - $ref: '#/components/parameters/FlowKey'
+      responses:
+        '202': {description: Ordem de envio do Flow registrada no outbox}
+        '200': {description: Fallback guiado iniciado sem perda da jornada}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Pre-requisito, estado ou Flow invalido}
   /webhooks/meta/whatsapp:
     get:
       security: []
@@ -100,32 +405,229 @@ paths:
       responses:
         '200': {description: Evento aceito ou duplicado}
         '401': {description: Autenticidade inválida}
+        '400': {description: Payload JSON invalido}
+        '413': {description: Payload excede o limite configurado}
+        '503': {description: Webhook ainda nao configurado}
+  /tenants/{tenantId}/whatsapp/media/{mediaAssetId}/download:
+    get:
+      operationId: downloadWhatsAppMedia
+      description: Entrega o arquivo verificado por URL assinada de curta duração e contexto autenticado do tenant.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/MediaAssetId'
+        - {name: token, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Conteúdo binário verificado}
+        '403': {description: Link inválido ou expirado}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /tenants/{tenantId}/whatsapp/media/{mediaAssetId}/review:
+    post:
+      operationId: reviewWhatsAppMediaAnalysis
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/MediaAssetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acao]
+              properties:
+                acao: {enum: [ACCEPT, EDIT, REJECT]}
+                texto: {type: [string, 'null'], maxLength: 20000}
+      responses:
+        '200': {description: Revisão registrada, content: {application/json: {schema: {$ref: '#/components/schemas/MediaAsset'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Análise não está pendente ou decisão inválida}
+  /tenants/{tenantId}/whatsapp/media/{mediaAssetId}/retry:
+    post:
+      operationId: retryWhatsAppMediaProcessing
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/MediaAssetId'
+      responses:
+        '202': {description: Reprocessamento enfileirado, content: {application/json: {schema: {$ref: '#/components/schemas/MediaAsset'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Estado atual não permite reprocessamento}
+  /tenants/{tenantId}/conversations/{conversationId}/messages:
+    post:
+      operationId: sendWhatsAppConversationMessage
+      description: Aplica opt-out, janela e política de template antes de enfileirar uma saída idempotente.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ConversationId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [texto]
+                  properties: {texto: {type: string, minLength: 1, maxLength: 4096}}
+                - type: object
+                  required: [templateId, parametros]
+                  properties:
+                    templateId: {type: string, format: uuid}
+                    parametros: {type: array, items: {type: string, maxLength: 1000}}
+      responses:
+        '202': {description: Mensagem enfileirada, content: {application/json: {schema: {$ref: '#/components/schemas/OutboundMessage'}}}}
+        '200': {description: Repetição idempotente}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {description: Política de janela, template ou opt-out bloqueou a saída}
+  /tenants/{tenantId}/whatsapp/templates:
+    get:
+      operationId: listWhatsAppMessageTemplates
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      responses:
+        '200': {description: Versões de templates do tenant autorizado}
+    post:
+      operationId: createWhatsAppMessageTemplate
+      parameters: [{$ref: '#/components/parameters/TenantId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, idioma, categoria, conteudo]
+              properties:
+                nome: {type: string, pattern: '^[a-z0-9_]{1,160}$'}
+                idioma: {type: string, maxLength: 20}
+                categoria: {enum: [UTILITY, AUTHENTICATION]}
+                conteudo: {type: string, maxLength: 4096}
+                variaveis: {type: array, items: {type: string, maxLength: 80}}
+      responses:
+        '202': {description: Versão criada e sincronização enfileirada, content: {application/json: {schema: {$ref: '#/components/schemas/WhatsAppTemplate'}}}}
+        '422': {description: Template ou integração inválidos}
+  /tenants/{tenantId}/whatsapp/templates/{templateId}/refresh:
+    post:
+      operationId: refreshWhatsAppMessageTemplate
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '202': {description: Atualização do status na Meta enfileirada}
+        '404': {$ref: '#/components/responses/NotFound'}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
   parameters:
     TenantId: {name: tenantId, in: path, required: true, schema: {type: string, format: uuid}}
     ConversationId: {name: conversationId, in: path, required: true, schema: {type: string, format: uuid}}
+    MediaAssetId: {name: mediaAssetId, in: path, required: true, schema: {type: string, format: uuid}}
+    TemplateId: {name: templateId, in: path, required: true, schema: {type: string, format: uuid}}
+    FlowDefinitionId: {name: flowDefinitionId, in: path, required: true, schema: {type: string, format: uuid}}
+    FlowKey: {name: flowKey, in: path, required: true, schema: {enum: [citizen_registration, new_service_request, request_complement]}}
   responses:
     NotFound: {description: Recurso não encontrado no tenant autorizado}
   schemas:
+    OutboundMessage:
+      type: object
+      required: [id, status, tipo, decisaoPolitica, criadaEm]
+      properties:
+        id: {type: string, format: uuid}
+        status: {enum: [QUEUED, SENT, DELIVERED, READ, FAILED]}
+        tipo: {enum: [text, template]}
+        conteudo: {type: [string, 'null']}
+        decisaoPolitica: {enum: [FREE_TEXT_WINDOW_OPEN, APPROVED_TEMPLATE, OPT_OUT_CONFIRMATION]}
+        templateId: {type: [string, 'null'], format: uuid}
+        criadaEm: {type: string, format: date-time}
+        erro: {type: [string, 'null']}
+    WhatsAppTemplate:
+      type: object
+      required: [id, nome, idioma, categoria, status, versao, conteudo, variaveis, ativa]
+      properties:
+        id: {type: string, format: uuid}
+        nome: {type: string}
+        idioma: {type: string}
+        categoria: {enum: [UTILITY, AUTHENTICATION, MARKETING]}
+        status: {enum: [DRAFT, PENDING, APPROVED, REJECTED, PAUSED, DISABLED]}
+        versao: {type: integer, minimum: 1}
+        conteudo: {type: string}
+        variaveis: {type: array, items: {type: string}}
+        metaTemplateId: {type: [string, 'null']}
+        motivoRejeicao: {type: [string, 'null']}
+        ativa: {type: boolean}
+        sincronizadaEm: {type: [string, 'null'], format: date-time}
+    MediaAsset:
+      type: object
+      required: [id, messageId, tipo, status, analise, criadaEm]
+      properties:
+        id: {type: string, format: uuid}
+        messageId: {type: string, format: uuid}
+        tipo: {enum: [audio, image, document, video, sticker]}
+        nome: {type: [string, 'null']}
+        mimeType: {type: [string, 'null']}
+        tamanho: {type: [integer, 'null'], minimum: 0}
+        status: {enum: [RECEIVED, DOWNLOADING, READY, BLOCKED, FAILED]}
+        statusVerificacao: {type: [string, 'null']}
+        solicitacaoId: {type: [string, 'null'], format: uuid}
+        downloadUrl: {type: [string, 'null'], writeOnly: true}
+        criadaEm: {type: string, format: date-time}
+        analise:
+          type: object
+          properties:
+            tipo: {type: [string, 'null'], enum: [TRANSCRIPTION, OCR, null]}
+            status: {enum: [PENDING, PROCESSING, COMPLETED, FAILED, NOT_APPLICABLE]}
+            provedor: {type: [string, 'null']}
+            modelo: {type: [string, 'null']}
+            versaoPrompt: {type: [string, 'null']}
+            confianca: {type: [number, 'null'], minimum: 0, maximum: 1}
+            textoGerado: {type: [string, 'null']}
+            textoRevisado: {type: [string, 'null']}
+            statusRevisao: {enum: [PENDING, ACCEPTED, EDITED, REJECTED, NOT_REQUIRED]}
+    RequestDraft:
+      type: object
+      required: [descricao]
+      properties:
+        titulo: {type: [string, 'null'], maxLength: 180}
+        descricao: {type: string, minLength: 3}
+        endereco: {type: [string, 'null'], maxLength: 500}
+        categoriaId: {type: [string, 'null'], format: uuid}
+        urgencia: {type: [string, 'null'], enum: [BAIXO, MEDIO, ALTO, CRITICO, null]}
+    FlowDefinition:
+      type: object
+      required: [id, chave, nome, versao, ambiente, status, schemaHash, telas, criadaEm]
+      properties:
+        id: {type: string, format: uuid}
+        chave: {enum: [citizen_registration, new_service_request, request_complement]}
+        nome: {type: string}
+        versao: {type: integer, minimum: 1}
+        ambiente: {enum: [SANDBOX, STAGING, PRODUCTION]}
+        status: {enum: [DRAFT, ACTIVE, RETIRED]}
+        metaFlowId: {type: [string, 'null']}
+        schemaHash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        telas: {type: array, items: {type: string}}
+        ativadaEm: {type: [string, 'null'], format: date-time}
+        criadaEm: {type: string, format: date-time}
     Integration:
       type: object
-      required: [id, tenantId, status]
+      required: [id, tenantId, status, version, webhookSubscribed]
       properties:
         id: {type: string, format: uuid}
         tenantId: {type: string, format: uuid}
         status: {enum: [PENDING, ACTIVE, DEGRADED, SUSPENDED, DISCONNECTED, REVOKED]}
+        version: {type: integer, minimum: 1}
         displayPhone: {type: [string, 'null']}
         displayName: {type: [string, 'null']}
         connectedAt: {type: [string, 'null'], format: date-time}
+        disconnectedAt: {type: [string, 'null'], format: date-time}
+        webhookSubscribed: {type: boolean}
     OnboardingSession:
       type: object
-      required: [state, expiresAt, configurationId]
+      required: [state, expiresAt, appId, configurationId, graphApiVersion]
       properties:
         state: {type: string}
         expiresAt: {type: string, format: date-time}
+        appId: {type: string}
         configurationId: {type: string}
+        graphApiVersion: {type: string, pattern: '^v[0-9]+\.[0-9]+$'}
     Health:
       type: object
       required: [status, webhook, messaging]
@@ -136,3 +638,74 @@ components:
         lastInboundAt: {type: [string, 'null'], format: date-time}
         lastOutboundAt: {type: [string, 'null'], format: date-time}
         issues: {type: array, items: {type: string}}
+        operation: {$ref: '#/components/schemas/OperationsSnapshot'}
+    OperationsSnapshot:
+      type: object
+      required: [status, windowHours, generatedAt, inbound, outbox, outbound, operation, slo, alerts]
+      properties:
+        status: {enum: [GOOD, WARNING, PROBLEM]}
+        windowHours: {type: integer, minimum: 1, maximum: 720}
+        generatedAt: {type: string, format: date-time}
+        inbound: {type: object, additionalProperties: true}
+        outbox: {type: object, additionalProperties: true}
+        outbound: {type: object, additionalProperties: true}
+        operation: {type: object, additionalProperties: true}
+        slo: {type: object, additionalProperties: true}
+        alerts:
+          type: array
+          items:
+            type: object
+            required: [nivel, codigo, titulo, valor]
+            properties:
+              nivel: {enum: [GOOD, WARNING, PROBLEM]}
+              codigo: {type: string}
+              titulo: {type: string}
+              valor: {}
+    Pilot:
+      type: object
+      required: [status, saidasPausadas, prontoExterno, prontoInterno, prontoOperacional, podeIniciar, gates, operacao]
+      properties:
+        status: {enum: [DRAFT, READY, RUNNING, PAUSED, COMPLETED]}
+        saidasPausadas: {type: boolean}
+        motivoPausa: {type: [string, 'null']}
+        prontoExterno: {type: boolean}
+        prontoInterno: {type: boolean}
+        prontoOperacional: {type: boolean}
+        podeIniciar: {type: boolean}
+        gates:
+          type: array
+          items:
+            type: object
+            required: [key, titulo, status, expirada]
+            properties:
+              key: {type: string}
+              titulo: {type: string}
+              status: {enum: [PENDING, PASSED, FAILED]}
+              evidenciaReferencia: {type: [string, 'null']}
+              evidenciaHash: {type: [string, 'null'], pattern: '^[a-f0-9]{64}$'}
+              expirada: {type: boolean}
+        operacao: {$ref: '#/components/schemas/OperationsSnapshot'}
+    Readiness:
+      type: object
+      required: [incremento, ambiente, estagio, plataformaHabilitada, tenantHabilitado, prontoSandbox, prontoPiloto, pendencias, verificacoes]
+      properties:
+        incremento: {const: 0}
+        ambiente: {type: string}
+        estagio: {enum: [disabled, sandbox, pilot, ga]}
+        plataformaHabilitada: {type: boolean}
+        embeddedSignupHabilitado: {type: boolean}
+        tenantHabilitado: {type: boolean}
+        prontoSandbox: {type: boolean}
+        prontoPiloto: {type: boolean}
+        pendencias: {type: array, items: {type: string}}
+        verificacoes:
+          type: array
+          items:
+            type: object
+            required: [key, titulo, ok, gate]
+            properties:
+              key: {type: string}
+              titulo: {type: string}
+              ok: {type: boolean}
+              gate: {enum: [technical, pilot]}
+              detalhe: {type: string}

@@ -40,6 +40,7 @@ from app.models import (
     OutboxEvent,
     RequestCategory,
     ServiceRequest,
+    WhatsAppMediaAsset,
 )
 from app.notifications.service import notify_user
 
@@ -314,9 +315,17 @@ def execute_triage(execution: AIExecution) -> None:
     execution.started_at = datetime.now(UTC)
     db.session.flush()
     started = time.perf_counter()
+    media_context, media_sources = _whatsapp_media_context(service_request)
     triage_input = TriageInput(
         title=service_request.title or "",
-        description=service_request.description,
+        description=(
+            service_request.description
+            if not media_context
+            else (
+                f"{service_request.description}\n\n"
+                f"Evidências recebidas por WhatsApp:\n{media_context}"
+            )
+        ),
         categories=categories,
         agencies=agencies,
     )
@@ -359,6 +368,7 @@ def execute_triage(execution: AIExecution) -> None:
         "analiseDuplicidade": duplicates,
         "revisaoHumanaObrigatoria": True,
         "fallbackUtilizado": used_fallback,
+        "fontesMidia": media_sources,
     }
     execution.confidence = result.confidence
     execution.latency_ms = max(1, round((time.perf_counter() - started) * 1000))
@@ -388,6 +398,38 @@ def execute_triage(execution: AIExecution) -> None:
         "ai_execution",
         execution.id,
     )
+
+
+def _whatsapp_media_context(service_request: ServiceRequest) -> tuple[str, list[dict]]:
+    assets = list(
+        db.session.scalars(
+            select(WhatsAppMediaAsset)
+            .where(
+                WhatsAppMediaAsset.tenant_id == service_request.tenant_id,
+                WhatsAppMediaAsset.request_id == service_request.id,
+                WhatsAppMediaAsset.analysis_status == "COMPLETED",
+                WhatsAppMediaAsset.review_status != "REJECTED",
+            )
+            .order_by(WhatsAppMediaAsset.created_at)
+            .limit(10)
+        )
+    )
+    sources = []
+    chunks = []
+    for item in assets:
+        text = (item.reviewed_text or item.generated_text or "").strip()
+        if not text:
+            continue
+        chunks.append(f"[{item.analysis_type}] {text[:2500]}")
+        sources.append(
+            {
+                "id": str(item.id),
+                "tipo": item.analysis_type,
+                "statusRevisao": item.review_status,
+                "confianca": item.confidence,
+            }
+        )
+    return "\n".join(chunks)[:10000], sources
 
 
 def execution_data(execution: AIExecution | None) -> dict | None:

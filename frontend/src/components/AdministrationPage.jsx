@@ -64,7 +64,7 @@ const initialForm = {
   categoriaId: "",
   assunto: "",
   conteudo: "",
-  tipoIntegracao: "WHATSAPP",
+  tipoIntegracao: "EMAIL",
   statusIntegracao: "RASCUNHO",
   configuracao: "",
   segredo: "",
@@ -142,7 +142,7 @@ const weekdays = [
   ["dom", "Dom"],
 ];
 
-export function AdministrationPage() {
+export function AdministrationPage({ user = null }) {
   const [active, setActive] = useState("office");
   const [auditPage, setAuditPage] = useState(1);
   const [auditPerPage, setAuditPerPage] = useState(10);
@@ -553,7 +553,7 @@ export function AdministrationPage() {
     integrations: ["Nova integração", "Configure canais e sistemas externos autorizados.", PlugZap],
   };
   const [title, description, Icon] = labels[active] || [];
-  const wideLayout = ["audit", "office", "parliamentarian", "rag-quality"].includes(active);
+  const wideLayout = ["audit", "office", "parliamentarian", "rag-quality", "integrations"].includes(active);
 
   return <>
     <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuração administrativa</h1><p>Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna.</p></div></section>
@@ -647,6 +647,12 @@ export function AdministrationPage() {
         />
       )}
       {active === "rag-quality" && <RagQualityRolloutSettings />}
+      {active === "integrations" && <>
+        <WhatsAppMetaOnboarding tenantId={user?.tenant?.id} />
+        <WhatsAppFlowsManager tenantId={user?.tenant?.id} canManage={user?.role === "admin"} />
+        <WhatsAppTemplatesManager tenantId={user?.tenant?.id} canCreate={user?.role === "admin"} />
+        <WhatsAppPilotOperations tenantId={user?.tenant?.id} canManage={user?.role === "admin"} />
+      </>}
       {!["office", "parliamentarian", "users", "territories", "agencies", "templates", "audit", "rag-quality"].includes(active) && <>
         <form className="settings-form" onSubmit={submit}>
           <div className="settings-title"><Settings2 size={21} /><div><strong>{title}</strong><small>{description}</small></div></div>
@@ -665,7 +671,6 @@ export function AdministrationPage() {
           {active === "integrations" && <>
             <div className="form-grid">
               <label>Tipo<select value={form.tipoIntegracao} onChange={(event) => setForm((current) => ({ ...current, tipoIntegracao: event.target.value }))}>
-                <option value="WHATSAPP">WhatsApp Business</option>
                 <option value="EMAIL">E-mail</option>
                 <option value="FORMULARIO_PUBLICO">Formulário público</option>
                 <option value="REDE_SOCIAL">Rede social</option>
@@ -690,6 +695,362 @@ export function AdministrationPage() {
       </>}
     </section>
   </>;
+}
+
+let facebookSdkPromise;
+
+function loadFacebookSdk(appId, version) {
+  if (window.FB) {
+    window.FB.init({ appId, cookie: true, xfbml: false, version });
+    return Promise.resolve(window.FB);
+  }
+  if (!facebookSdkPromise) {
+    facebookSdkPromise = new Promise((resolve, reject) => {
+      const previousInitializer = window.fbAsyncInit;
+      window.fbAsyncInit = () => {
+        previousInitializer?.();
+        if (!window.FB) {
+          reject(new Error("O SDK da Meta não foi carregado."));
+          return;
+        }
+        window.FB.init({ appId, cookie: true, xfbml: false, version });
+        resolve(window.FB);
+      };
+      const existing = document.getElementById("facebook-jssdk");
+      if (existing) return;
+      const script = document.createElement("script");
+      script.id = "facebook-jssdk";
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = "anonymous";
+      script.src = "https://connect.facebook.net/pt_BR/sdk.js";
+      script.onerror = () => reject(new Error("Não foi possível carregar o SDK da Meta."));
+      document.head.appendChild(script);
+    });
+  }
+  return facebookSdkPromise;
+}
+
+function openEmbeddedSignup(facebook, configurationId) {
+  return new Promise((resolve, reject) => {
+    facebook.login(
+      (response) => {
+        const code = response?.authResponse?.code;
+        if (code) resolve(code);
+        else reject(new Error("A conexão com a Meta foi cancelada ou não autorizada."));
+      },
+      {
+        config_id: configurationId,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: { setup: {} },
+      },
+    );
+  });
+}
+
+function onboardingIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `whatsapp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function WhatsAppMetaOnboarding({ tenantId }) {
+  const [readiness, setReadiness] = useState(null);
+  const [integration, setIntegration] = useState(null);
+  const [loading, setLoading] = useState(Boolean(tenantId));
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    if (!tenantId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const readinessResult = await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/readiness`);
+      const integrationResult = await apiRequest(
+        `/api/v1/tenants/${tenantId}/whatsapp/integration`,
+      ).catch((requestError) => {
+        if (requestError.status === 404) return null;
+        throw requestError;
+      });
+      setReadiness(readinessResult);
+      setIntegration(integrationResult);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function connect() {
+    setConnecting(true);
+    setError("");
+    try {
+      const session = await apiRequest(
+        `/api/v1/tenants/${tenantId}/whatsapp/onboarding-sessions`,
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": onboardingIdempotencyKey() },
+        },
+      );
+      const facebook = await loadFacebookSdk(session.appId, session.graphApiVersion);
+      const code = await openEmbeddedSignup(facebook, session.configurationId);
+      const result = await apiRequest(
+        `/api/v1/tenants/${tenantId}/whatsapp/onboarding-callback`,
+        { method: "POST", body: JSON.stringify({ code, state: session.state }) },
+      );
+      setIntegration(result);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  if (!tenantId) return null;
+  const blockedByIntegration = integration && !["DISCONNECTED", "REVOKED"].includes(integration.status);
+  const canConnect = readiness?.prontoSandbox && readiness?.embeddedSignupHabilitado && !blockedByIntegration;
+  const statusLabel = {
+    PENDING: "Aguardando teste de saúde",
+    ACTIVE: "Conectado",
+    DEGRADED: "Conexão degradada",
+    SUSPENDED: "Suspenso",
+    DISCONNECTED: "Desconectado",
+    REVOKED: "Acesso revogado",
+  }[integration?.status];
+
+  return (
+    <section className="whatsapp-onboarding-card" aria-labelledby="whatsapp-onboarding-title">
+      <header>
+        <div className="whatsapp-onboarding-icon"><PlugZap size={22} /></div>
+        <div>
+          <p className="eyebrow">Canal oficial</p>
+          <h2 id="whatsapp-onboarding-title">WhatsApp Business Platform</h2>
+          <p>Conecte a conta do gabinete pelo fluxo seguro e oficial da Meta.</p>
+        </div>
+        {statusLabel && <span className={`whatsapp-status whatsapp-status-${integration.status.toLowerCase()}`}>{statusLabel}</span>}
+      </header>
+      {loading ? <div className="table-message">Verificando disponibilidade...</div> : <>
+        {integration && <div className="whatsapp-connected-summary">
+          <strong>{integration.displayName || "Conta WhatsApp do gabinete"}</strong>
+          <span>{integration.displayPhone || "Número confirmado pela Meta"} · versão {integration.version}</span>
+        </div>}
+        {!integration && readiness && <div className="whatsapp-readiness-list">
+          <span className={readiness.prontoSandbox ? "ready" : "pending"}><ShieldCheck size={17} /> Ambiente técnico {readiness.prontoSandbox ? "pronto" : "pendente"}</span>
+          <span className={readiness.embeddedSignupHabilitado ? "ready" : "pending"}><ShieldCheck size={17} /> Embedded Signup {readiness.embeddedSignupHabilitado ? "habilitado" : "indisponível"}</span>
+        </div>}
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-actions">
+          <button className="primary-button compact" type="button" disabled={!canConnect || connecting} onClick={connect}>
+            <PlugZap size={18} /> {connecting ? "Conectando..." : "Conectar com a Meta"}
+          </button>
+        </div>
+        {!canConnect && !blockedByIntegration && readiness?.pendencias?.length > 0 && (
+          <small className="template-help">Liberação pendente: {readiness.pendencias.join(", ")}.</small>
+        )}
+      </>}
+    </section>
+  );
+}
+
+export function WhatsAppFlowsManager({ tenantId, canManage = false }) {
+  const [flows, setFlows] = useState([]);
+  const [metaIds, setMetaIds] = useState({});
+  const [loading, setLoading] = useState(Boolean(tenantId));
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    if (!tenantId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows`);
+      setFlows(result.content || []);
+      setMetaIds((current) => Object.fromEntries((result.content || []).map((item) => [item.id, current[item.id] ?? item.metaFlowId ?? ""])));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function mutate(key, action, successMessage) {
+    setBusyId(key);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+      setNotice(successMessage);
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  if (!tenantId) return null;
+  const labels = {
+    citizen_registration: "Cadastro do cidadÃ£o",
+    new_service_request: "Nova solicitaÃ§Ã£o",
+    request_complement: "Complemento da solicitaÃ§Ã£o",
+  };
+  const latest = Object.values(flows.reduce((result, item) => {
+    if (!result[item.chave] || result[item.chave].versao < item.versao) result[item.chave] = item;
+    return result;
+  }, {}));
+
+  return <section className="whatsapp-flows-manager" aria-labelledby="whatsapp-flows-title">
+    <header>
+      <div>
+        <p className="eyebrow">ExperiÃªncia conversacional</p>
+        <h2 id="whatsapp-flows-title">WhatsApp Flows</h2>
+        <p>FormulÃ¡rios versionados para cadastro, solicitaÃ§Ã£o e complemento, com fallback guiado na caixa de entrada.</p>
+      </div>
+      {canManage && flows.length === 0 && <button className="primary-button compact" type="button" disabled={Boolean(busyId)} onClick={() => mutate("bootstrap", () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/bootstrap`, { method: "POST" }), "Flows padrÃ£o preparados.")}><Plus size={17} /> Preparar Flows</button>}
+    </header>
+    {loading && <div className="table-message">Carregando versÃµes...</div>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {notice && <p className="form-success" role="status">{notice}</p>}
+    {!loading && flows.length === 0 && <div className="whatsapp-flows-empty"><FileText size={22} /><span>Nenhuma definiÃ§Ã£o preparada para este ambiente.</span></div>}
+    <div className="whatsapp-flows-grid">{latest.map((item) => <article key={item.id}>
+      <header><div><strong>{labels[item.chave] || item.nome}</strong><small>{item.ambiente} Â· versÃ£o {item.versao}</small></div><span className={`flow-definition-status status-${item.status.toLowerCase()}`}>{item.status}</span></header>
+      <div className="whatsapp-flow-meta"><span>Schema <code>{item.schemaHash.slice(0, 10)}</code></span><span>{item.telas.length} telas</span></div>
+      {item.status === "ACTIVE" ? <p className="whatsapp-flow-active"><ShieldCheck size={16} /> Ativo na Meta como {item.metaFlowId}</p> : canManage && <label>ID do Flow na Meta<input value={metaIds[item.id] || ""} onChange={(event) => setMetaIds((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="ID publicado pela Meta" /></label>}
+      {canManage && <div className="form-actions">
+        {item.status !== "ACTIVE" && <button className="primary-button compact" type="button" disabled={Boolean(busyId) || (metaIds[item.id] || "").trim().length < 4} onClick={() => mutate(item.id, () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/${item.id}/activate`, { method: "POST", body: JSON.stringify({ metaFlowId: metaIds[item.id] }) }), `${labels[item.chave]} ativado.`)}>Ativar versÃ£o</button>}
+        <button className="secondary-button compact" type="button" disabled={Boolean(busyId)} onClick={() => mutate(`version-${item.chave}`, () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/versions`, { method: "POST", body: JSON.stringify({ chave: item.chave }) }), `Nova versÃ£o de ${labels[item.chave]} criada.`)}>Nova versÃ£o</button>
+      </div>}
+    </article>)}</div>
+    {flows.length > latest.length && <small className="template-help">{flows.length - latest.length} versÃ£o(Ãµes) anterior(es) preservada(s) para auditoria e processamento seguro de respostas em trÃ¢nsito.</small>}
+  </section>;
+}
+
+export function WhatsAppTemplatesManager({ tenantId, canCreate = false }) {
+  const [templates, setTemplates] = useState([]);
+  const [form, setForm] = useState({ nome: "", idioma: "pt_BR", categoria: "UTILITY", conteudo: "", variaveis: "" });
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const result = await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/templates`);
+      setTemplates(result.content || []);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }, [tenantId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function create(event) {
+    event.preventDefault();
+    setBusy("create"); setError(""); setNotice("");
+    try {
+      await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/templates`, {
+        method: "POST",
+        body: JSON.stringify({ ...form, variaveis: form.variaveis.split(",").map((value) => value.trim()).filter(Boolean) }),
+      });
+      setForm({ nome: "", idioma: "pt_BR", categoria: "UTILITY", conteudo: "", variaveis: "" });
+      setNotice("Template enviado para sincronização com a Meta.");
+      await load();
+    } catch (requestError) { setError(requestError.message); } finally { setBusy(""); }
+  }
+
+  async function refresh(item) {
+    setBusy(item.id); setError(""); setNotice("");
+    try {
+      await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/templates/${item.id}/refresh`, { method: "POST" });
+      setNotice("Consulta de status enfileirada.");
+      await load();
+    } catch (requestError) { setError(requestError.message); } finally { setBusy(""); }
+  }
+
+  if (!tenantId) return null;
+  return <section className="whatsapp-flows-manager whatsapp-templates-manager" aria-labelledby="whatsapp-templates-title">
+    <header><div><p className="eyebrow">Saída governada</p><h2 id="whatsapp-templates-title">Templates oficiais</h2><p>Somente modelos transacionais aprovados pela Meta podem iniciar contato fora da janela de 24 horas.</p></div></header>
+    {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-success" role="status">{notice}</p>}
+    {canCreate && <form className="whatsapp-template-form" onSubmit={create}>
+      <label>Nome na Meta<input required pattern="[a-z0-9_]+" value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value.toLowerCase() }))} placeholder="atualizacao_protocolo" /></label>
+      <label>Idioma<input required value={form.idioma} onChange={(event) => setForm((current) => ({ ...current, idioma: event.target.value }))} /></label>
+      <label>Categoria<select value={form.categoria} onChange={(event) => setForm((current) => ({ ...current, categoria: event.target.value }))}><option value="UTILITY">Utilidade</option><option value="AUTHENTICATION">Autenticação</option></select></label>
+      <label className="wide">Conteúdo<textarea required rows="3" maxLength={4096} value={form.conteudo} onChange={(event) => setForm((current) => ({ ...current, conteudo: event.target.value }))} placeholder="A solicitação {{1}} foi atualizada." /></label>
+      <label className="wide">Variáveis, separadas por vírgula<input value={form.variaveis} onChange={(event) => setForm((current) => ({ ...current, variaveis: event.target.value }))} placeholder="protocolo" /></label>
+      <button className="primary-button compact" disabled={Boolean(busy)}><Plus size={16} /> Enviar para aprovação</button>
+    </form>}
+    <div className="whatsapp-flows-grid">{templates.map((item) => <article key={item.id}><header><div><strong>{item.nome}</strong><small>{item.idioma} · versão {item.versao} · {item.categoria}</small></div><span className={`flow-definition-status status-${item.status.toLowerCase()}`}>{item.status}</span></header><p>{item.conteudo}</p>{item.motivoRejeicao && <small className="form-error">{item.motivoRejeicao}</small>}<div className="form-actions"><button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={() => refresh(item)}><RotateCw size={15} /> Atualizar status</button></div></article>)}</div>
+    {!templates.length && <div className="whatsapp-flows-empty"><FileText size={22} /><span>Nenhum template oficial cadastrado.</span></div>}
+  </section>;
+}
+
+export function WhatsAppPilotOperations({ tenantId, canManage = false }) {
+  const [pilot, setPilot] = useState(null);
+  const [drafts, setDrafts] = useState({});
+  const [pauseReason, setPauseReason] = useState("");
+  const [busy, setBusy] = useState("");
+  const [feedback, setFeedback] = useState({ error: "", notice: "" });
+
+  const load = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const result = await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/pilot`);
+      if (!Array.isArray(result?.gates)) return;
+      setPilot(result);
+      setDrafts(Object.fromEntries(result.gates.map((gate) => [gate.key, {
+        status: gate.status, evidenciaReferencia: gate.evidenciaReferencia || "", observacao: gate.observacao || "",
+      }])));
+      setFeedback({ error: "", notice: "" });
+    } catch (error) { setFeedback({ error: error.message, notice: "" }); }
+  }, [tenantId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function saveGate(key) {
+    setBusy(key); setFeedback({ error: "", notice: "" });
+    try {
+      const result = await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/pilot/gates/${key}`, { method: "PUT", body: JSON.stringify(drafts[key]) });
+      setPilot(result); setFeedback({ error: "", notice: "Evidência registrada com integridade verificável." });
+    } catch (error) { setFeedback({ error: error.message, notice: "" }); } finally { setBusy(""); }
+  }
+
+  async function changeStatus(action) {
+    setBusy(action); setFeedback({ error: "", notice: "" });
+    try {
+      const result = await apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/pilot/actions`, { method: "POST", body: JSON.stringify({ action, reason: pauseReason }) });
+      setPilot(result); setPauseReason(""); setFeedback({ error: "", notice: action === "PAUSE" ? "Saídas pausadas com segurança." : "Estado do piloto atualizado." });
+    } catch (error) { setFeedback({ error: error.message, notice: "" }); } finally { setBusy(""); }
+  }
+
+  if (!tenantId) return null;
+  const operation = pilot?.operacao;
+  const percent = (value) => value == null ? "Sem amostra" : `${(value * 100).toFixed(1)}%`;
+  return <section className="whatsapp-pilot" aria-labelledby="whatsapp-pilot-title">
+    <header><div><p className="eyebrow">Operação segura</p><h2 id="whatsapp-pilot-title">Cockpit do piloto</h2><p>SLOs, semáforo, evidências e pausa de saída em um ponto de controle.</p></div><span className={`pilot-status pilot-status-${pilot?.status?.toLowerCase() || "draft"}`}>{pilot?.status || "CARREGANDO"}</span></header>
+    {feedback.error && <p className="form-error" role="alert">{feedback.error}</p>}{feedback.notice && <p className="form-success" role="status">{feedback.notice}</p>}
+    {operation && <><div className="pilot-metrics">
+      <article><small>Pipeline</small><strong className={`signal-${operation.status.toLowerCase()}`}>{operation.status}</strong><span>{operation.inbound.received} eventos em {operation.windowHours}h</span></article>
+      <article><small>ACK p95</small><strong>{operation.inbound.ackP95Ms == null ? "Sem amostra" : `${operation.inbound.ackP95Ms} ms`}</strong><span>Alvo &lt; {operation.slo.ackP95TargetMs} ms</span></article>
+      <article><small>Processamento no alvo</small><strong>{percent(operation.inbound.processingStartWithinTargetRate)}</strong><span>Meta {percent(operation.slo.processingStartTargetRate)}</span></article>
+      <article><small>Outbox</small><strong>{operation.outbox.pending} pendentes</strong><span>Mais antigo: {operation.outbox.oldestAgeSeconds}s</span></article>
+    </div><div className="pilot-signals">{operation.alerts.map((alert) => <div key={alert.codigo} className={`pilot-signal signal-${alert.nivel.toLowerCase()}`}><span /><div><strong>{alert.titulo}</strong><small>{alert.codigo} · valor {String(alert.valor)}</small></div></div>)}</div></>}
+    {pilot && <div className="pilot-readiness"><span className={pilot.prontoExterno ? "ready" : "pending"}><ShieldCheck size={15} /> Aprovações externas</span><span className={pilot.prontoInterno ? "ready" : "pending"}><ShieldCheck size={15} /> Controles internos</span><span className={pilot.prontoOperacional ? "ready" : "pending"}><ShieldCheck size={15} /> Saúde operacional</span></div>}
+    <div className="pilot-gates">{pilot?.gates.map((gate) => {
+      const draft = drafts[gate.key] || {};
+      const update = (field, value) => setDrafts((current) => ({ ...current, [gate.key]: { ...current[gate.key], [field]: value } }));
+      return <article key={gate.key}><div className="pilot-gate-title"><span className={`gate-dot gate-${gate.status.toLowerCase()}`} /><div><strong>{gate.titulo}</strong><small>{gate.key}</small></div></div>{canManage ? <><select aria-label={`Status de ${gate.titulo}`} value={draft.status || "PENDING"} onChange={(event) => update("status", event.target.value)}><option value="PENDING">Pendente</option><option value="PASSED">Aprovado</option><option value="FAILED">Reprovado</option></select><input aria-label={`Evidência de ${gate.titulo}`} placeholder="Ticket, ata ou objeto" value={draft.evidenciaReferencia || ""} onChange={(event) => update("evidenciaReferencia", event.target.value)} /><input aria-label={`Observação de ${gate.titulo}`} placeholder="Observação sem dados pessoais" value={draft.observacao || ""} onChange={(event) => update("observacao", event.target.value)} /><button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={() => saveGate(gate.key)}><Save size={14} /> {busy === gate.key ? "Salvando..." : "Registrar"}</button></> : <span className={`gate-label gate-${gate.status.toLowerCase()}`}>{gate.status}</span>}</article>;
+    })}</div>
+    {canManage && pilot && <footer className="pilot-actions">{pilot.status === "RUNNING" && <label>Motivo para pausa<input value={pauseReason} onChange={(event) => setPauseReason(event.target.value)} placeholder="Obrigatório para a trilha de decisão" /></label>}<div>{["DRAFT", "READY"].includes(pilot.status) && <button className="primary-button compact" type="button" disabled={!pilot.podeIniciar || Boolean(busy)} onClick={() => changeStatus("START")}>Iniciar piloto</button>}{pilot.status === "RUNNING" && <button className="danger-button compact" type="button" disabled={!pauseReason.trim() || Boolean(busy)} onClick={() => changeStatus("PAUSE")}>Pausar saídas</button>}{pilot.status === "PAUSED" && <button className="primary-button compact" type="button" disabled={!pilot.podeIniciar || Boolean(busy)} onClick={() => changeStatus("RESUME")}>Retomar piloto</button>}{pilot.status === "RUNNING" && <button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={() => changeStatus("COMPLETE")}>Concluir piloto</button>}<button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={load}>Recarregar métricas</button></div></footer>}
+  </section>;
 }
 
 function RagQualityRolloutSettings() {

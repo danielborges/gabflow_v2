@@ -50,6 +50,7 @@ from app.requests.service import (
     RequestValidationError,
     apply_update,
     creation_event,
+    new_public_protocol,
     next_protocol,
     record_audit,
     validate_create,
@@ -81,6 +82,7 @@ def _serialize(service_request: ServiceRequest, include_details: bool = False) -
     data = {
         "id": str(service_request.id),
         "protocolo": service_request.protocol,
+        "protocoloPublico": service_request.public_protocol,
         "origem": service_request.source.value,
         "titulo": service_request.title,
         "descricao": service_request.description,
@@ -426,6 +428,7 @@ def create_request():
         tenant_id=tenant_id,
         created_by_id=user_id,
         protocol=next_protocol(tenant_id),
+        public_protocol=new_public_protocol(),
         category_id=category.id if category else None,
         citizen_id=citizen.id if citizen else None,
         organization_id=organization.id if organization else None,

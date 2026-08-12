@@ -1,0 +1,4 @@
+bucket       = "gabflow-production-ACCOUNT_ID-tfstate"
+region       = "sa-east-1"
+kms_key_id   = "arn:aws:kms:sa-east-1:ACCOUNT_ID:key/KEY_ID"
+use_lockfile = true

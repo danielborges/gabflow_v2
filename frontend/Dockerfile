@@ -24,6 +24,8 @@ ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
 RUN pnpm run build
 
 FROM nginx:1.27-alpine
+ARG API_UPSTREAM=api:5000
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+RUN sed -i "s/__API_UPSTREAM__/${API_UPSTREAM}/g" /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

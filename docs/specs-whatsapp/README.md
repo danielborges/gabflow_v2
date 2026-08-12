@@ -33,6 +33,14 @@ Especificação de referência para implementar atendimento automatizado e human
 
 O módulo só pode entrar em produção quando: App Review e permissões estiverem aprovados; assinatura e deduplicação de webhooks estiverem testadas; isolamento entre tenants tiver teste automatizado negativo; opt-in/opt-out e handoff humano estiverem funcionais; Flows estiverem versionados; logs não contiverem conteúdo sensível; e houver piloto controlado com ao menos um gabinete.
 
+## Estado de implementação em 12/08/2026
+
+Os incrementos 0 a 8 foram implementados e documentados em `docs/implementation`. O staging AWS
+foi aplicado com recebimento SQS/DLQ, cofre Secrets Manager/KMS, ECS, RDS e observabilidade. A
+conexão Meta real continua bloqueada até a conclusão de HTTPS em `staging.gabflow.app` e dos
+demais gates do piloto. Consulte
+[`AWS-staging-deployment-2026-08-12.md`](../implementation/AWS-staging-deployment-2026-08-12.md).
+
 ## Referências oficiais
 
 - Meta Embedded Signup: https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/overview

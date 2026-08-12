@@ -1,0 +1,3 @@
+state_bucket_name = "gabflow-management-ACCOUNT_ID-tfstate"
+owner             = "gabflow-platform"
+cost_center       = "gabflow"

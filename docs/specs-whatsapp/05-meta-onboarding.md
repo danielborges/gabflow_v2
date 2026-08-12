@@ -56,5 +56,8 @@ Os nomes exatos de permissões, versões da Graph API, requisitos de revisão, p
 - Flow `new_service_request`: categoria, assunto, descrição, local, urgência declarada e confirmação.
 - Flow `request_complement`: campos faltantes solicitados pelo assessor.
 - Cada publicação possui versão, hash e ambiente.
-- Endpoint de dados valida assinatura/autenticidade, tenant, versão, estado da conversa e esquema.
+- Nos Flows estáticos do Incremento 5, a conclusão chega pelo webhook assinado como
+  `interactive/nfm_reply`; o backend valida tenant, token de sessão, versão, estado e schema.
+- Um endpoint criptografado de data exchange será obrigatório antes de publicar telas dinâmicas;
+  ele não é exposto enquanto os três Flows permanecerem estáticos.
 - Se Flow estiver indisponível, usar perguntas sequenciais com retomada segura.

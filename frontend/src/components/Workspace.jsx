@@ -309,7 +309,7 @@ export function Workspace({ user, onLogout }) {
           <LegislativeDocumentsPage user={user} />
         )}
         {activeView === "rag" && isModuleEnabled("rag") && <RagKnowledgeBasePage />}
-        {activeView === "admin" && user.role === "admin" && <AdministrationPage />}
+        {activeView === "admin" && user.role === "admin" && <AdministrationPage user={user} />}
         {activeView === "privacy" && ["admin", "manager"].includes(user.role) && isModuleEnabled("privacidade") && <PrivacyGovernancePage />}
         {activeView === "overview" && <OperationalDashboard user={user} onOpenRequests={openTerritorialRequests} onOpenRequest={openTerritorialRequest} />}
       </main>

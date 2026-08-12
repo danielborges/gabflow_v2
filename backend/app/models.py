@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -462,6 +463,73 @@ class IntegrationStatus(str, enum.Enum):
     RASCUNHO = "RASCUNHO"
     ATIVA = "ATIVA"
     INATIVA = "INATIVA"
+
+
+class WhatsAppIntegrationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    ACTIVE = "ACTIVE"
+    DEGRADED = "DEGRADED"
+    SUSPENDED = "SUSPENDED"
+    DISCONNECTED = "DISCONNECTED"
+    REVOKED = "REVOKED"
+
+
+class WhatsAppOnboardingStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+
+
+class WhatsAppWebhookEventStatus(str, enum.Enum):
+    RECEIVED = "RECEIVED"
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    PROCESSED = "PROCESSED"
+    QUARANTINED = "QUARANTINED"
+    FAILED = "FAILED"
+
+
+class WhatsAppContactOptStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    OPTED_OUT = "OPTED_OUT"
+    BLOCKED = "BLOCKED"
+
+
+class WhatsAppConversationState(str, enum.Enum):
+    NEW = "NEW"
+    PRIVACY_NOTICE = "PRIVACY_NOTICE"
+    IDENTIFICATION = "IDENTIFICATION"
+    INTENT = "INTENT"
+    DATA_COLLECTION = "DATA_COLLECTION"
+    REVIEW = "REVIEW"
+    PROTOCOL_CREATED = "PROTOCOL_CREATED"
+    FOLLOW_UP = "FOLLOW_UP"
+    HUMAN_HANDOFF = "HUMAN_HANDOFF"
+    OPTED_OUT = "OPTED_OUT"
+    BLOCKED = "BLOCKED"
+    ERROR_RECOVERY = "ERROR_RECOVERY"
+    CLOSED = "CLOSED"
+
+
+class WhatsAppConversationMode(str, enum.Enum):
+    BOT = "BOT"
+    HUMAN = "HUMAN"
+
+
+class WhatsAppMessageDirection(str, enum.Enum):
+    INBOUND = "INBOUND"
+    OUTBOUND = "OUTBOUND"
+
+
+class WhatsAppMessageStatus(str, enum.Enum):
+    RECEIVED = "RECEIVED"
+    QUEUED = "QUEUED"
+    SENT = "SENT"
+    DELIVERED = "DELIVERED"
+    READ = "READ"
+    FAILED = "FAILED"
 
 
 class ChannelMessageStatus(str, enum.Enum):
@@ -2652,13 +2720,27 @@ class DuplicateGroup(db.Model):
 
 class ServiceRequest(db.Model):
     __tablename__ = "service_requests"
-    __table_args__ = (UniqueConstraint("tenant_id", "protocol"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "protocol"),
+        UniqueConstraint(
+            "tenant_id",
+            "public_protocol",
+            name="uq_service_requests_tenant_public_protocol",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_service_requests_tenant_id_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     protocol: Mapped[str] = mapped_column(String(30), nullable=False)
+    public_protocol: Mapped[str] = mapped_column(
+        String(32),
+        default=lambda: f"GFW-{uuid.uuid4().hex[:20].upper()}",
+        nullable=False,
+        index=True,
+    )
     source: Mapped[RequestSource] = mapped_column(
         Enum(RequestSource, name="request_source"), nullable=False
     )
@@ -4912,6 +4994,827 @@ class IntegrationSetting(db.Model):
     updated_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppIntegration(db.Model):
+    __tablename__ = "whatsapp_integrations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "version", name="uq_whatsapp_integration_tenant_version"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_integrations_tenant_id_id"),
+        Index(
+            "uq_whatsapp_active_phone_number",
+            "phone_number_id",
+            unique=True,
+            postgresql_where=db.text("status = 'ACTIVE'"),
+            sqlite_where=db.text("status = 'ACTIVE'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    business_portfolio_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    waba_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    phone_number_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    display_phone: Mapped[str | None] = mapped_column(String(40))
+    display_name: Mapped[str | None] = mapped_column(String(160))
+    status: Mapped[WhatsAppIntegrationStatus] = mapped_column(
+        Enum(WhatsAppIntegrationStatus, name="whatsapp_integration_status"),
+        default=WhatsAppIntegrationStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    token_secret_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    webhook_subscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_health_error: Mapped[str | None] = mapped_column(String(500))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppOnboardingSession(db.Model):
+    __tablename__ = "whatsapp_onboarding_sessions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "initiated_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_onboarding_tenant_user",
+        ),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_whatsapp_onboarding_idempotency"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_onboarding_tenant_id_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    initiated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    state_nonce: Mapped[str | None] = mapped_column(String(128))
+    state_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[WhatsAppOnboardingStatus] = mapped_column(
+        Enum(WhatsAppOnboardingStatus, name="whatsapp_onboarding_status"),
+        default=WhatsAppOnboardingStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("whatsapp_integrations.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class WhatsAppWebhookEvent(db.Model):
+    __tablename__ = "whatsapp_webhook_events"
+    __table_args__ = (
+        UniqueConstraint("provider_event_key", name="uq_whatsapp_webhook_provider_event"),
+        Index("ix_whatsapp_webhook_status_received", "status", "received_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    provider_event_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("whatsapp_integrations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    phone_number_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[WhatsAppWebhookEventStatus] = mapped_column(
+        Enum(WhatsAppWebhookEventStatus, name="whatsapp_webhook_event_status"),
+        default=WhatsAppWebhookEventStatus.RECEIVED,
+        nullable=False,
+        index=True,
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    quarantine_reason: Mapped[str | None] = mapped_column(String(120), index=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(120))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    retention_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    payload_redacted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    ack_duration_ms: Mapped[int | None] = mapped_column(Integer, index=True)
+
+
+class WhatsAppContact(db.Model):
+    __tablename__ = "whatsapp_contacts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "citizen_id"],
+            ["citizens.tenant_id", "citizens.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_contact_tenant_citizen",
+        ),
+        UniqueConstraint("tenant_id", "wa_user_id", name="uq_whatsapp_contact_tenant_user"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_contacts_tenant_id_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    wa_user_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    citizen_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    profile_name: Mapped[str | None] = mapped_column(String(180))
+    opt_status: Mapped[WhatsAppContactOptStatus] = mapped_column(
+        Enum(WhatsAppContactOptStatus, name="whatsapp_contact_opt_status"),
+        default=WhatsAppContactOptStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    opted_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppConversation(db.Model):
+    __tablename__ = "whatsapp_conversations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "contact_id"],
+            ["whatsapp_contacts.tenant_id", "whatsapp_contacts.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_conversation_tenant_contact",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "integration_id"],
+            ["whatsapp_integrations.tenant_id", "whatsapp_integrations.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_conversation_tenant_integration",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "assigned_user_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_conversation_tenant_assignee",
+        ),
+        UniqueConstraint("tenant_id", "contact_id", name="uq_whatsapp_conversation_contact"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_conversations_tenant_id_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    integration_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    state: Mapped[WhatsAppConversationState] = mapped_column(
+        Enum(WhatsAppConversationState, name="whatsapp_conversation_state"),
+        default=WhatsAppConversationState.NEW,
+        nullable=False,
+        index=True,
+    )
+    mode: Mapped[WhatsAppConversationMode] = mapped_column(
+        Enum(WhatsAppConversationMode, name="whatsapp_conversation_mode"),
+        default=WhatsAppConversationMode.BOT,
+        nullable=False,
+        index=True,
+    )
+    assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    window_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    unread_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppMessageTemplate(db.Model):
+    __tablename__ = "whatsapp_message_templates"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "integration_id"],
+            ["whatsapp_integrations.tenant_id", "whatsapp_integrations.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_template_tenant_integration",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_template_tenant_creator",
+        ),
+        UniqueConstraint(
+            "tenant_id", "name", "language", "version", name="uq_whatsapp_template_version"
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_templates_tenant_id_id"),
+        CheckConstraint(
+            "category IN ('UTILITY', 'AUTHENTICATION', 'MARKETING')",
+            name="ck_whatsapp_template_category",
+        ),
+        CheckConstraint(
+            "status IN ('DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'PAUSED', 'DISABLED')",
+            name="ck_whatsapp_template_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    integration_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    provider_template_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    language: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    variables: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    provider_components: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppPilotControl(db.Model):
+    __tablename__ = "whatsapp_pilot_controls"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "updated_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_pilot_control_tenant_actor",
+        ),
+        UniqueConstraint("tenant_id", name="uq_whatsapp_pilot_control_tenant"),
+        CheckConstraint(
+            "status IN ('DRAFT', 'READY', 'RUNNING', 'PAUSED', 'COMPLETED')",
+            name="ck_whatsapp_pilot_control_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False, index=True)
+    outbound_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pilot_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pilot_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pause_reason: Mapped[str | None] = mapped_column(String(500))
+    updated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppPilotGate(db.Model):
+    __tablename__ = "whatsapp_pilot_gates"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "reviewed_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_pilot_gate_tenant_reviewer",
+        ),
+        UniqueConstraint("tenant_id", "gate_key", name="uq_whatsapp_pilot_gate_key"),
+        CheckConstraint(
+            "status IN ('PENDING', 'PASSED', 'FAILED')",
+            name="ck_whatsapp_pilot_gate_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    gate_key: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False, index=True)
+    evidence_reference: Mapped[str | None] = mapped_column(String(500))
+    evidence_hash: Mapped[str | None] = mapped_column(String(64))
+    notes: Mapped[str | None] = mapped_column(String(500))
+    reviewed_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppMessage(db.Model):
+    __tablename__ = "whatsapp_messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_message_tenant_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "channel_message_id"],
+            ["channel_messages.tenant_id", "channel_messages.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_message_tenant_channel_message",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "provider_message_id",
+            "direction",
+            name="uq_whatsapp_message_provider_direction",
+        ),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_messages_tenant_id_id"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_whatsapp_message_idempotency"),
+        ForeignKeyConstraint(
+            ["tenant_id", "template_id"],
+            ["whatsapp_message_templates.tenant_id", "whatsapp_message_templates.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_message_tenant_template",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "requested_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_message_tenant_requester",
+        ),
+        UniqueConstraint("channel_message_id", name="uq_whatsapp_message_channel_message"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    channel_message_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    provider_message_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    direction: Mapped[WhatsAppMessageDirection] = mapped_column(
+        Enum(WhatsAppMessageDirection, name="whatsapp_message_direction"),
+        nullable=False,
+        index=True,
+    )
+    message_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    status: Mapped[WhatsAppMessageStatus] = mapped_column(
+        Enum(WhatsAppMessageStatus, name="whatsapp_message_status"),
+        nullable=False,
+        index=True,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    outbound_content: Mapped[str | None] = mapped_column(Text)
+    template_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    template_parameters: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), index=True)
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    policy_decision: Mapped[str | None] = mapped_column(String(40), index=True)
+    opt_out_confirmation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    error_code: Mapped[str | None] = mapped_column(String(120), index=True)
+    error: Mapped[str | None] = mapped_column(String(1000))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class WhatsAppConversationTransition(db.Model):
+    __tablename__ = "whatsapp_conversation_transitions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_transition_tenant_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "actor_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_transition_tenant_actor",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    from_state: Mapped[WhatsAppConversationState] = mapped_column(
+        Enum(WhatsAppConversationState, name="whatsapp_conversation_state", create_type=False),
+        nullable=False,
+    )
+    to_state: Mapped[WhatsAppConversationState] = mapped_column(
+        Enum(WhatsAppConversationState, name="whatsapp_conversation_state", create_type=False),
+        nullable=False,
+        index=True,
+    )
+    actor_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    origin: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(500))
+    rule_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class WhatsAppPrivacyRecord(db.Model):
+    __tablename__ = "whatsapp_privacy_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "contact_id"],
+            ["whatsapp_contacts.tenant_id", "whatsapp_contacts.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_privacy_tenant_contact",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_privacy_tenant_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "recorded_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_privacy_tenant_actor",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "conversation_id",
+            "notice_version",
+            "action",
+            name="uq_whatsapp_privacy_conversation_action",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(80), nullable=False)
+    legal_basis: Mapped[str] = mapped_column(String(120), nullable=False)
+    notice_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    action: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    consent_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    granted: Mapped[bool | None] = mapped_column(Boolean)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_message_id: Mapped[str | None] = mapped_column(String(160), index=True)
+    recorded_by_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class WhatsAppRequestDraft(db.Model):
+    __tablename__ = "whatsapp_request_drafts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_draft_tenant_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "citizen_id"],
+            ["citizens.tenant_id", "citizens.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_draft_tenant_citizen",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "service_request_id"],
+            ["service_requests.tenant_id", "service_requests.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_draft_tenant_request",
+        ),
+        UniqueConstraint("tenant_id", "conversation_id", name="uq_whatsapp_draft_conversation"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_whatsapp_draft_idempotency"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    citizen_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("request_categories.id", ondelete="SET NULL"), index=True
+    )
+    title: Mapped[str | None] = mapped_column(String(180))
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    address: Mapped[str | None] = mapped_column(String(500))
+    declared_urgency: Mapped[str | None] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(
+        String(30), default="COLLECTING", nullable=False, index=True
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), index=True)
+    service_request_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppFlowDefinition(db.Model):
+    __tablename__ = "whatsapp_flow_definitions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_flow_definition_tenant_creator",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "flow_key",
+            "environment",
+            "version",
+            name="uq_whatsapp_flow_key_environment_version",
+        ),
+        UniqueConstraint("tenant_id", "meta_flow_id", name="uq_whatsapp_flow_meta_id"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_flow_definitions_tenant_id_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    flow_key: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    environment: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False, index=True)
+    meta_flow_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    schema_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    definition_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    schema_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class WhatsAppFlowSession(db.Model):
+    __tablename__ = "whatsapp_flow_sessions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "definition_id"],
+            ["whatsapp_flow_definitions.tenant_id", "whatsapp_flow_definitions.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_flow_session_tenant_definition",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_flow_session_tenant_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "initiated_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_flow_session_tenant_actor",
+        ),
+        UniqueConstraint("token_hash", name="uq_whatsapp_flow_session_token_hash"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_flow_sessions_tenant_id_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    definition_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False, index=True)
+    initiated_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+
+class WhatsAppFlowSubmission(db.Model):
+    __tablename__ = "whatsapp_flow_submissions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "session_id"],
+            ["whatsapp_flow_sessions.tenant_id", "whatsapp_flow_sessions.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_flow_submission_tenant_session",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "definition_id"],
+            ["whatsapp_flow_definitions.tenant_id", "whatsapp_flow_definitions.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_flow_submission_tenant_definition",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_flow_submission_tenant_conversation",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "provider_message_id",
+            name="uq_whatsapp_flow_submission_provider_message",
+        ),
+        UniqueConstraint("tenant_id", "response_hash", name="uq_whatsapp_flow_submission_response"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    definition_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    webhook_event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("whatsapp_webhook_events.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    provider_message_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    response_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    values: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), index=True)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="SET NULL"), index=True
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WhatsAppMediaAsset(db.Model):
+    __tablename__ = "whatsapp_media_assets"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["whatsapp_conversations.tenant_id", "whatsapp_conversations.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_media_tenant_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "message_id"],
+            ["whatsapp_messages.tenant_id", "whatsapp_messages.id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_media_tenant_message",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "request_id"],
+            ["service_requests.tenant_id", "service_requests.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_media_tenant_request",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by_id"],
+            ["users.tenant_id", "users.id"],
+            ondelete="RESTRICT",
+            name="fk_whatsapp_media_tenant_creator",
+        ),
+        UniqueConstraint("tenant_id", "provider_media_id", name="uq_whatsapp_media_provider_id"),
+        UniqueConstraint("tenant_id", "id", name="uq_whatsapp_media_tenant_id_id"),
+        CheckConstraint(
+            "status IN ('RECEIVED', 'DOWNLOADING', 'READY', 'BLOCKED', 'FAILED')",
+            name="ck_whatsapp_media_status",
+        ),
+        CheckConstraint(
+            "analysis_status IN ('NOT_APPLICABLE', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')",
+            name="ck_whatsapp_media_analysis_status",
+        ),
+        CheckConstraint(
+            "review_status IN ('NOT_REQUIRED', 'PENDING', 'ACCEPTED', 'EDITED', 'REJECTED')",
+            name="ck_whatsapp_media_review_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    message_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    webhook_event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("whatsapp_webhook_events.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    integration_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("whatsapp_integrations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    provider_media_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    provider_message_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    media_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    original_name: Mapped[str | None] = mapped_column(String(255))
+    caption: Mapped[str | None] = mapped_column(String(1000))
+    provider_sha256: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(20), default="RECEIVED", nullable=False, index=True)
+    storage_key: Mapped[str | None] = mapped_column(String(300), unique=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    scan_status: Mapped[AttachmentScanStatus | None] = mapped_column(
+        Enum(AttachmentScanStatus, name="attachment_scan_status"), index=True
+    )
+    scan_provider: Mapped[str | None] = mapped_column(String(80))
+    scan_engine_version: Mapped[str | None] = mapped_column(String(80))
+    scan_signature_version: Mapped[str | None] = mapped_column(String(80))
+    scan_threat: Mapped[str | None] = mapped_column(String(160))
+    scan_error_code: Mapped[str | None] = mapped_column(String(80))
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    encryption_key_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    encryption_algorithm: Mapped[str | None] = mapped_column(String(40))
+    encrypted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    analysis_type: Mapped[str | None] = mapped_column(String(30))
+    analysis_status: Mapped[str] = mapped_column(
+        String(20), default="NOT_APPLICABLE", nullable=False, index=True
+    )
+    analysis_provider: Mapped[str | None] = mapped_column(String(80))
+    analysis_model: Mapped[str | None] = mapped_column(String(120))
+    prompt_version: Mapped[str | None] = mapped_column(String(40))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    generated_text: Mapped[str | None] = mapped_column(Text)
+    reviewed_text: Mapped[str | None] = mapped_column(Text)
+    review_status: Mapped[str] = mapped_column(
+        String(20), default="NOT_REQUIRED", nullable=False, index=True
+    )
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    request_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    attachment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("attachments.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(80), index=True)
+    error: Mapped[str | None] = mapped_column(String(1000))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    retention_until: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )

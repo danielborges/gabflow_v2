@@ -44,6 +44,8 @@ ROUTE_MODULES = {
 }
 
 PUBLIC_ENDPOINTS = {
+    "communications.verify_global_whatsapp_webhook",
+    "communications.receive_global_whatsapp_webhook",
     "communications.receive_channel_webhook",
     "communications.receive_resend_inbound_email",
     "communications.verify_whatsapp_webhook",

@@ -13,9 +13,36 @@ channels:
   flowSubmission:
     address: whatsapp.flow.submitted.v1
     messages: {flowSubmission: {$ref: '#/components/messages/FlowSubmission'}}
+  flowLaunchRequested:
+    address: whatsapp.flow.launch-requested.v1
+    messages: {flowLaunchRequested: {$ref: '#/components/messages/FlowLaunchRequested'}}
+  guidedCollectionStarted:
+    address: whatsapp.flow.guided-collection-started.v1
+    messages: {guidedCollectionStarted: {$ref: '#/components/messages/GuidedCollectionStarted'}}
   requestCreated:
     address: service-request.created.v1
     messages: {requestCreated: {$ref: '#/components/messages/RequestCreated'}}
+  conversationStateChanged:
+    address: whatsapp.conversation.state-changed.v1
+    messages: {conversationStateChanged: {$ref: '#/components/messages/ConversationStateChanged'}}
+  privacyNoticeRequested:
+    address: whatsapp.privacy.notice-requested.v1
+    messages: {privacyNoticeRequested: {$ref: '#/components/messages/PrivacyNoticeRequested'}}
+  protocolCreated:
+    address: whatsapp.protocol.created.v1
+    messages: {protocolCreated: {$ref: '#/components/messages/ProtocolCreated'}}
+  mediaDownloadRequested:
+    address: whatsapp.media.download-requested.v1
+    messages: {mediaDownloadRequested: {$ref: '#/components/messages/MediaDownloadRequested'}}
+  mediaAnalysisRequested:
+    address: whatsapp.media.analysis-requested.v1
+    messages: {mediaAnalysisRequested: {$ref: '#/components/messages/MediaAnalysisRequested'}}
+  outboundMessageRequested:
+    address: whatsapp.outbound.message-requested.v1
+    messages: {outboundMessageRequested: {$ref: '#/components/messages/OutboundMessageRequested'}}
+  templateSyncRequested:
+    address: whatsapp.template.sync-requested.v1
+    messages: {templateSyncRequested: {$ref: '#/components/messages/TemplateSyncRequested'}}
 operations:
   processInboundMessage:
     action: receive
@@ -23,12 +50,39 @@ operations:
   processMessageStatus:
     action: receive
     channel: {$ref: '#/channels/messageStatus'}
-  processFlowSubmission:
-    action: receive
+  publishFlowSubmission:
+    action: send
     channel: {$ref: '#/channels/flowSubmission'}
+  publishFlowLaunchRequested:
+    action: send
+    channel: {$ref: '#/channels/flowLaunchRequested'}
+  publishGuidedCollectionStarted:
+    action: send
+    channel: {$ref: '#/channels/guidedCollectionStarted'}
   publishRequestCreated:
     action: send
     channel: {$ref: '#/channels/requestCreated'}
+  publishConversationStateChanged:
+    action: send
+    channel: {$ref: '#/channels/conversationStateChanged'}
+  publishPrivacyNoticeRequested:
+    action: send
+    channel: {$ref: '#/channels/privacyNoticeRequested'}
+  publishProtocolCreated:
+    action: send
+    channel: {$ref: '#/channels/protocolCreated'}
+  processMediaDownload:
+    action: receive
+    channel: {$ref: '#/channels/mediaDownloadRequested'}
+  processMediaAnalysis:
+    action: receive
+    channel: {$ref: '#/channels/mediaAnalysisRequested'}
+  processOutboundMessage:
+    action: receive
+    channel: {$ref: '#/channels/outboundMessageRequested'}
+  processTemplateSync:
+    action: receive
+    channel: {$ref: '#/channels/templateSyncRequested'}
 components:
   schemas:
     Envelope:
@@ -82,12 +136,45 @@ components:
             properties:
               data:
                 type: object
-                required: [flowId, flowVersion, conversationId, values]
+                required: [submissionId, flowKey, flowVersion, conversationId, status]
                 properties:
-                  flowId: {type: string}
-                  flowVersion: {type: string}
+                  submissionId: {type: string, format: uuid}
+                  flowKey: {enum: [citizen_registration, new_service_request, request_complement]}
+                  flowVersion: {type: integer, minimum: 1}
                   conversationId: {type: string, format: uuid}
-                  values: {type: object}
+                  requestId: {type: [string, 'null'], format: uuid}
+                  status: {const: APPLIED}
+    FlowLaunchRequested:
+      name: FlowLaunchRequested
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [sessionId, conversationId, flowKey, flowVersion, metaFlowId, flowToken, environment]
+                properties:
+                  sessionId: {type: string, format: uuid}
+                  conversationId: {type: string, format: uuid}
+                  flowKey: {enum: [citizen_registration, new_service_request, request_complement]}
+                  flowVersion: {type: integer, minimum: 1}
+                  metaFlowId: {type: string}
+                  flowToken: {type: string, writeOnly: true, description: Token efemero; consumidores nao devem registrar em logs.}
+                  environment: {enum: [SANDBOX, STAGING, PRODUCTION]}
+    GuidedCollectionStarted:
+      name: GuidedCollectionStarted
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [conversationId, flowKey]
+                properties:
+                  conversationId: {type: string, format: uuid}
+                  flowKey: {enum: [citizen_registration, new_service_request, request_complement]}
     RequestCreated:
       name: RequestCreated
       payload:
@@ -102,3 +189,98 @@ components:
                   requestId: {type: string, format: uuid}
                   publicProtocol: {type: string}
                   source: {const: WHATSAPP}
+    ConversationStateChanged:
+      name: ConversationStateChanged
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [conversationId, fromState, toState, mode, ruleVersion]
+                properties:
+                  conversationId: {type: string, format: uuid}
+                  fromState: {type: string}
+                  toState: {type: string}
+                  mode: {enum: [BOT, HUMAN]}
+                  ruleVersion: {type: string}
+    PrivacyNoticeRequested:
+      name: PrivacyNoticeRequested
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [conversationId, contactId, noticeVersion, purpose, legalBasis, message]
+                properties:
+                  conversationId: {type: string, format: uuid}
+                  contactId: {type: string, format: uuid}
+                  noticeVersion: {type: string}
+                  purpose: {type: string}
+                  legalBasis: {type: string}
+                  message: {type: string}
+    ProtocolCreated:
+      name: ProtocolCreated
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [conversationId, requestId, publicProtocol]
+                properties:
+                  conversationId: {type: string, format: uuid}
+                  requestId: {type: string, format: uuid}
+                  publicProtocol: {type: string, pattern: '^GFW-[A-Z0-9]+$'}
+    MediaDownloadRequested:
+      name: MediaDownloadRequested
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [mediaAssetId]
+                properties:
+                  mediaAssetId: {type: string, format: uuid}
+    MediaAnalysisRequested:
+      name: MediaAnalysisRequested
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [mediaAssetId]
+                properties:
+                  mediaAssetId: {type: string, format: uuid}
+    OutboundMessageRequested:
+      name: OutboundMessageRequested
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [messageId]
+                properties:
+                  messageId: {type: string, format: uuid}
+    TemplateSyncRequested:
+      name: TemplateSyncRequested
+      payload:
+        allOf:
+          - {$ref: '#/components/schemas/Envelope'}
+          - type: object
+            properties:
+              data:
+                type: object
+                required: [templateId]
+                properties:
+                  templateId: {type: string, format: uuid}

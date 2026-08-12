@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 
 
 class WhatsAppWebhookError(ValueError):
@@ -42,6 +43,8 @@ def extract_whatsapp_messages(payload: dict) -> list[dict]:
                         "type": str(message.get("type") or "").strip(),
                         "timestamp": message.get("timestamp"),
                         "content": _message_content(message),
+                        "flowReply": _flow_reply(message),
+                        "media": _media_reference(message),
                         "phoneNumberId": metadata.get("phone_number_id"),
                         "displayPhoneNumber": metadata.get("display_phone_number"),
                         "raw": message,
@@ -71,14 +74,14 @@ def _message_content(message: dict) -> str:
         return str((message.get("button") or {}).get("text") or "").strip()
     if message_type == "interactive":
         interactive = (
-            message.get("interactive")
-            if isinstance(message.get("interactive"), dict)
-            else {}
+            message.get("interactive") if isinstance(message.get("interactive"), dict) else {}
         )
         button_reply = interactive.get("button_reply") or {}
         list_reply = interactive.get("list_reply") or {}
+        nfm_reply = interactive.get("nfm_reply") or {}
         return str(
-            button_reply.get("title")
+            nfm_reply.get("body")
+            or button_reply.get("title")
             or button_reply.get("id")
             or list_reply.get("title")
             or list_reply.get("id")
@@ -103,3 +106,46 @@ def _message_content(message: dict) -> str:
     if message_type == "contacts":
         return "Contato compartilhado via WhatsApp."
     return f"Mensagem WhatsApp do tipo {message_type or 'desconhecido'}."
+
+
+def _flow_reply(message: dict) -> dict | None:
+    if str(message.get("type") or "") != "interactive":
+        return None
+    interactive = message.get("interactive")
+    if not isinstance(interactive, dict) or interactive.get("type") != "nfm_reply":
+        return None
+    reply = interactive.get("nfm_reply")
+    if not isinstance(reply, dict):
+        return None
+    raw_response = reply.get("response_json")
+    if isinstance(raw_response, str):
+        try:
+            response = json.loads(raw_response)
+        except json.JSONDecodeError:
+            response = None
+    elif isinstance(raw_response, dict):
+        response = raw_response
+    else:
+        response = None
+    return {
+        "name": str(reply.get("name") or "").strip() or None,
+        "body": str(reply.get("body") or "").strip() or None,
+        "responseJson": response,
+    }
+
+
+def _media_reference(message: dict) -> dict | None:
+    message_type = str(message.get("type") or "").strip().lower()
+    if message_type not in {"audio", "image", "document", "video", "sticker"}:
+        return None
+    media = message.get(message_type)
+    if not isinstance(media, dict) or not media.get("id"):
+        return None
+    return {
+        "id": str(media["id"]),
+        "type": message_type,
+        "mimeType": str(media.get("mime_type") or "").strip() or None,
+        "filename": str(media.get("filename") or "").strip() or None,
+        "caption": str(media.get("caption") or "").strip() or None,
+        "sha256": str(media.get("sha256") or "").strip() or None,
+    }

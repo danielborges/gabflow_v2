@@ -1,4 +1,6 @@
+import base64
 import enum
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -34,6 +36,12 @@ def next_protocol(tenant_id: uuid.UUID) -> str:
     ).scalar_one()
     tenant.protocol_sequence += 1
     return f"GF-{datetime.now(UTC).year}-{tenant.protocol_sequence:06d}"
+
+
+def new_public_protocol() -> str:
+    """Generate a non-sequential public reference with 80 bits of entropy."""
+    token = base64.b32encode(secrets.token_bytes(10)).decode("ascii").rstrip("=")
+    return f"GFW-{token}"
 
 
 def validate_create(payload: dict) -> dict:

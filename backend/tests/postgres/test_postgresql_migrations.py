@@ -31,6 +31,10 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         expected_heads = set(migrations.get_heads())
         table_names = set(inspect(connection).get_table_names())
         global_table_names = set(inspect(connection).get_table_names(schema="rag_global"))
+        whatsapp_message_uniques = {
+            constraint["name"]
+            for constraint in inspect(connection).get_unique_constraints("whatsapp_messages")
+        }
 
     assert current_heads == expected_heads
     assert {
@@ -116,6 +120,7 @@ def test_real_migrations_reach_the_expected_head(postgres_app):
         "document_versions",
         "chunks",
     } == global_table_names
+    assert "uq_whatsapp_messages_tenant_id_id" in whatsapp_message_uniques
 
 
 def test_electoral_foundation_backfills_existing_representative(postgres_app):
