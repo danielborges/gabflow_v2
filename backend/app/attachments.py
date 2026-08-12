@@ -35,14 +35,30 @@ class AttachmentError(ValueError):
 def store_attachment(
     tenant_id: uuid.UUID, attachment_id: uuid.UUID, uploaded_file: FileStorage
 ) -> dict:
-    original_name = secure_filename(uploaded_file.filename or "")
+    content = uploaded_file.stream.read(current_app.config["MAX_ATTACHMENT_BYTES"] + 1)
+    return store_attachment_bytes(
+        tenant_id,
+        attachment_id,
+        filename=uploaded_file.filename or "",
+        mime_type=uploaded_file.mimetype or "application/octet-stream",
+        content=content,
+    )
+
+
+def store_attachment_bytes(
+    tenant_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    *,
+    filename: str,
+    mime_type: str,
+    content: bytes,
+) -> dict:
+    original_name = secure_filename(filename)
     if not original_name:
         raise AttachmentError("Selecione um arquivo válido.")
-    mime_type = uploaded_file.mimetype or "application/octet-stream"
     if mime_type not in ALLOWED_MIME_TYPES:
         raise AttachmentError("Tipo de arquivo não permitido.")
 
-    content = uploaded_file.stream.read(current_app.config["MAX_ATTACHMENT_BYTES"] + 1)
     if len(content) > current_app.config["MAX_ATTACHMENT_BYTES"]:
         raise AttachmentError("O arquivo excede o limite permitido.")
     if not content:

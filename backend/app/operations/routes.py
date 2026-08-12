@@ -12,7 +12,7 @@ from statistics import median
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
@@ -285,7 +285,11 @@ def rotate_public_key(request_id: uuid.UUID):
         after={"protocolo": service_request.protocol},
     )
     db.session.commit()
-    return jsonify(protocolo=service_request.protocol, chave=key)
+    return jsonify(
+        protocolo=service_request.protocol,
+        protocoloPublico=service_request.public_protocol,
+        chave=key,
+    )
 
 
 @operations_bp.post("/solicitacoes/<uuid:request_id>/tentativas-contato")
@@ -965,7 +969,10 @@ def public_request_status(protocol: str):
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     item = db.session.execute(
         select(ServiceRequest).where(
-            ServiceRequest.protocol == protocol,
+            or_(
+                ServiceRequest.public_protocol == protocol,
+                ServiceRequest.protocol == protocol,
+            ),
             ServiceRequest.public_access_key_hash == key_hash,
         )
     ).scalar_one_or_none()
@@ -981,6 +988,7 @@ def public_request_status(protocol: str):
     ]
     return jsonify(
         protocolo=item.protocol,
+        protocoloPublico=item.public_protocol,
         titulo=item.title,
         status=item.status.value,
         atualizadaEm=item.updated_at.isoformat(),

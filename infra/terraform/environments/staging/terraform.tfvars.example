@@ -1,0 +1,10 @@
+expected_account_id = "111111111111"
+vpc_cidr            = "10.40.0.0/16"
+owner               = "gabflow-platform"
+cost_center         = "gabflow"
+image_tag           = "bootstrap"
+enable_services     = false
+# certificate_arn   = "arn:aws:acm:sa-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000"
+domain_name          = "staging.gabflow.app"
+enable_https         = false
+db_instance_class   = "db.t4g.medium"

@@ -1,9 +1,12 @@
+import io
+import json
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +39,83 @@ from app.communications.whatsapp import (
     extract_whatsapp_messages,
     verify_meta_signature,
 )
+from app.communications.whatsapp_conversations import (
+    ConversationValidationError,
+    assign_conversation,
+    conversation_detail_data,
+    conversation_search_filter,
+    conversation_summary_data,
+    mark_conversation_read,
+    resume_bot,
+    start_handoff,
+)
+from app.communications.whatsapp_flows import (
+    WhatsAppFlowError,
+    activate_flow_definition,
+    bootstrap_flow_definitions,
+    create_flow_version,
+    flow_definition_data,
+    flow_state_data,
+    launch_flow,
+)
+from app.communications.whatsapp_inbound import ingest_meta_webhook
+from app.communications.whatsapp_media import (
+    WHATSAPP_MEDIA_ANALYSIS_EVENT,
+    WHATSAPP_MEDIA_DOWNLOAD_EVENT,
+    WhatsAppMediaError,
+    media_asset_data,
+    media_plaintext,
+    review_media_asset,
+    verify_media_token,
+)
+from app.communications.whatsapp_onboarding import (
+    LIVE_INTEGRATION_STATUSES,
+    MetaOnboardingError,
+    SecretBackendUnavailable,
+    WhatsAppOnboardingError,
+    build_onboarding_state,
+    create_onboarding_session,
+    get_meta_onboarding_adapter,
+    get_whatsapp_secret_store,
+    integration_data,
+    next_integration_version,
+    normalize_idempotency_key,
+    validate_onboarding_state,
+)
+from app.communications.whatsapp_outbound import (
+    WHATSAPP_TEMPLATE_SYNC_EVENT,
+    WhatsAppOutboundError,
+    queue_outbound_message,
+)
+from app.communications.whatsapp_outbound import (
+    create_template as create_whatsapp_template_domain,
+)
+from app.communications.whatsapp_outbound import (
+    message_data as outbound_message_data,
+)
+from app.communications.whatsapp_outbound import (
+    template_data as whatsapp_template_data,
+)
+from app.communications.whatsapp_pilot import (
+    WhatsAppPilotError,
+    change_pilot_status,
+    operations_snapshot,
+    pilot_data,
+    review_gate,
+)
+from app.communications.whatsapp_queue import (
+    WhatsAppQueueUnavailable,
+    publish_webhook_events,
+)
+from app.communications.whatsapp_readiness import whatsapp_readiness_data
+from app.communications.whatsapp_service_flow import (
+    WhatsAppServiceFlowError,
+    acknowledge_privacy,
+    confirm_request_draft,
+    identify_citizen,
+    save_request_draft,
+    service_flow_data,
+)
 from app.extensions import db, limiter
 from app.models import (
     ChannelAssistedSetting,
@@ -61,6 +141,21 @@ from app.models import (
     Tenant,
     User,
     UserStatus,
+    WhatsAppContact,
+    WhatsAppConversation,
+    WhatsAppConversationMode,
+    WhatsAppConversationState,
+    WhatsAppConversationTransition,
+    WhatsAppFlowDefinition,
+    WhatsAppIntegration,
+    WhatsAppIntegrationStatus,
+    WhatsAppMediaAsset,
+    WhatsAppMessage,
+    WhatsAppMessageTemplate,
+    WhatsAppOnboardingSession,
+    WhatsAppOnboardingStatus,
+    WhatsAppWebhookEvent,
+    WhatsAppWebhookEventStatus,
 )
 from app.outbox.handlers import EMAIL_RESPONSE_EVENT
 from app.requests.access import request_visibility_filters
@@ -69,8 +164,1246 @@ from app.requests.service import creation_event, next_protocol
 communications_bp = Blueprint("communications", __name__)
 
 
+@communications_bp.get("/webhooks/meta/whatsapp")
+@limiter.limit("60 per minute")
+def verify_global_whatsapp_webhook():
+    verify_token = current_app.config.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+    mode = request.args.get("hub.mode")
+    challenge = request.args.get("hub.challenge")
+    supplied_token = request.args.get("hub.verify_token")
+    if not verify_token:
+        return jsonify(error="webhook_unavailable"), 503
+    if mode == "subscribe" and supplied_token == verify_token and challenge:
+        return challenge, 200, {"Content-Type": "text/plain"}
+    return jsonify(error="invalid_token"), 403
+
+
+@communications_bp.post("/webhooks/meta/whatsapp")
+@limiter.limit("600 per minute")
+def receive_global_whatsapp_webhook():
+    started_at = time.perf_counter()
+    app_secret = current_app.config.get("META_APP_SECRET")
+    if not app_secret:
+        return jsonify(error="webhook_unavailable"), 503
+
+    max_bytes = int(current_app.config["WHATSAPP_WEBHOOK_MAX_BYTES"])
+    if request.content_length is not None and request.content_length > max_bytes:
+        current_app.logger.warning(
+            "WhatsApp webhook payload rejected",
+            extra={"security_event": "payload_too_large"},
+        )
+        return jsonify(error="payload_too_large"), 413
+    raw_body = request.get_data(cache=True)
+    if len(raw_body) > max_bytes:
+        current_app.logger.warning(
+            "WhatsApp webhook payload rejected",
+            extra={"security_event": "payload_too_large"},
+        )
+        return jsonify(error="payload_too_large"), 413
+    try:
+        verify_meta_signature(raw_body, request.headers.get("X-Hub-Signature-256"), app_secret)
+    except WhatsAppWebhookError:
+        current_app.logger.warning(
+            "WhatsApp webhook signature rejected",
+            extra={"security_event": "invalid_signature"},
+        )
+        return jsonify(error="invalid_signature"), 401
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="invalid_payload"), 400
+
+    correlation_id = request.headers.get("X-Correlation-ID") or uuid.uuid4().hex
+    result = ingest_meta_webhook(payload, correlation_id=correlation_id[:64])
+    if result.event_ids:
+        try:
+            publish_webhook_events(result.event_ids)
+        except WhatsAppQueueUnavailable:
+            db.session.rollback()
+            current_app.logger.exception(
+                "WhatsApp webhook persisted but queue publication failed",
+                extra={"correlation_id": correlation_id[:64]},
+            )
+    if result.persisted_event_ids:
+        ack_duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+        events = list(
+            db.session.scalars(
+                select(WhatsAppWebhookEvent).where(
+                    WhatsAppWebhookEvent.id.in_(result.persisted_event_ids)
+                )
+            )
+        )
+        for event in events:
+            event.ack_duration_ms = ack_duration_ms
+        db.session.commit()
+    return (
+        jsonify(
+            status="accepted",
+            accepted=result.accepted,
+            duplicated=result.duplicated,
+            quarantined=result.quarantined,
+            correlationId=correlation_id[:64],
+        ),
+        200,
+    )
+
+
 def _context() -> tuple[uuid.UUID, uuid.UUID]:
     return uuid.UUID(get_jwt()["tenant_id"]), uuid.UUID(get_jwt_identity())
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/readiness")
+@roles_required("admin")
+def whatsapp_readiness(tenant_id: uuid.UUID):
+    context_tenant_id, _ = _context()
+    if tenant_id != context_tenant_id:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    tenant = db.session.get(Tenant, tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    return jsonify(whatsapp_readiness_data(current_app.config, tenant.slug))
+
+
+def _whatsapp_tenant(tenant_id: uuid.UUID) -> Tenant | None:
+    context_tenant_id, _ = _context()
+    if tenant_id != context_tenant_id:
+        return None
+    return db.session.get(Tenant, tenant_id)
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/integration")
+@roles_required("admin")
+def get_whatsapp_integration(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    integration = (
+        db.session.execute(
+            select(WhatsAppIntegration)
+            .where(WhatsAppIntegration.tenant_id == tenant_id)
+            .order_by(WhatsAppIntegration.version.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if integration is None:
+        return jsonify(error="resource_not_found", message="Integracao nao encontrada."), 404
+    return jsonify(integration_data(integration))
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/health")
+@roles_required("admin")
+def get_whatsapp_health(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    integration = (
+        db.session.execute(
+            select(WhatsAppIntegration)
+            .where(WhatsAppIntegration.tenant_id == tenant_id)
+            .order_by(WhatsAppIntegration.version.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if integration is None:
+        return jsonify(error="resource_not_found", message="Integracao nao encontrada."), 404
+
+    last_inbound_at = db.session.scalar(
+        select(func.max(WhatsAppWebhookEvent.received_at)).where(
+            WhatsAppWebhookEvent.tenant_id == tenant_id,
+            WhatsAppWebhookEvent.event_type == "message",
+        )
+    )
+    failed_events = db.session.scalar(
+        select(func.count(WhatsAppWebhookEvent.id)).where(
+            WhatsAppWebhookEvent.tenant_id == tenant_id,
+            WhatsAppWebhookEvent.status == WhatsAppWebhookEventStatus.FAILED,
+        )
+    )
+    webhook_ready = integration.webhook_subscribed_at is not None
+    messaging_ready = integration.status == WhatsAppIntegrationStatus.ACTIVE
+    issues = []
+    if not webhook_ready:
+        issues.append("WEBHOOK_NOT_SUBSCRIBED")
+    if not messaging_ready:
+        issues.append("INTEGRATION_NOT_ACTIVE")
+    if failed_events:
+        issues.append("INBOUND_EVENTS_FAILED")
+    if integration.last_health_error:
+        issues.append("INTEGRATION_HEALTH_ERROR")
+
+    if integration.status in {
+        WhatsAppIntegrationStatus.SUSPENDED,
+        WhatsAppIntegrationStatus.DISCONNECTED,
+        WhatsAppIntegrationStatus.REVOKED,
+    }:
+        status = "DOWN"
+    elif issues:
+        status = "DEGRADED"
+    else:
+        status = "HEALTHY"
+    operation = operations_snapshot(tenant_id)
+    last_outbound_at = db.session.scalar(
+        select(func.max(WhatsAppMessage.occurred_at)).where(
+            WhatsAppMessage.tenant_id == tenant_id,
+            WhatsAppMessage.direction == "OUTBOUND",
+        )
+    )
+    return jsonify(
+        status=status,
+        webhook=webhook_ready,
+        messaging=messaging_ready,
+        lastInboundAt=last_inbound_at.isoformat() if last_inbound_at else None,
+        lastOutboundAt=last_outbound_at.isoformat() if last_outbound_at else None,
+        issues=issues,
+        operation=operation,
+    )
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/operations")
+@roles_required("admin", "manager")
+def get_whatsapp_operations(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    try:
+        window_hours = int(request.args.get("windowHours") or 0) or None
+    except (TypeError, ValueError):
+        return jsonify(error="validation_error", message="Janela de metricas invalida."), 422
+    return jsonify(operations_snapshot(tenant_id, window_hours=window_hours))
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/pilot")
+@roles_required("admin", "manager")
+def get_whatsapp_pilot(tenant_id: uuid.UUID):
+    tenant = _whatsapp_tenant(tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    readiness = whatsapp_readiness_data(current_app.config, tenant.slug)
+    return jsonify(pilot_data(tenant_id, readiness=readiness))
+
+
+@communications_bp.put("/tenants/<uuid:tenant_id>/whatsapp/pilot/gates/<gate_key>")
+@roles_required("admin")
+def update_whatsapp_pilot_gate(tenant_id: uuid.UUID, gate_key: str):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    _, actor_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        expires_at = _optional_iso_datetime(payload.get("expiraEm"))
+        gate = review_gate(
+            tenant_id,
+            actor_id,
+            gate_key,
+            status=payload.get("status"),
+            evidence_reference=payload.get("evidenciaReferencia"),
+            notes=payload.get("observacao"),
+            expires_at=expires_at,
+        )
+        db.session.flush()
+        add_audit(
+            tenant_id,
+            actor_id,
+            "whatsapp.pilot.gate.reviewed",
+            "whatsapp_pilot_gate",
+            gate.id,
+            after={
+                "gate": gate.gate_key,
+                "status": gate.status,
+                "evidenceHash": gate.evidence_hash,
+                "expiresAt": gate.expires_at.isoformat() if gate.expires_at else None,
+            },
+        )
+        db.session.commit()
+    except (WhatsAppPilotError, ValueError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    tenant = db.session.get(Tenant, tenant_id)
+    return jsonify(
+        pilot_data(
+            tenant_id,
+            readiness=whatsapp_readiness_data(current_app.config, tenant.slug),
+        )
+    )
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/pilot/actions")
+@roles_required("admin")
+def update_whatsapp_pilot_status(tenant_id: uuid.UUID):
+    tenant = _whatsapp_tenant(tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    _, actor_id = _context()
+    payload = request.get_json(silent=True) or {}
+    try:
+        control = change_pilot_status(
+            tenant_id,
+            actor_id,
+            action=payload.get("action"),
+            reason=payload.get("reason"),
+            readiness=whatsapp_readiness_data(current_app.config, tenant.slug),
+        )
+        db.session.flush()
+        add_audit(
+            tenant_id,
+            actor_id,
+            "whatsapp.pilot.status.changed",
+            "whatsapp_pilot_control",
+            control.id,
+            after={
+                "status": control.status,
+                "outboundPaused": control.outbound_paused,
+                "reasonProvided": bool(control.pause_reason),
+            },
+        )
+        db.session.commit()
+    except WhatsAppPilotError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(
+        pilot_data(
+            tenant_id,
+            readiness=whatsapp_readiness_data(current_app.config, tenant.slug),
+        )
+    )
+
+
+def _optional_iso_datetime(value) -> datetime | None:
+    if value in (None, ""):
+        return None
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/conversations")
+@roles_required("admin", "manager", "staff")
+def list_whatsapp_conversations(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    statement = (
+        select(WhatsAppConversation, WhatsAppContact, User)
+        .join(
+            WhatsAppContact,
+            (WhatsAppContact.tenant_id == WhatsAppConversation.tenant_id)
+            & (WhatsAppContact.id == WhatsAppConversation.contact_id),
+        )
+        .outerjoin(
+            User,
+            (User.tenant_id == WhatsAppConversation.tenant_id)
+            & (User.id == WhatsAppConversation.assigned_user_id),
+        )
+        .where(WhatsAppConversation.tenant_id == tenant_id)
+    )
+    state = str(request.args.get("estado") or "").strip().upper()
+    mode = str(request.args.get("modo") or "").strip().upper()
+    assignee = str(request.args.get("responsavelId") or "").strip()
+    query = str(request.args.get("q") or "").strip()[:120]
+    unread_only = request.args.get("naoLidas") == "true"
+    if state:
+        try:
+            statement = statement.where(
+                WhatsAppConversation.state == WhatsAppConversationState(state)
+            )
+        except ValueError:
+            return jsonify(error="validation_error", message="Estado invalido."), 422
+    if mode:
+        try:
+            statement = statement.where(WhatsAppConversation.mode == WhatsAppConversationMode(mode))
+        except ValueError:
+            return jsonify(error="validation_error", message="Modo invalido."), 422
+    if assignee == "SEM_RESPONSAVEL":
+        statement = statement.where(WhatsAppConversation.assigned_user_id.is_(None))
+    elif assignee:
+        try:
+            statement = statement.where(
+                WhatsAppConversation.assigned_user_id == uuid.UUID(assignee)
+            )
+        except ValueError:
+            return jsonify(error="validation_error", message="Responsavel invalido."), 422
+    if query:
+        statement = statement.where(conversation_search_filter(query))
+    if unread_only:
+        statement = statement.where(WhatsAppConversation.unread_count > 0)
+
+    rows = db.session.execute(
+        statement.order_by(
+            WhatsAppConversation.last_message_at.desc(), WhatsAppConversation.id
+        ).limit(200)
+    ).all()
+    content = []
+    for conversation, contact, responsible in rows:
+        last_channel_message = (
+            db.session.execute(
+                select(ChannelMessage)
+                .join(
+                    WhatsAppMessage,
+                    WhatsAppMessage.channel_message_id == ChannelMessage.id,
+                )
+                .where(
+                    WhatsAppMessage.tenant_id == tenant_id,
+                    WhatsAppMessage.conversation_id == conversation.id,
+                )
+                .order_by(WhatsAppMessage.occurred_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        content.append(
+            conversation_summary_data(
+                conversation,
+                contact=contact,
+                assignee=responsible,
+                last_message=last_channel_message,
+            )
+        )
+    users = list(
+        db.session.scalars(
+            select(User)
+            .where(
+                User.tenant_id == tenant_id,
+                User.status == UserStatus.ACTIVE,
+                User.role != "representative",
+            )
+            .order_by(User.name)
+        )
+    )
+    return jsonify(
+        content=content,
+        resumo={
+            "total": len(content),
+            "naoLidas": sum(item["naoLidas"] for item in content),
+            "humanas": sum(item["modo"] == "HUMAN" for item in content),
+            "semResponsavel": sum(item["responsavel"] is None for item in content),
+        },
+        responsaveis=[{"id": str(user.id), "nome": user.name} for user in users],
+    )
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>")
+@roles_required("admin", "manager", "staff")
+def get_whatsapp_conversation(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    contact = db.session.execute(
+        select(WhatsAppContact).where(
+            WhatsAppContact.tenant_id == tenant_id,
+            WhatsAppContact.id == conversation.contact_id,
+        )
+    ).scalar_one()
+    assignee = (
+        db.session.execute(
+            select(User).where(
+                User.tenant_id == tenant_id,
+                User.id == conversation.assigned_user_id,
+            )
+        ).scalar_one_or_none()
+        if conversation.assigned_user_id
+        else None
+    )
+    message_rows = db.session.execute(
+        select(WhatsAppMessage, ChannelMessage)
+        .outerjoin(
+            ChannelMessage,
+            (ChannelMessage.tenant_id == WhatsAppMessage.tenant_id)
+            & (ChannelMessage.id == WhatsAppMessage.channel_message_id),
+        )
+        .where(
+            WhatsAppMessage.tenant_id == tenant_id,
+            WhatsAppMessage.conversation_id == conversation_id,
+        )
+        .order_by(WhatsAppMessage.occurred_at, WhatsAppMessage.id)
+        .limit(500)
+    ).all()
+    transitions = list(
+        db.session.scalars(
+            select(WhatsAppConversationTransition)
+            .where(
+                WhatsAppConversationTransition.tenant_id == tenant_id,
+                WhatsAppConversationTransition.conversation_id == conversation_id,
+            )
+            .order_by(WhatsAppConversationTransition.occurred_at)
+        )
+    )
+    result = conversation_detail_data(
+        conversation,
+        contact=contact,
+        assignee=assignee,
+        messages=list(message_rows),
+        transitions=transitions,
+    )
+    result["jornada"] = service_flow_data(conversation, contact)
+    result["whatsappFlow"] = flow_state_data(conversation)
+    result["midias"] = [
+        media_asset_data(item)
+        for item in db.session.scalars(
+            select(WhatsAppMediaAsset)
+            .where(
+                WhatsAppMediaAsset.tenant_id == tenant_id,
+                WhatsAppMediaAsset.conversation_id == conversation.id,
+            )
+            .order_by(WhatsAppMediaAsset.created_at)
+        )
+    ]
+    result["categorias"] = [
+        {"id": str(item.id), "nome": item.name}
+        for item in db.session.scalars(
+            select(RequestCategory)
+            .where(
+                RequestCategory.tenant_id == tenant_id,
+                RequestCategory.active.is_(True),
+            )
+            .order_by(RequestCategory.name)
+        )
+    ]
+    result["templatesSaida"] = [
+        whatsapp_template_data(item)
+        for item in db.session.scalars(
+            select(WhatsAppMessageTemplate)
+            .where(
+                WhatsAppMessageTemplate.tenant_id == tenant_id,
+                WhatsAppMessageTemplate.integration_id == conversation.integration_id,
+                WhatsAppMessageTemplate.status == "APPROVED",
+                WhatsAppMessageTemplate.active.is_(True),
+                WhatsAppMessageTemplate.category != "MARKETING",
+            )
+            .order_by(WhatsAppMessageTemplate.name, WhatsAppMessageTemplate.version.desc())
+        )
+    ]
+    return jsonify(result)
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/messages")
+@roles_required("admin", "manager", "staff")
+def send_whatsapp_conversation_message(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        template_id = uuid.UUID(str(payload["templateId"])) if payload.get("templateId") else None
+        message, created = queue_outbound_message(
+            conversation,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            idempotency_key=str(request.headers.get("Idempotency-Key") or ""),
+            text=payload.get("texto"),
+            template_id=template_id,
+            parameters=payload.get("parametros") or [],
+        )
+        if created:
+            add_audit(
+                tenant_id,
+                uuid.UUID(get_jwt_identity()),
+                "whatsapp.outbound.queued",
+                "whatsapp_message",
+                message.id,
+                after={
+                    "tipo": message.message_type,
+                    "politica": message.policy_decision,
+                    "templateId": str(message.template_id) if message.template_id else None,
+                },
+            )
+        db.session.commit()
+    except (ValueError, WhatsAppOutboundError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(outbound_message_data(message)), 202 if created else 200
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/templates")
+@roles_required("admin", "manager")
+def list_whatsapp_message_templates(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete não encontrado."), 404
+    items = list(
+        db.session.scalars(
+            select(WhatsAppMessageTemplate)
+            .where(WhatsAppMessageTemplate.tenant_id == tenant_id)
+            .order_by(WhatsAppMessageTemplate.name, WhatsAppMessageTemplate.version.desc())
+        )
+    )
+    return jsonify(content=[whatsapp_template_data(item) for item in items])
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/templates")
+@roles_required("admin")
+def create_whatsapp_message_template(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete não encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    integration = db.session.scalar(
+        select(WhatsAppIntegration)
+        .where(
+            WhatsAppIntegration.tenant_id == tenant_id,
+            WhatsAppIntegration.status == WhatsAppIntegrationStatus.ACTIVE,
+        )
+        .order_by(WhatsAppIntegration.version.desc())
+    )
+    if integration is None:
+        return jsonify(error="validation_error", message="Integração ativa não encontrada."), 422
+    try:
+        item = create_whatsapp_template_domain(
+            tenant_id=tenant_id,
+            integration_id=integration.id,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            name=payload.get("nome"),
+            language=payload.get("idioma") or "pt_BR",
+            category=payload.get("categoria") or "UTILITY",
+            body=payload.get("conteudo"),
+            variables=payload.get("variaveis") or [],
+        )
+        add_audit(
+            tenant_id,
+            uuid.UUID(get_jwt_identity()),
+            "whatsapp.template.created",
+            "whatsapp_message_template",
+            item.id,
+            after={"nome": item.name, "versao": item.version, "status": item.status},
+        )
+        db.session.commit()
+    except WhatsAppOutboundError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(whatsapp_template_data(item)), 202
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/templates/<uuid:template_id>/refresh")
+@roles_required("admin", "manager")
+def refresh_whatsapp_message_template(tenant_id: uuid.UUID, template_id: uuid.UUID):
+    item = db.session.scalar(
+        select(WhatsAppMessageTemplate).where(
+            WhatsAppMessageTemplate.tenant_id == tenant_id,
+            WhatsAppMessageTemplate.id == template_id,
+        )
+    )
+    if item is None or _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Template não encontrado."), 404
+    db.session.add(
+        OutboxEvent(
+            tenant_id=tenant_id,
+            event_type=WHATSAPP_TEMPLATE_SYNC_EVENT,
+            aggregate_type="whatsapp_message_template",
+            aggregate_id=str(item.id),
+            payload={"templateId": str(item.id)},
+        )
+    )
+    db.session.commit()
+    return jsonify(whatsapp_template_data(item)), 202
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/flows")
+@roles_required("admin", "manager")
+def list_whatsapp_flows(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    items = list(
+        db.session.scalars(
+            select(WhatsAppFlowDefinition)
+            .where(WhatsAppFlowDefinition.tenant_id == tenant_id)
+            .order_by(
+                WhatsAppFlowDefinition.flow_key,
+                WhatsAppFlowDefinition.environment,
+                WhatsAppFlowDefinition.version.desc(),
+            )
+        )
+    )
+    return jsonify(content=[flow_definition_data(item) for item in items])
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/flows/bootstrap")
+@roles_required("admin")
+def bootstrap_whatsapp_flows(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    try:
+        items = bootstrap_flow_definitions(
+            tenant_id,
+            uuid.UUID(get_jwt_identity()),
+            environment=_flow_environment(),
+        )
+        db.session.commit()
+    except WhatsAppFlowError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(content=[flow_definition_data(item) for item in items]), 201
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/flows/versions")
+@roles_required("admin")
+def create_whatsapp_flow_version(tenant_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = create_flow_version(
+            tenant_id,
+            uuid.UUID(get_jwt_identity()),
+            flow_key=str(payload.get("chave") or ""),
+            environment=_flow_environment(),
+        )
+        db.session.commit()
+    except WhatsAppFlowError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(flow_definition_data(item)), 201
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/flows/<uuid:definition_id>/activate")
+@roles_required("admin")
+def activate_whatsapp_flow(tenant_id: uuid.UUID, definition_id: uuid.UUID):
+    if _whatsapp_tenant(tenant_id) is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    item = db.session.execute(
+        select(WhatsAppFlowDefinition).where(
+            WhatsAppFlowDefinition.tenant_id == tenant_id,
+            WhatsAppFlowDefinition.id == definition_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        return jsonify(error="resource_not_found", message="Flow nao encontrado."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        activate_flow_definition(item, meta_flow_id=payload.get("metaFlowId"))
+        db.session.commit()
+    except WhatsAppFlowError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(flow_definition_data(item))
+
+
+@communications_bp.post(
+    "/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/flows/<flow_key>/launch"
+)
+@roles_required("admin", "manager", "staff")
+def launch_whatsapp_flow(tenant_id: uuid.UUID, conversation_id: uuid.UUID, flow_key: str):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    try:
+        mode, session = launch_flow(
+            conversation,
+            _conversation_contact(conversation),
+            actor_id=uuid.UUID(get_jwt_identity()),
+            flow_key=flow_key,
+            environment=_flow_environment(),
+        )
+        db.session.commit()
+    except (WhatsAppFlowError, ConversationValidationError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return (
+        jsonify(
+            modo=mode,
+            estado=conversation.state.value,
+            sessaoId=str(session.id) if session else None,
+            expiraEm=session.expires_at.isoformat() if session else None,
+        ),
+        202 if session else 200,
+    )
+
+
+@communications_bp.get("/tenants/<uuid:tenant_id>/whatsapp/media/<uuid:asset_id>/download")
+@roles_required("admin", "manager", "staff")
+def download_whatsapp_media(tenant_id: uuid.UUID, asset_id: uuid.UUID):
+    asset = _tenant_media_asset(tenant_id, asset_id)
+    if asset is None:
+        return jsonify(error="resource_not_found", message="Mídia não encontrada."), 404
+    if not verify_media_token(str(request.args.get("token") or ""), asset):
+        return jsonify(error="invalid_token", message="Link inválido ou expirado."), 403
+    try:
+        content = media_plaintext(asset)
+    except Exception:
+        return jsonify(error="resource_not_found", message="Arquivo não encontrado."), 404
+    return send_file(
+        io.BytesIO(content),
+        mimetype=asset.mime_type,
+        as_attachment=True,
+        download_name=asset.original_name or f"whatsapp-{asset.id}",
+    )
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/media/<uuid:asset_id>/review")
+@roles_required("admin", "manager", "staff")
+def review_whatsapp_media(tenant_id: uuid.UUID, asset_id: uuid.UUID):
+    asset = _tenant_media_asset(tenant_id, asset_id)
+    if asset is None:
+        return jsonify(error="resource_not_found", message="Mídia não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        review_media_asset(
+            asset,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            action=str(payload.get("acao") or ""),
+            text=payload.get("texto"),
+        )
+        add_audit(
+            tenant_id,
+            uuid.UUID(get_jwt_identity()),
+            "whatsapp.media.reviewed",
+            "whatsapp_media_asset",
+            asset.id,
+            after={"decisao": asset.review_status, "analise": asset.analysis_type},
+        )
+        db.session.commit()
+    except WhatsAppMediaError as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(media_asset_data(asset))
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/media/<uuid:asset_id>/retry")
+@roles_required("admin", "manager", "staff")
+def retry_whatsapp_media(tenant_id: uuid.UUID, asset_id: uuid.UUID):
+    asset = _tenant_media_asset(tenant_id, asset_id)
+    if asset is None:
+        return jsonify(error="resource_not_found", message="Mídia não encontrada."), 404
+    if asset.status == "FAILED":
+        asset.status = "RECEIVED"
+        event_type = WHATSAPP_MEDIA_DOWNLOAD_EVENT
+    elif asset.analysis_status == "FAILED" and asset.status == "READY":
+        asset.analysis_status = "PENDING"
+        asset.review_status = "PENDING"
+        event_type = WHATSAPP_MEDIA_ANALYSIS_EVENT
+    else:
+        return jsonify(error="conflict", message="A mídia não permite reprocessamento."), 409
+    asset.error = None
+    asset.error_code = None
+    db.session.add(
+        OutboxEvent(
+            tenant_id=tenant_id,
+            event_type=event_type,
+            aggregate_type="whatsapp_media_asset",
+            aggregate_id=str(asset.id),
+            payload={"mediaAssetId": str(asset.id)},
+        )
+    )
+    db.session.commit()
+    return jsonify(media_asset_data(asset)), 202
+
+
+def _tenant_media_asset(tenant_id: uuid.UUID, asset_id: uuid.UUID) -> WhatsAppMediaAsset | None:
+    if _whatsapp_tenant(tenant_id) is None:
+        return None
+    return db.session.execute(
+        select(WhatsAppMediaAsset).where(
+            WhatsAppMediaAsset.id == asset_id,
+            WhatsAppMediaAsset.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/privacy")
+@roles_required("admin", "manager", "staff")
+def acknowledge_whatsapp_privacy(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    contact = _conversation_contact(conversation)
+    payload = request.get_json(silent=True) or {}
+    try:
+        record = acknowledge_privacy(
+            conversation,
+            contact,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            legal_basis=str(payload.get("baseLegal") or ""),
+            consent_required=bool(payload.get("consentimentoNecessario", False)),
+            granted=payload.get("concedido"),
+            provider_message_id=payload.get("mensagemEvidenciaId"),
+        )
+        db.session.commit()
+    except (ConversationValidationError, WhatsAppServiceFlowError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(
+        estado=conversation.state.value,
+        privacidade={
+            "versaoAviso": record.notice_version,
+            "baseLegal": record.legal_basis,
+            "evidenciaHash": record.evidence_hash,
+        },
+    )
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/citizen")
+@roles_required("admin", "manager", "staff")
+def identify_whatsapp_citizen(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        citizen_id = uuid.UUID(str(payload["cidadaoId"])) if payload.get("cidadaoId") else None
+        citizen, created = identify_citizen(
+            conversation,
+            _conversation_contact(conversation),
+            actor_id=uuid.UUID(get_jwt_identity()),
+            citizen_id=citizen_id,
+            name=payload.get("nome"),
+            confirmed=payload.get("confirmado") is True,
+        )
+        db.session.commit()
+    except (ValueError, ConversationValidationError, WhatsAppServiceFlowError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return (
+        jsonify(
+            estado=conversation.state.value,
+            cidadao={"id": str(citizen.id), "nome": citizen.social_name or citizen.name},
+        ),
+        201 if created else 200,
+    )
+
+
+@communications_bp.put(
+    "/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/request-draft"
+)
+@roles_required("admin", "manager", "staff")
+def update_whatsapp_request_draft(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        category_id = uuid.UUID(str(payload["categoriaId"])) if payload.get("categoriaId") else None
+        draft = save_request_draft(
+            conversation,
+            _conversation_contact(conversation),
+            actor_id=uuid.UUID(get_jwt_identity()),
+            title=payload.get("titulo"),
+            description=str(payload.get("descricao") or ""),
+            address=payload.get("endereco"),
+            category_id=category_id,
+        )
+        db.session.commit()
+    except (ValueError, ConversationValidationError, WhatsAppServiceFlowError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    return jsonify(id=str(draft.id), estado=conversation.state.value, status=draft.status)
+
+
+@communications_bp.post(
+    "/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/request-draft/confirm"
+)
+@roles_required("admin", "manager", "staff")
+def confirm_whatsapp_request(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        service_request, public_key, created = confirm_request_draft(
+            conversation,
+            _conversation_contact(conversation),
+            actor_id=uuid.UUID(get_jwt_identity()),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+            confirmed=payload.get("confirmado") is True,
+        )
+        db.session.commit()
+    except (ConversationValidationError, WhatsAppServiceFlowError) as error:
+        db.session.rollback()
+        return jsonify(error="validation_error", message=str(error)), 422
+    response = {
+        "id": str(service_request.id),
+        "protocoloPublico": service_request.public_protocol,
+        "estado": conversation.state.value,
+        "criada": created,
+    }
+    if public_key:
+        response["chaveAcompanhamento"] = public_key
+    return jsonify(response), 201 if created else 200
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/read")
+@roles_required("admin", "manager", "staff")
+def read_whatsapp_conversation(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    mark_conversation_read(conversation)
+    db.session.commit()
+    return jsonify(naoLidas=0, lidaEm=conversation.last_read_at.isoformat())
+
+
+@communications_bp.put("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/assignment")
+@roles_required("admin", "manager", "staff")
+def update_whatsapp_conversation_assignment(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        assignee_id = (
+            uuid.UUID(str(payload["responsavelId"])) if payload.get("responsavelId") else None
+        )
+        assign_conversation(
+            conversation,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            assignee_id=assignee_id,
+        )
+    except (ValueError, ConversationValidationError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    db.session.commit()
+    return jsonify(status="updated", responsavelId=str(assignee_id) if assignee_id else None)
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/handoff")
+@roles_required("admin", "manager", "staff")
+def handoff_whatsapp_conversation(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        assignee_id = uuid.UUID(str(payload["assigneeId"])) if payload.get("assigneeId") else None
+        start_handoff(
+            conversation,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            assignee_id=assignee_id,
+            reason=str(payload.get("reason") or "").strip()[:500],
+        )
+    except (ValueError, ConversationValidationError) as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    db.session.commit()
+    return jsonify(estado=conversation.state.value, modo=conversation.mode.value), 200
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/conversations/<uuid:conversation_id>/resume-bot")
+@roles_required("admin", "manager")
+def resume_whatsapp_conversation_bot(tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    conversation = _tenant_conversation(tenant_id, conversation_id)
+    if conversation is None:
+        return jsonify(error="resource_not_found", message="Conversa nao encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        resume_bot(
+            conversation,
+            actor_id=uuid.UUID(get_jwt_identity()),
+            reason=str(payload.get("reason") or "").strip()[:500],
+        )
+    except ConversationValidationError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    db.session.commit()
+    return jsonify(estado=conversation.state.value, modo=conversation.mode.value), 200
+
+
+def _tenant_conversation(
+    tenant_id: uuid.UUID, conversation_id: uuid.UUID
+) -> WhatsAppConversation | None:
+    if _whatsapp_tenant(tenant_id) is None:
+        return None
+    return db.session.execute(
+        select(WhatsAppConversation).where(
+            WhatsAppConversation.tenant_id == tenant_id,
+            WhatsAppConversation.id == conversation_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _conversation_contact(conversation: WhatsAppConversation) -> WhatsAppContact:
+    return db.session.execute(
+        select(WhatsAppContact).where(
+            WhatsAppContact.tenant_id == conversation.tenant_id,
+            WhatsAppContact.id == conversation.contact_id,
+        )
+    ).scalar_one()
+
+
+def _flow_environment() -> str:
+    environment = str(current_app.config.get("APP_ENV") or "development").lower()
+    return {
+        "production": "PRODUCTION",
+        "staging": "STAGING",
+    }.get(environment, "SANDBOX")
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/onboarding-sessions")
+@roles_required("admin")
+@limiter.limit("10 per minute")
+def create_whatsapp_onboarding(tenant_id: uuid.UUID):
+    tenant = _whatsapp_tenant(tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    readiness = whatsapp_readiness_data(current_app.config, tenant.slug)
+    if not readiness["prontoSandbox"] or not readiness["embeddedSignupHabilitado"]:
+        return (
+            jsonify(
+                error="whatsapp_not_ready",
+                message="O onboarding WhatsApp ainda nao esta habilitado para este gabinete.",
+                pendencias=readiness["pendencias"],
+            ),
+            503,
+        )
+    _, user_id = _context()
+    try:
+        idempotency_key = normalize_idempotency_key(request.headers.get("Idempotency-Key"))
+        session, created = create_onboarding_session(
+            tenant=tenant,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+        )
+        if session.status != WhatsAppOnboardingStatus.PENDING:
+            raise WhatsAppOnboardingError(
+                "idempotency_conflict",
+                "A chave de idempotencia pertence a uma sessao encerrada.",
+                409,
+            )
+        state = build_onboarding_state(session, str(current_app.config["SECRET_KEY"]))
+        if created:
+            add_audit(
+                tenant_id,
+                user_id,
+                "whatsapp.onboarding.started",
+                "whatsapp_onboarding_session",
+                session.id,
+                after={"status": session.status.value, "expiresAt": session.expires_at.isoformat()},
+            )
+        db.session.commit()
+    except WhatsAppOnboardingError as exc:
+        db.session.rollback()
+        return jsonify(error=exc.code, message=exc.message), exc.status_code
+    return (
+        jsonify(
+            state=state,
+            expiresAt=session.expires_at.isoformat(),
+            appId=current_app.config["WHATSAPP_META_APP_ID"],
+            configurationId=current_app.config["WHATSAPP_META_CONFIGURATION_ID"],
+            graphApiVersion=current_app.config["WHATSAPP_GRAPH_API_VERSION"],
+        ),
+        201 if created else 200,
+    )
+
+
+def _fail_whatsapp_onboarding(session_id: uuid.UUID, code: str) -> None:
+    db.session.rollback()
+    session = db.session.get(WhatsAppOnboardingSession, session_id)
+    if session:
+        session.status = WhatsAppOnboardingStatus.FAILED
+        session.failure_code = code
+        session.state_nonce = None
+        db.session.commit()
+
+
+@communications_bp.post("/tenants/<uuid:tenant_id>/whatsapp/onboarding-callback")
+@roles_required("admin")
+@limiter.limit("10 per minute")
+def complete_whatsapp_onboarding(tenant_id: uuid.UUID):
+    tenant = _whatsapp_tenant(tenant_id)
+    if tenant is None:
+        return jsonify(error="resource_not_found", message="Gabinete nao encontrado."), 404
+    readiness = whatsapp_readiness_data(current_app.config, tenant.slug)
+    if not readiness["prontoSandbox"] or not readiness["embeddedSignupHabilitado"]:
+        return (
+            jsonify(
+                error="whatsapp_not_ready",
+                message="O onboarding WhatsApp foi desabilitado para este gabinete.",
+            ),
+            503,
+        )
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get("code") or "").strip()
+    state = str(payload.get("state") or "").strip()
+    if not code or len(code) > 4096 or not state or len(state) > 512:
+        return jsonify(error="invalid_callback", message="Callback da Meta invalido."), 400
+    _, user_id = _context()
+    try:
+        session = validate_onboarding_state(tenant_id=tenant_id, state=state)
+        if session.initiated_by_id != user_id:
+            raise WhatsAppOnboardingError(
+                "invalid_state", "A sessao pertence a outro administrador."
+            )
+        session.status = WhatsAppOnboardingStatus.PROCESSING
+        session.consumed_at = datetime.now(UTC)
+        db.session.commit()
+    except WhatsAppOnboardingError as exc:
+        db.session.rollback()
+        return jsonify(error=exc.code, message=exc.message), exc.status_code
+
+    session_id = session.id
+    secret_reference = None
+    try:
+        result = get_meta_onboarding_adapter().complete(code)
+        if not result.webhook_subscribed:
+            raise MetaOnboardingError("A Meta nao confirmou a assinatura do webhook.")
+        if not result.phone_registered:
+            raise MetaOnboardingError("A Meta nao confirmou o registro do numero.")
+        conflict = db.session.execute(
+            select(WhatsAppIntegration.id).where(
+                WhatsAppIntegration.phone_number_id == result.phone_number_id,
+                WhatsAppIntegration.status.in_(LIVE_INTEGRATION_STATUSES),
+            )
+        ).first()
+        if conflict:
+            raise WhatsAppOnboardingError(
+                "phone_number_conflict",
+                "O numero autorizado ja esta vinculado a uma integracao.",
+                409,
+            )
+        integration = WhatsAppIntegration(
+            tenant_id=tenant_id,
+            business_portfolio_id=result.business_portfolio_id,
+            waba_id=result.waba_id,
+            phone_number_id=result.phone_number_id,
+            display_phone=result.display_phone,
+            display_name=result.display_name,
+            status=WhatsAppIntegrationStatus.PENDING,
+            version=next_integration_version(tenant_id),
+            token_secret_ref="pending",  # noqa: S106 - overwritten before commit
+            webhook_subscribed_at=datetime.now(UTC),
+            created_by_id=user_id,
+        )
+        db.session.add(integration)
+        db.session.flush()
+        secret_reference = get_whatsapp_secret_store().put(
+            tenant_id=tenant_id,
+            integration_id=integration.id,
+            value=json.dumps(
+                {"access_token": result.access_token, "two_step_pin": result.two_step_pin},
+                separators=(",", ":"),
+            ),
+        )
+        integration.token_secret_ref = secret_reference
+        session = db.session.get(WhatsAppOnboardingSession, session_id)
+        session.status = WhatsAppOnboardingStatus.COMPLETED
+        session.integration_id = integration.id
+        session.state_nonce = None
+        add_audit(
+            tenant_id,
+            user_id,
+            "whatsapp.onboarding.completed",
+            "whatsapp_integration",
+            integration.id,
+            after={"status": integration.status.value, "version": integration.version},
+        )
+        db.session.commit()
+    except WhatsAppOnboardingError as exc:
+        _fail_whatsapp_onboarding(session_id, exc.code)
+        return jsonify(error=exc.code, message=exc.message), exc.status_code
+    except SecretBackendUnavailable:
+        _fail_whatsapp_onboarding(session_id, "secret_backend_unavailable")
+        return (
+            jsonify(
+                error="secret_backend_unavailable",
+                message="O cofre de segredos do WhatsApp nao esta disponivel.",
+            ),
+            503,
+        )
+    except MetaOnboardingError:
+        _fail_whatsapp_onboarding(session_id, "meta_onboarding_failed")
+        return (
+            jsonify(
+                error="meta_onboarding_failed",
+                message="Nao foi possivel validar o onboarding junto a Meta.",
+            ),
+            502,
+        )
+    except IntegrityError:
+        if secret_reference:
+            get_whatsapp_secret_store().delete(secret_reference)
+        _fail_whatsapp_onboarding(session_id, "integration_conflict")
+        return (
+            jsonify(error="integration_conflict", message="A integracao entrou em conflito."),
+            409,
+        )
+    return jsonify(integration_data(integration)), 202
 
 
 def _parse_datetime(value, timezone_name: str = "UTC") -> datetime:
@@ -655,6 +1988,25 @@ def decide_channel_identity_review(review_id: uuid.UUID):
         review.status = ChannelIdentityReviewStatus.VINCULADA
         review.selected_citizen_id = citizen.id
         review.decision_type = "VINCULO_EXISTENTE"
+        whatsapp_contact = db.session.execute(
+            select(WhatsAppContact)
+            .join(
+                WhatsAppConversation,
+                (WhatsAppConversation.tenant_id == WhatsAppContact.tenant_id)
+                & (WhatsAppConversation.contact_id == WhatsAppContact.id),
+            )
+            .join(
+                WhatsAppMessage,
+                (WhatsAppMessage.tenant_id == WhatsAppConversation.tenant_id)
+                & (WhatsAppMessage.conversation_id == WhatsAppConversation.id),
+            )
+            .where(
+                WhatsAppContact.tenant_id == tenant_id,
+                WhatsAppMessage.channel_message_id == review.message_id,
+            )
+        ).scalar_one_or_none()
+        if whatsapp_contact is not None:
+            whatsapp_contact.citizen_id = citizen.id
     elif decision == "DESCARTAR":
         review.status = ChannelIdentityReviewStatus.DESCARTADA
         review.selected_citizen_id = None
@@ -866,6 +2218,8 @@ def receive_resend_inbound_email(tenant_slug: str):
 @communications_bp.get("/canais/webhooks/<tenant_slug>/whatsapp/meta")
 @limiter.limit("30 per minute")
 def verify_whatsapp_webhook(tenant_slug: str):
+    if current_app.config.get("WHATSAPP_PLATFORM_ENABLED"):
+        return jsonify(error="global_webhook_required"), 410
     tenant = db.session.execute(
         select(Tenant).where(Tenant.slug == tenant_slug)
     ).scalar_one_or_none()
@@ -888,6 +2242,8 @@ def verify_whatsapp_webhook(tenant_slug: str):
 @communications_bp.post("/canais/webhooks/<tenant_slug>/whatsapp/meta")
 @limiter.limit("30 per minute")
 def receive_whatsapp_business_webhook(tenant_slug: str):
+    if current_app.config.get("WHATSAPP_PLATFORM_ENABLED"):
+        return jsonify(error="global_webhook_required"), 410
     tenant = db.session.execute(
         select(Tenant).where(Tenant.slug == tenant_slug)
     ).scalar_one_or_none()

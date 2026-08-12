@@ -17,3 +17,23 @@ benchmark/*.csv
 benchmark/results/*.json
 !benchmark/territorial-geocoding-manifest-v1.json
 !backend/Dockerfile.db
+
+# Terraform local state, plans and environment-specific inputs
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+!*.tfvars.example
+backend.hcl
+!backend.hcl.example
+
+# Local deployment and homologation artifacts
+output/homologation/*.dump
+backend/devprojectsgabflow_v2outputpdfagenda-executiva-semanal-exemplo.pdf

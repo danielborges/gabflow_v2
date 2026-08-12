@@ -1,5 +1,31 @@
 # Arquitetura — Contêineres
 
+## Plataforma de produção
+
+A topologia oficial de `staging` e `production` está definida no
+[`ADR-012`](../adr/ADR-012-aws-production-platform.md): AWS em `sa-east-1`, infraestrutura
+como código em Terraform, frontend privado em S3/CloudFront, API e workers em ECS, banco no
+RDS, objetos no S3 e segredos no AWS Secrets Manager. O Docker Compose permanece como ambiente
+local e não é a topologia final de produção.
+
+## Topologia ativa de staging
+
+Desde 12/08/2026, o staging executa:
+
+- task `app` no ECS Fargate, reunindo web, API, parser isolado e ClamAV;
+- task `worker` no ECS Fargate, reunindo workers, parser e ClamAV;
+- tasks one-shot distintas para bootstrap das roles PostgreSQL e migration Alembic;
+- RDS PostgreSQL privado e EFS criptografado com access points separados;
+- ALB público associado ao WAF, com health check em `/api/v1/ready`;
+- SQS FIFO/DLQ para inbound WhatsApp e CloudWatch para logs, métricas e alarmes.
+
+Tasks não recebem IP público. Imagens são publicadas no ECR com tags imutáveis e promovidas
+somente após bootstrap e migration bem-sucedidos. O domínio previsto é
+`staging.gabflow.app`; o listener HTTPS depende da emissão ACM validada no Cloudflare.
+
+Os access points do EFS impõem a identidade POSIX do volume. Entry points não devem assumir que
+`chown` é permitido em um mount EFS.
+
 ## Aplicação Web
 
 - gestão de atendimento;
@@ -78,7 +104,7 @@ Responsável por:
 
 ## Banco Transacional
 
-Sugestão:
+Decisão:
 - PostgreSQL;
 - PostGIS para geodados;
 - schemas distintos para RAG global e privado;
@@ -88,6 +114,10 @@ Sugestão:
 - full-text search para recuperação lexical;
 - read models tenant-scoped para fatos, contagens e indicadores.
 
+No staging, as roles são criadas por tarefa one-shot idempotente. API e worker são validados sem
+`SUPERUSER`, `CREATEDB`, `CREATEROLE`, replicação ou `BYPASSRLS`; a credencial administrativa
+gerenciada pelo RDS fica restrita ao bootstrap e às migrations.
+
 ## Armazenamento de Objetos
 
 - anexos;
@@ -96,6 +126,9 @@ Sugestão:
 - documentos;
 - versões;
 - relatórios.
+
+Em produção, esses objetos usam buckets S3 privados, tenant-scoped, criptografados e com
+políticas de lifecycle. Volumes locais não são fonte durável de produção.
 
 ## Índice de Busca
 

@@ -1,9 +1,39 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "../api";
-import { AdministrationPage } from "./AdministrationPage";
+import { AdministrationPage, WhatsAppFlowsManager, WhatsAppPilotOperations, WhatsAppTemplatesManager } from "./AdministrationPage";
 
 vi.mock("../api", () => ({ apiRequest: vi.fn() }));
+
+describe("WhatsApp pilot operations", () => {
+  it("apresenta SLOs, gates e permite pausar a saída com motivo", async () => {
+    const pilot = {
+      status: "RUNNING", prontoExterno: true, prontoInterno: true, prontoOperacional: true, podeIniciar: true,
+      gates: [{ key: "RUNBOOKS_INCIDENTS", titulo: "Runbooks e incidentes", status: "PASSED", evidenciaReferencia: "ticket:42", observacao: "" }],
+      operacao: {
+        status: "GOOD", windowHours: 24,
+        inbound: { received: 18, ackP95Ms: 120, processingStartWithinTargetRate: 1 },
+        outbox: { pending: 0, oldestAgeSeconds: 0 },
+        slo: { ackP95TargetMs: 500, processingStartTargetRate: .99 },
+        alerts: [{ nivel: "GOOD", codigo: "PIPELINE_HEALTHY", titulo: "Pipeline saudável", valor: 18 }],
+      },
+    };
+    apiRequest.mockReset();
+    apiRequest.mockResolvedValue(pilot);
+
+    render(<WhatsAppPilotOperations tenantId="tenant-a" canManage />);
+    expect(await screen.findByText("Cockpit do piloto")).toBeInTheDocument();
+    expect(screen.getByText("120 ms")).toBeInTheDocument();
+    expect(screen.getByText("Runbooks e incidentes")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Motivo para pausa"), { target: { value: "Falhas de entrega" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pausar saídas" }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/tenants/tenant-a/whatsapp/pilot/actions",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "PAUSE", reason: "Falhas de entrega" }) }),
+    ));
+  });
+});
 
 const emptyCollection = { content: [] };
 
@@ -250,4 +280,71 @@ describe("AdministrationPage office settings", () => {
       expect.objectContaining({ method: "POST" }),
     ));
   });
+
+  it("exibe o onboarding oficial da Meta quando o sandbox esta pronto", async () => {
+    apiRequest.mockImplementation((path, options = {}) => {
+      if (path.endsWith("/whatsapp/readiness")) {
+        return Promise.resolve({
+          prontoSandbox: true,
+          embeddedSignupHabilitado: true,
+          pendencias: [],
+        });
+      }
+      if (path.endsWith("/whatsapp/integration")) {
+        return Promise.reject(
+          Object.assign(new Error("Integração não encontrada."), { status: 404 }),
+        );
+      }
+      return mockAdminApi(path, options);
+    });
+
+    render(<AdministrationPage user={{ tenant: { id: "tenant-a" } }} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Integrações" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "WhatsApp Business Platform" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Ambiente técnico pronto")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Conectar com a Meta/ })).toBeEnabled();
+  });
+
+  it("permite ao administrador ativar uma versÃ£o de WhatsApp Flow", async () => {
+    apiRequest.mockImplementation((path, options = {}) => {
+      if (path.endsWith("/whatsapp/flows") && !options.method) return Promise.resolve({ content: [{
+        id: "flow-1", chave: "new_service_request", nome: "Nova solicitaÃ§Ã£o", versao: 1,
+        ambiente: "SANDBOX", status: "DRAFT", metaFlowId: null, schemaHash: "1234567890abcdef",
+        telas: ["CATEGORY", "DETAILS", "REVIEW"],
+      }] });
+      if (path.endsWith("/whatsapp/flows/flow-1/activate")) return Promise.resolve({});
+      return mockAdminApi(path, options);
+    });
+
+    render(<WhatsAppFlowsManager tenantId="tenant-a" canManage />);
+    fireEvent.change(await screen.findByLabelText("ID do Flow na Meta"), { target: { value: "meta-flow-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ativar versÃ£o" }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/api/v1/tenants/tenant-a/whatsapp/flows/flow-1/activate",
+      { method: "POST", body: JSON.stringify({ metaFlowId: "meta-flow-123" }) },
+    ));
+  });
+});
+
+it("cria e acompanha templates oficiais do WhatsApp", async () => {
+  apiRequest.mockImplementation((path, options = {}) => {
+    if (path === "/api/v1/tenants/tenant-a/whatsapp/templates" && options.method === "POST") {
+      return Promise.resolve({ id: "template-1", status: "PENDING" });
+    }
+    if (path === "/api/v1/tenants/tenant-a/whatsapp/templates") return Promise.resolve({ content: [] });
+    return Promise.resolve({});
+  });
+  render(<WhatsAppTemplatesManager tenantId="tenant-a" canCreate />);
+  fireEvent.change(await screen.findByPlaceholderText("atualizacao_protocolo"), { target: { value: "retorno_protocolo" } });
+  fireEvent.change(screen.getByPlaceholderText("A solicitação {{1}} foi atualizada."), { target: { value: "O protocolo {{1}} foi atualizado." } });
+  fireEvent.change(screen.getByPlaceholderText("protocolo"), { target: { value: "protocolo" } });
+  fireEvent.click(screen.getByRole("button", { name: "Enviar para aprovação" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+    "/api/v1/tenants/tenant-a/whatsapp/templates",
+    expect.objectContaining({ method: "POST" }),
+  ));
 });

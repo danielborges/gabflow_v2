@@ -6,6 +6,13 @@ from flask import Flask, current_app
 from sqlalchemy import select, text
 
 from app.communications.service import generate_due_return_reminders
+from app.communications.whatsapp_inbound import redact_expired_webhook_payloads
+from app.communications.whatsapp_queue import (
+    QueueProcessingResult,
+    WhatsAppQueueUnavailable,
+    process_aws_whatsapp_batch,
+    reconcile_pending_webhook_events,
+)
 from app.database_security import assert_runtime_database_role
 from app.electoral.advanced_features import dispatch_due_report_schedules
 from app.electoral.mandate_intelligence import dispatch_alert_deliveries
@@ -41,6 +48,7 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
         with app.app_context():
             assert_runtime_database_role()
             result = process_batch(worker_id)
+            whatsapp_result = _process_whatsapp_queue()
             aggregate = ProcessingResult(
                 claimed=aggregate.claimed + result.claimed,
                 succeeded=aggregate.succeeded + result.succeeded,
@@ -55,6 +63,10 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
                 reminders, expirations, report_expirations, territorial_deadlines = (
                     _run_scheduler_once()
                 )
+                reconciled_webhooks = reconcile_pending_webhook_events()
+                redacted_webhooks = redact_expired_webhook_payloads()
+                if redacted_webhooks:
+                    db.session.commit()
                 if reminders:
                     app.logger.info("Scheduler generated %s return reminders", reminders)
                 if expirations:
@@ -72,11 +84,21 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
                         "Scheduler generated %s territorial deadline notifications",
                         territorial_deadlines,
                     )
+                if reconciled_webhooks:
+                    app.logger.info(
+                        "Scheduler queued %s pending WhatsApp webhook events",
+                        reconciled_webhooks,
+                    )
+                if redacted_webhooks:
+                    app.logger.info(
+                        "Scheduler redacted %s expired WhatsApp webhook payloads",
+                        redacted_webhooks,
+                    )
                 last_scheduler_run = now
 
         if once:
             break
-        if result.claimed == 0:
+        if result.claimed == 0 and whatsapp_result.received == 0:
             time.sleep(app.config["WORKER_POLL_SECONDS"])
 
     app.logger.info(
@@ -88,6 +110,14 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
         aggregate.failed,
     )
     return aggregate
+
+
+def _process_whatsapp_queue() -> QueueProcessingResult:
+    try:
+        return process_aws_whatsapp_batch()
+    except WhatsAppQueueUnavailable:
+        current_app.logger.exception("WhatsApp inbound queue unavailable")
+        return QueueProcessingResult()
 
 
 def _run_scheduler_once() -> tuple[int, int, int, int]:

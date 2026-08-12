@@ -1,0 +1,121 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      activate_services:
+        description: Ativar API e workers depois da migration
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Provision, migrate and deploy
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      TF_ROOT: infra/terraform/environments/staging
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      AWS_REGION: ${{ vars.AWS_STAGING_REGION }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
+      TF_VAR_certificate_arn: ${{ vars.AWS_STAGING_CERTIFICATE_ARN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Initialize Terraform
+        run: >-
+          terraform -chdir="$TF_ROOT" init
+          -backend-config="bucket=${{ vars.AWS_STAGING_STATE_BUCKET }}"
+          -backend-config="region=$AWS_REGION"
+          -backend-config="kms_key_id=${{ vars.AWS_STAGING_STATE_KMS_KEY_ARN }}"
+
+      - name: Provision runtime with services disabled
+        run: |
+          terraform -chdir="$TF_ROOT" apply -auto-approve \
+            -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
+            -var="image_tag=${GITHUB_SHA}" \
+            -var="enable_services=false"
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve immutable repository URLs
+        id: repositories
+        run: |
+          echo "backend=$(terraform -chdir="$TF_ROOT" output -json ecr_repository_urls | jq -r .backend)" >> "$GITHUB_OUTPUT"
+          echo "web=$(terraform -chdir="$TF_ROOT" output -json ecr_repository_urls | jq -r .web)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish backend
+        run: |
+          docker build -t "${{ steps.repositories.outputs.backend }}:${GITHUB_SHA}" backend
+          docker push "${{ steps.repositories.outputs.backend }}:${GITHUB_SHA}"
+
+      - name: Build and publish web
+        run: |
+          docker build --build-arg API_UPSTREAM=127.0.0.1:5000 \
+            -f frontend/Dockerfile \
+            -t "${{ steps.repositories.outputs.web }}:${GITHUB_SHA}" .
+          docker push "${{ steps.repositories.outputs.web }}:${GITHUB_SHA}"
+
+      - name: Register release task definitions
+        run: |
+          terraform -chdir="$TF_ROOT" apply -auto-approve \
+            -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
+            -var="image_tag=${GITHUB_SHA}" \
+            -var="enable_services=false"
+
+      - name: Run database migration as one-shot task
+        id: migration
+        run: |
+          cluster=$(terraform -chdir="$TF_ROOT" output -raw ecs_cluster_name)
+          task_definition=$(terraform -chdir="$TF_ROOT" output -raw migration_task_definition_arn)
+          security_group=$(terraform -chdir="$TF_ROOT" output -raw task_security_group_id)
+          subnets=$(terraform -chdir="$TF_ROOT" output -json runtime_private_subnet_ids | jq -r 'join(",")')
+          task_arn=$(aws ecs run-task \
+            --cluster "$cluster" \
+            --task-definition "$task_definition" \
+            --launch-type FARGATE \
+            --platform-version 1.4.0 \
+            --network-configuration "awsvpcConfiguration={subnets=[$subnets],securityGroups=[$security_group],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          test "$task_arn" != "None"
+          aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task_arn"
+          exit_code=$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" \
+            --query 'tasks[0].containers[?name==`migration`].exitCode | [0]' --output text)
+          test "$exit_code" = "0"
+
+      - name: Activate application services
+        if: ${{ inputs.activate_services }}
+        run: |
+          terraform -chdir="$TF_ROOT" apply -auto-approve \
+            -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
+            -var="image_tag=${GITHUB_SHA}" \
+            -var="enable_services=true"
+
+      - name: Publish staging URL
+        run: |
+          echo "Staging URL: $(terraform -chdir="$TF_ROOT" output -raw staging_url)" >> "$GITHUB_STEP_SUMMARY"

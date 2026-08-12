@@ -6,6 +6,10 @@ Este repositório contém a documentação de especificação utilizada para evo
 
 ## Objetivos
 
+O domínio WhatsApp possui especificação complementar em
+[`../specs-whatsapp`](../specs-whatsapp/README.md), incluindo onboarding Meta, recebimento
+confiável, inbox 2.0, privacidade, Flows, mídia/IA, saída/templates e operação do piloto.
+
 - Centralizar solicitações recebidas por diferentes canais.
 - Acompanhar todo o ciclo de vida do atendimento.
 - Identificar demandas recorrentes e problemas territoriais.
@@ -79,7 +83,8 @@ gabflow-spec-driven/
 │   ├── ADR-008-operational-knowledge-projections.md
 │   ├── ADR-009-controlled-feedback-learning.md
 │   ├── ADR-010-assisted-whatsapp-email-identity.md
-│   └── ADR-011-governed-geospatial-provider.md
+│   ├── ADR-011-governed-geospatial-provider.md
+│   └── ADR-012-aws-production-platform.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md

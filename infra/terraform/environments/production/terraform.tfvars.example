@@ -1,0 +1,4 @@
+expected_account_id = "222222222222"
+vpc_cidr            = "10.50.0.0/16"
+owner               = "gabflow-platform"
+cost_center         = "gabflow"

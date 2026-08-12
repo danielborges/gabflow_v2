@@ -29,6 +29,7 @@ class JsonLogFormatter(logging.Formatter):
             ("worker_id", "workerId"),
             ("duration_ms", "durationMs"),
             ("queue", "queue"),
+            ("security_event", "securityEvent"),
         ):
             value = getattr(record, source, None)
             if value is not None:
@@ -54,12 +55,8 @@ def rag_pipeline_snapshot() -> dict:
         OutboxEvent.published_at.is_(None),
         OutboxEvent.failed_at.is_(None),
     )
-    pending = db.session.scalar(
-        select(func.count(OutboxEvent.id)).where(*pending_filter)
-    )
-    oldest = db.session.scalar(
-        select(func.min(OutboxEvent.occurred_at)).where(*pending_filter)
-    )
+    pending = db.session.scalar(select(func.count(OutboxEvent.id)).where(*pending_filter))
+    oldest = db.session.scalar(select(func.min(OutboxEvent.occurred_at)).where(*pending_filter))
     failed = db.session.scalar(
         select(func.count(OutboxEvent.id)).where(
             OutboxEvent.event_type.in_(RAG_QUEUE_EVENT_TYPES),
@@ -111,6 +108,28 @@ def prometheus_metrics(snapshot: dict) -> str:
         ("gabflow_rag_outbox_oldest_age_seconds", queue["oldestAgeSeconds"]),
         ("gabflow_rag_processing_duration_p95_ms", processing["p95Ms"] or 0),
         ("gabflow_rag_processing_samples", processing["samples"]),
+    )
+    return "\n".join(f"# TYPE {name} gauge\n{name} {value}" for name, value in values) + "\n"
+
+
+def whatsapp_prometheus_metrics(snapshot: dict) -> str:
+    inbound = snapshot["inbound"]
+    outbox = snapshot["outbox"]
+    outbound = snapshot["outbound"]
+    healthy = 0 if snapshot["status"] == "PROBLEM" else 1
+    values = (
+        ("gabflow_whatsapp_pipeline_healthy", healthy),
+        ("gabflow_whatsapp_inbound_received_window", inbound["received"]),
+        ("gabflow_whatsapp_inbound_failed_window", inbound["failed"]),
+        ("gabflow_whatsapp_webhook_ack_p95_ms", inbound["ackP95Ms"] or 0),
+        (
+            "gabflow_whatsapp_processing_start_target_rate",
+            inbound["processingStartWithinTargetRate"] or 0,
+        ),
+        ("gabflow_whatsapp_outbox_pending", outbox["pending"]),
+        ("gabflow_whatsapp_outbox_failed_window", outbox["failed"]),
+        ("gabflow_whatsapp_outbox_oldest_age_seconds", outbox["oldestAgeSeconds"]),
+        ("gabflow_whatsapp_outbound_failed_window", outbound["failed"]),
     )
     return "\n".join(f"# TYPE {name} gauge\n{name} {value}" for name, value in values) + "\n"
 

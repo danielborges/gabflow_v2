@@ -21,6 +21,27 @@ from app.ai.transcription import (
     execute_audio_transcription,
 )
 from app.communications.email import EmailDeliveryError, send_email
+from app.communications.whatsapp_inbound import (
+    WHATSAPP_INBOUND_EVENT,
+    mark_webhook_failure,
+    process_webhook_event,
+)
+from app.communications.whatsapp_media import (
+    WHATSAPP_MEDIA_ANALYSIS_EVENT,
+    WHATSAPP_MEDIA_DOWNLOAD_EVENT,
+    WhatsAppMediaError,
+    analyze_media_asset,
+    download_media_asset,
+    fail_media_asset,
+)
+from app.communications.whatsapp_outbound import (
+    WHATSAPP_OUTBOUND_EVENT,
+    WHATSAPP_TEMPLATE_SYNC_EVENT,
+    WhatsAppOutboundError,
+    dispatch_outbound_message,
+    fail_outbound_message,
+    sync_template,
+)
 from app.electoral.insights import (
     INSIGHT_EVENT,
     NonRetryableInsightError,
@@ -62,6 +83,9 @@ from app.models import (
     RequestHistory,
     RlsAuditRun,
     ServiceRequest,
+    WhatsAppMediaAsset,
+    WhatsAppMessage,
+    WhatsAppMessageTemplate,
 )
 from app.rag.calibration import (
     QUALITY_CALIBRATION_EVENT,
@@ -109,6 +133,41 @@ class NonRetryableEventError(RuntimeError):
 
 
 def handle_event(event: OutboxEvent) -> None:
+    if event.event_type == WHATSAPP_INBOUND_EVENT:
+        process_webhook_event(_uuid(event.payload, "webhookEventId"))
+        return
+    if event.event_type == WHATSAPP_MEDIA_DOWNLOAD_EVENT:
+        try:
+            download_media_asset(_whatsapp_media_asset(event))
+        except WhatsAppMediaError as error:
+            if not error.retryable:
+                raise NonRetryableEventError(f"{error.code}: {error}") from error
+            raise
+        return
+    if event.event_type == WHATSAPP_MEDIA_ANALYSIS_EVENT:
+        try:
+            analyze_media_asset(_whatsapp_media_asset(event))
+        except WhatsAppMediaError as error:
+            if not error.retryable:
+                raise NonRetryableEventError(f"{error.code}: {error}") from error
+            raise
+        return
+    if event.event_type == WHATSAPP_OUTBOUND_EVENT:
+        try:
+            dispatch_outbound_message(_whatsapp_outbound_message(event))
+        except WhatsAppOutboundError as error:
+            if not error.retryable:
+                raise NonRetryableEventError(f"{error.code}: {error}") from error
+            raise
+        return
+    if event.event_type == WHATSAPP_TEMPLATE_SYNC_EVENT:
+        try:
+            sync_template(_whatsapp_message_template(event))
+        except WhatsAppOutboundError as error:
+            if not error.retryable:
+                raise NonRetryableEventError(f"{error.code}: {error}") from error
+            raise
+        return
     if event.event_type == AI_TRIAGE_EVENT:
         execution = _ai_execution(event)
         execute_triage(execution)
@@ -210,6 +269,34 @@ def handle_event(event: OutboxEvent) -> None:
 
 
 def handle_exhausted_event(event: OutboxEvent, error_message: str) -> None:
+    if event.event_type == WHATSAPP_INBOUND_EVENT:
+        mark_webhook_failure(
+            _uuid(event.payload, "webhookEventId"),
+            receive_count=event.attempt_count,
+            exhausted=True,
+        )
+        return
+    if event.event_type in {WHATSAPP_MEDIA_DOWNLOAD_EVENT, WHATSAPP_MEDIA_ANALYSIS_EVENT}:
+        code, _, message = error_message.partition(": ")
+        if not message or not code.startswith("MEDIA_"):
+            code, message = "MEDIA_PROCESSING_FAILED", error_message
+        fail_media_asset(
+            _whatsapp_media_asset(event),
+            WhatsAppMediaError(code, message),
+            analysis=event.event_type == WHATSAPP_MEDIA_ANALYSIS_EVENT,
+        )
+        return
+    if event.event_type == WHATSAPP_OUTBOUND_EVENT:
+        code, _, message = error_message.partition(": ")
+        if not message or not code.isupper():
+            code, message = "OUTBOUND_DELIVERY_FAILED", error_message
+        fail_outbound_message(_whatsapp_outbound_message(event), code, message)
+        return
+    if event.event_type == WHATSAPP_TEMPLATE_SYNC_EVENT:
+        template = _whatsapp_message_template(event)
+        template.status = "PENDING"
+        template.rejection_reason = error_message[:500]
+        return
     if event.event_type == REPORT_EVENT:
         fail_report(_electoral_report_job(event), error_message)
         return
@@ -466,6 +553,27 @@ def _audio_transcription(event: OutboxEvent) -> AudioTranscription:
     if transcription is None or transcription.tenant_id != event.tenant_id:
         raise NonRetryableEventError("Transcrição de áudio não foi encontrada.")
     return transcription
+
+
+def _whatsapp_media_asset(event: OutboxEvent) -> WhatsAppMediaAsset:
+    asset = db.session.get(WhatsAppMediaAsset, _uuid(event.payload, "mediaAssetId"))
+    if asset is None or asset.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Mídia WhatsApp não encontrada.")
+    return asset
+
+
+def _whatsapp_outbound_message(event: OutboxEvent) -> WhatsAppMessage:
+    message = db.session.get(WhatsAppMessage, _uuid(event.payload, "messageId"))
+    if message is None or message.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Mensagem WhatsApp de saída não encontrada.")
+    return message
+
+
+def _whatsapp_message_template(event: OutboxEvent) -> WhatsAppMessageTemplate:
+    template = db.session.get(WhatsAppMessageTemplate, _uuid(event.payload, "templateId"))
+    if template is None or template.tenant_id != event.tenant_id:
+        raise NonRetryableEventError("Template WhatsApp não encontrado.")
+    return template
 
 
 def _document_ocr(event: OutboxEvent) -> DocumentOcr:

@@ -1,0 +1,5 @@
+create_accounts          = false
+staging_account_email    = "aws+gabflow-staging@example.com"
+production_account_email = "aws+gabflow-production@example.com"
+owner                    = "gabflow-platform"
+cost_center              = "gabflow"

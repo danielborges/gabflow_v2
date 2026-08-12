@@ -1,5 +1,22 @@
 # 7. Operação, testes e rollout
 
+## Implementação do Incremento 8
+
+O cockpit administrativo implementa o gate de piloto por tenant, sem transformar o checklist abaixo em aprovação automática. Cada item interno exige status, revisor e referência de evidência com hash; início e retomada também dependem da prontidão externa e do semáforo operacional. A pausa segura bloqueia saídas comuns, preserva inbound e permite a confirmação obrigatória de opt-out.
+
+As métricas são expostas em endpoint protegido e sem dimensão de tenant. O dashboard CloudWatch cobre idade/volume da fila, DLQ e alarmes. O procedimento detalhado está em `docs/runbooks/whatsapp-pilot-operations.md`.
+
+## Estado do staging em 12/08/2026
+
+A infraestrutura AWS de homologação foi aplicada e validada com API e workers estáveis. SQS
+FIFO, DLQ, Secrets Manager/KMS, logs, dashboards e alarmes estão disponíveis. A integração Meta
+permanece desativada por desenho.
+
+O certificado ACM de `staging.gabflow.app` foi solicitado, mas o CNAME de validação e o CNAME da
+aplicação ainda precisam ser publicados na zona Cloudflare. Até HTTPS ser validado, não se deve
+conectar um número Meta nem usar credenciais reais. Consulte
+[`AWS-staging-deployment-2026-08-12.md`](../implementation/AWS-staging-deployment-2026-08-12.md).
+
 ## Ambientes
 
 - Desenvolvimento com números/testes próprios e dados sintéticos.

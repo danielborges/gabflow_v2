@@ -588,7 +588,7 @@ function RequestDetails({ request, references, readOnly = false, canDistribute =
   const [reopenReason, setReopenReason] = useState("");
   const [publicAccess, setPublicAccess] = useState(
     request.chaveAcompanhamento
-      ? { protocolo: request.protocolo, chave: request.chaveAcompanhamento }
+      ? { protocolo: request.protocoloPublico || request.protocolo, chave: request.chaveAcompanhamento }
       : null,
   );
   const [contactAttempt, setContactAttempt] = useState({
@@ -933,7 +933,8 @@ function RequestDetails({ request, references, readOnly = false, canDistribute =
 
   async function generatePublicKey() {
     try {
-      setPublicAccess(await apiRequest(`/api/v1/solicitacoes/${request.id}/chave-publica`, { method: "POST" }));
+      const result = await apiRequest(`/api/v1/solicitacoes/${request.id}/chave-publica`, { method: "POST" });
+      setPublicAccess({ protocolo: result.protocoloPublico || result.protocolo, chave: result.chave });
     } catch (requestError) {
       setError(requestError.message);
     }
