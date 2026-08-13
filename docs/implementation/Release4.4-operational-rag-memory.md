@@ -67,6 +67,13 @@ Executar novamente é seguro: snapshots só avançam quando o hash minimizado mu
 worker. Em testes legados ela fica desabilitada por padrão e é ativada
 explicitamente nos cenários desta entrega.
 
+`RAG_OPERATIONAL_MEMORY_MATERIALIZED_SNAPSHOTS=5` limita quantos snapshots por
+fonte permanecem com conteúdo e embeddings materializados. O scheduler compacta
+os snapshots excedentes, elimina arquivo, texto extraído e chunks, mas preserva
+checksum e metadados imutáveis para proveniência até o fim da retenção da fonte.
+Quando a retenção expira, o documento operacional e seus metadados são purgados,
+restando somente o tombstone auditável.
+
 ## Validação
 
 - criação e alteração de solicitação geram memória versionada;

@@ -308,10 +308,10 @@ describe("AdministrationPage office settings", () => {
     expect(screen.getByRole("button", { name: /Conectar com a Meta/ })).toBeEnabled();
   });
 
-  it("permite ao administrador ativar uma versÃ£o de WhatsApp Flow", async () => {
+  it("permite ao administrador ativar uma versão de WhatsApp Flow", async () => {
     apiRequest.mockImplementation((path, options = {}) => {
       if (path.endsWith("/whatsapp/flows") && !options.method) return Promise.resolve({ content: [{
-        id: "flow-1", chave: "new_service_request", nome: "Nova solicitaÃ§Ã£o", versao: 1,
+        id: "flow-1", chave: "new_service_request", nome: "Nova solicitação", versao: 1,
         ambiente: "SANDBOX", status: "DRAFT", metaFlowId: null, schemaHash: "1234567890abcdef",
         telas: ["CATEGORY", "DETAILS", "REVIEW"],
       }] });
@@ -321,7 +321,7 @@ describe("AdministrationPage office settings", () => {
 
     render(<WhatsAppFlowsManager tenantId="tenant-a" canManage />);
     fireEvent.change(await screen.findByLabelText("ID do Flow na Meta"), { target: { value: "meta-flow-123" } });
-    fireEvent.click(screen.getByRole("button", { name: "Ativar versÃ£o" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ativar versão" }));
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
       "/api/v1/tenants/tenant-a/whatsapp/flows/flow-1/activate",

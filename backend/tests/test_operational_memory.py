@@ -95,6 +95,24 @@ def test_request_changes_become_versioned_minimized_private_memory(app, client):
         }
 
     _drain_outbox(app)
+    documents_response = client.get("/api/v1/rag/documentos")
+    assert documents_response.status_code == 200
+    assert documents_response.json["content"] == []
+    memories_response = client.get("/api/v1/rag/fontes-operacionais")
+    assert memories_response.status_code == 200
+    assert memories_response.json["content"][0]["origem"] == {
+        "sistema": "GabFlow",
+        "modulo": "SOLICITACOES",
+        "moduloNome": "Solicitações",
+        "entidade": "SERVICE_REQUEST",
+        "entidadeNome": "Solicitação",
+        "entidadeId": created.json["id"],
+    }
+    assert memories_response.json["content"][0]["estadoNome"] == "Disponível"
+    assert memories_response.json["content"][0]["disponivelParaInteligencia"] is True
+    assert memories_response.json["content"][0]["finalidadeNome"] == (
+        "Apoiar o atendimento ao cidadão e o planejamento de iniciativas legislativas."
+    )
     with app.app_context():
         source = db.session.scalar(select(RagKnowledgeSource))
         assert source.status == RagKnowledgeSourceStatus.ATIVA
@@ -158,6 +176,63 @@ def test_request_changes_become_versioned_minimized_private_memory(app, client):
     with app.app_context():
         source = db.session.scalar(select(RagKnowledgeSource))
         assert source.source_version == stable_version
+
+
+def test_operational_history_compacts_old_materialized_snapshots(app, client):
+    app.config["RAG_OPERATIONAL_MEMORY_ENABLED"] = True
+    app.config["RAG_OPERATIONAL_MEMORY_MATERIALIZED_SNAPSHOTS"] = 2
+    csrf = _login(client)
+    created = client.post(
+        "/api/v1/solicitacoes",
+        json={
+            "origem": "PRESENCIAL",
+            "titulo": "Memória com atualizações sucessivas",
+            "descricao": "Estado inicial da solicitação.",
+        },
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    assert created.status_code == 201
+    _drain_outbox(app)
+
+    for index in range(3):
+        interaction = client.post(
+            f"/api/v1/solicitacoes/{created.json['id']}/interacoes",
+            json={
+                "tipo": "RETORNO",
+                "canal": "TELEFONE",
+                "direcao": "ENTRADA",
+                "conteudo": f"Atualização material número {index + 1}.",
+            },
+            headers={"X-CSRF-TOKEN": csrf},
+        )
+        assert interaction.status_code == 201
+        _drain_outbox(app)
+
+    with app.app_context():
+        source = db.session.scalar(select(RagKnowledgeSource))
+        versions = list(
+            db.session.scalars(
+                select(RagDocumentVersion)
+                .where(RagDocumentVersion.document_id == source.document_id)
+                .order_by(RagDocumentVersion.version_number)
+            )
+        )
+        materialized = [item for item in versions if item.retention_purged_at is None]
+        compacted = [item for item in versions if item.retention_purged_at is not None]
+        assert len(versions) == 4
+        assert len(materialized) == 2
+        assert len(compacted) == 2
+        assert all(item.extracted_text is None for item in compacted)
+        assert all(item.checksum for item in compacted)
+        compacted_ids = [item.id for item in compacted]
+        assert not list(
+            db.session.scalars(select(RagChunk).where(RagChunk.version_id.in_(compacted_ids)))
+        )
+        assert db.session.scalar(
+            select(AuditLog).where(
+                AuditLog.action == "rag_operational_memory.snapshot_compacted"
+            )
+        )
 
 
 def test_forwarding_and_official_response_become_minimized_private_memory(app, client):

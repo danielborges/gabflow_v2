@@ -138,6 +138,40 @@ cd backend
 flask --app wsgi:app worker --once
 ```
 
+## Fixture local do WhatsApp
+
+Em `development` ou `test`, uma integração sintética pode alimentar o mesmo endpoint global,
+validação HMAC, inbox idempotente e worker usados pelo webhook real. Os comandos recusam execução
+em `staging` e `production` e nunca substituem uma integração não sintética.
+
+Com a aplicação no Docker, prepare o tenant e injete a primeira mensagem:
+
+```powershell
+docker compose exec api flask --app wsgi:app whatsapp-dev-setup --tenant gabinete-demo
+docker compose exec api flask --app wsgi:app whatsapp-dev-inject --tenant gabinete-demo
+```
+
+Depois, abra **Canais** para testar privacidade, identificação, coleta, protocolo e handoff. Outros
+cenários controlados:
+
+```powershell
+# Handoff determinístico
+docker compose exec api flask --app wsgi:app whatsapp-dev-inject --tenant gabinete-demo --kind handoff
+
+# Opt-out determinístico
+docker compose exec api flask --app wsgi:app whatsapp-dev-inject --tenant gabinete-demo --kind opt-out
+
+# Replay: uma aceitação e uma duplicata, sem efeitos duplicados
+docker compose exec api flask --app wsgi:app whatsapp-dev-inject --tenant gabinete-demo --message-id wamid.manual.replay-1 --repeat 2
+
+# Deixar o evento na outbox para processar o worker separadamente
+docker compose exec api flask --app wsgi:app whatsapp-dev-inject --tenant gabinete-demo --no-process
+docker compose exec api flask --app wsgi:app worker --once
+```
+
+Use `--sender`, `--sender-name`, `--message` e `--phone-number-id` para variar os dados sintéticos.
+O segredo HMAC é efêmero e permanece apenas em memória durante a injeção.
+
 ## Segurança operacional
 
 Em produção, habilite TLS no proxy, configure `COOKIE_SECURE=true`, use um backend

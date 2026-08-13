@@ -24,12 +24,15 @@ class NonRetryableIsolatedParserError(IsolatedParserError):
     pass
 
 
-def parse_document_isolated(path: Path, mime_type: str) -> IsolatedParseResult:
-    request = json.dumps(
-        {"path": str(path.resolve()), "mimeType": mime_type},
-        ensure_ascii=False,
-    ).encode("utf-8")
-    if len(request) > 8192:
+def parse_document_isolated(
+    path: Path,
+    mime_type: str,
+    *,
+    content: bytes | None = None,
+) -> IsolatedParseResult:
+    request = _build_request(path, mime_type, content=content)
+    maximum_file_bytes = int(current_app.config.get("PARSER_MAX_FILE_BYTES", 31457280))
+    if len(request) > maximum_file_bytes + 8192:
         raise NonRetryableIsolatedParserError("Solicitacao de parsing invalida.")
     socket_path = str(current_app.config["DOCUMENT_PARSER_SOCKET_PATH"])
     timeout = float(current_app.config["DOCUMENT_PARSER_TIMEOUT_SECONDS"])
@@ -46,6 +49,25 @@ def parse_document_isolated(path: Path, mime_type: str) -> IsolatedParseResult:
     except (OSError, TimeoutError, json.JSONDecodeError, struct.error) as error:
         raise IsolatedParserError("Parser isolado indisponivel.") from error
     return _validated_result(response)
+
+
+def _build_request(path: Path, mime_type: str, *, content: bytes | None = None) -> bytes:
+    if content is None:
+        return json.dumps(
+            {"path": str(path.resolve()), "mimeType": mime_type},
+            ensure_ascii=False,
+        ).encode("utf-8")
+    suffix = path.suffix if len(path.suffix) <= 16 else ""
+    header = json.dumps(
+        {
+            "mimeType": mime_type,
+            "contentLength": len(content),
+            "suffix": suffix,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return header + b"\n" + content
 
 
 def _validated_result(response) -> IsolatedParseResult:

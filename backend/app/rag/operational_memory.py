@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from flask import current_app, has_app_context
-from sqlalchemy import event, inspect, select
+from sqlalchemy import delete, event, inspect, select
 from sqlalchemy.orm import Session
 
 from app.extensions import db
@@ -31,6 +31,7 @@ from app.models import (
     OutboxEvent,
     OversightAction,
     OversightActionStatus,
+    RagChunk,
     RagDocument,
     RagDocumentAccess,
     RagDocumentLifecycle,
@@ -1296,6 +1297,76 @@ def enqueue_expired_operational_memory(
             action=ProjectorAction.RETENTION_EXPIRED,
         )
     return len(sources)
+
+
+def compact_operational_history(source: RagKnowledgeSource) -> int:
+    """Limit materialized snapshots while preserving immutable provenance metadata."""
+    if source.document_id is None:
+        return 0
+    keep = max(
+        1,
+        int(current_app.config.get("RAG_OPERATIONAL_MEMORY_MATERIALIZED_SNAPSHOTS", 5)),
+    )
+    versions = list(
+        db.session.scalars(
+            select(RagDocumentVersion)
+            .where(
+                RagDocumentVersion.tenant_id == source.tenant_id,
+                RagDocumentVersion.document_id == source.document_id,
+                RagDocumentVersion.retention_purged_at.is_(None),
+            )
+            .order_by(
+                RagDocumentVersion.version_number.desc(),
+                RagDocumentVersion.created_at.desc(),
+            )
+        )
+    )
+    compacted = 0
+    for version in versions[keep:]:
+        if version.id == source.latest_version_id:
+            continue
+        delete_rag_object(
+            version.storage_key,
+            tenant_id=source.tenant_id,
+            document_id=version.document_id,
+            version_id=version.id,
+        )
+        db.session.execute(delete(RagChunk).where(RagChunk.version_id == version.id))
+        version.extracted_text = None
+        version.retention_purged_at = datetime.now(UTC)
+        db.session.add(
+            AuditLog(
+                tenant_id=source.tenant_id,
+                user_id=None,
+                action="rag_operational_memory.snapshot_compacted",
+                entity_type="rag_document_version",
+                entity_id=str(version.id),
+                after={
+                    "fonteId": str(source.id),
+                    "documentoId": str(version.document_id),
+                    "versao": version.version_number,
+                    "checksum": version.checksum,
+                    "snapshotsMaterializados": keep,
+                },
+            )
+        )
+        compacted += 1
+    return compacted
+
+
+def compact_operational_histories(tenant_id: uuid.UUID, *, limit: int = 100) -> int:
+    sources = db.session.scalars(
+        select(RagKnowledgeSource)
+        .where(
+            RagKnowledgeSource.tenant_id == tenant_id,
+            RagKnowledgeSource.status == RagKnowledgeSourceStatus.ATIVA,
+            RagKnowledgeSource.document_id.is_not(None),
+        )
+        .order_by(RagKnowledgeSource.updated_at)
+        .limit(max(1, min(limit, 500)))
+        .with_for_update(skip_locked=True)
+    )
+    return sum(compact_operational_history(source) for source in sources)
 
 
 def _collect_changed_entities(session: Session, _flush_context, _instances) -> None:

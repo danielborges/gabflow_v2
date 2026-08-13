@@ -13,30 +13,23 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "../api";
+import { useRagAssistantQuery } from "./useRagAssistantQuery";
 
 export function RagAssistantPage() {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const {
+    question,
+    setQuestion,
+    answer,
+    setAnswer,
+    busy,
+    error,
+    submitQuestion,
+    cancelQuery,
+  } = useRagAssistantQuery();
 
   async function submit(event) {
     event.preventDefault();
-    const value = question.trim();
-    if (value.length < 3) return;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await apiRequest("/api/v1/assistente/consultas", {
-        method: "POST",
-        body: JSON.stringify({ consulta: value, limite: 5 }),
-      });
-      setAnswer(result);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy(false);
-    }
+    await submitQuestion(question);
   }
 
   return (
@@ -65,17 +58,32 @@ export function RagAssistantPage() {
           {error && <p className="form-error">{error}</p>}
           <div className="rag-question-actions">
             <small>{question.length}/2000</small>
-            <button className="primary-button" disabled={busy || question.trim().length < 3}>
-              <Send size={17} /> {busy ? "Consultando..." : "Consultar"}
+            <button
+              type={busy ? "button" : "submit"}
+              className={busy ? "secondary-button" : "primary-button"}
+              disabled={!busy && question.trim().length < 3}
+              onClick={busy ? cancelQuery : undefined}
+            >
+              <Send size={17} /> {busy ? "Cancelar consulta" : "Consultar"}
             </button>
           </div>
         </form>
 
         <div className="rag-answer-panel">
-          {answer ? <RagAnswerResult answer={answer} onUpdate={setAnswer} /> : <EmptyState />}
+          {answer ? <RagAnswerResult answer={answer} onUpdate={setAnswer} /> : busy ? <RagLoadingState /> : <EmptyState />}
         </div>
       </section>
     </>
+  );
+}
+
+export function RagLoadingState() {
+  return (
+    <div className="rag-assistant-empty rag-assistant-loading" role="status">
+      <Sparkles size={34} />
+      <h2>Consultando a inteligência do gabinete</h2>
+      <p>Aguarde enquanto o GabFlow analisa os dados e as fontes aplicáveis.</p>
+    </div>
   );
 }
 
@@ -89,18 +97,23 @@ function EmptyState() {
   );
 }
 
-function RagAnswerResult({ answer, onUpdate }) {
+export function RagAnswerResult({ answer, onUpdate, compact = false }) {
   const safety = answer.seguranca || {};
   const refused = Boolean(answer.recusaConclusiva);
+  const structured = answer.metodo === "ESTRUTURADO" || answer.modeloEmbedding === "NAO_APLICAVEL";
   const riskySources = (answer.fontes || []).filter((source) => source.riscoPromptInjection);
   return (
-    <article className={`rag-answer-result ${refused ? "refused" : "grounded"}`}>
+    <article className={`rag-answer-result ${refused ? "refused" : "grounded"}${compact ? " compact" : ""}`}>
       <header>
         <div>
           {refused ? <AlertTriangle size={21} /> : <CheckCircle2 size={21} />}
           <span>
             <strong>{refused ? "Evidência insuficiente" : "Resposta fundamentada"}</strong>
-            <small>{answer.modeloEmbedding} · limiar {formatScore(answer.limiarEvidencia)}</small>
+            <small>
+              {structured
+                ? "Resposta gerada com dados estruturados do GabFlow."
+                : `${answer.modeloEmbedding} · limiar ${formatScore(answer.limiarEvidencia)}`}
+            </small>
           </span>
         </div>
         <span className={`rag-answer-state ${refused ? "state-refused" : "state-grounded"}`}>
@@ -109,7 +122,7 @@ function RagAnswerResult({ answer, onUpdate }) {
       </header>
       <p className="rag-answer-text">{answer.resposta}</p>
 
-      <RagFeedbackPanel answer={answer} onUpdate={onUpdate} />
+      {!compact && <RagFeedbackPanel answer={answer} onUpdate={onUpdate} />}
 
       {safety.promptInjectionDetectado && (
         <section className="rag-safety-warning" role="alert" aria-labelledby="rag-safety-title">
@@ -131,7 +144,7 @@ function RagAnswerResult({ answer, onUpdate }) {
         </section>
       )}
 
-      <section className="rag-source-list">
+      {(!structured || answer.fontes?.length > 0) && <section className="rag-source-list">
         <h2>Fontes citadas</h2>
         {answer.fontes?.length ? answer.fontes.map((source, index) => (
           <article key={`${source.documentoId}-${source.versaoId}-${source.paginaInicio || 0}-${index}`}>
@@ -163,7 +176,7 @@ function RagAnswerResult({ answer, onUpdate }) {
             )}
           </article>
         )) : <p className="table-message">Nenhuma fonte acima do limiar configurado.</p>}
-      </section>
+      </section>}
     </article>
   );
 }

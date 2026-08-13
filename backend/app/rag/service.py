@@ -198,6 +198,9 @@ def execute_ingestion(
         operational_source.error_message = None
         operational_source.sync_attempts = 0
         operational_source.quarantined_at = None
+        from app.rag.operational_memory import compact_operational_history
+
+        compact_operational_history(operational_source)
     details = {
         "documentoId": str(version.document_id),
         "versaoId": str(version.id),
@@ -405,8 +408,20 @@ def extract_document(
     encryption_scope: str | None = None,
 ) -> ExtractedDocument:
     if encryption_scope:
-        from app.security.encryption import plaintext_file
+        from app.security.encryption import plaintext_file, read_plaintext
 
+        if current_app.config["DOCUMENT_PARSER_ISOLATION_ENABLED"]:
+            try:
+                result = parse_document_isolated(
+                    path,
+                    mime_type,
+                    content=read_plaintext(path, encryption_scope),
+                )
+            except NonRetryableIsolatedParserError as error:
+                raise NonRetryableRagError(str(error)) from error
+            except IsolatedParserError as error:
+                raise RagIngestionError(str(error)) from error
+            return ExtractedDocument(text=result.text, pages=result.pages)
         with plaintext_file(path, encryption_scope, suffix=path.suffix) as plaintext_path:
             return extract_document(plaintext_path, mime_type)
     if current_app.config["DOCUMENT_PARSER_ISOLATION_ENABLED"]:

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 PARSER_VERSION = "gabflow-isolated-parser-v1"
@@ -9,8 +10,9 @@ DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 
 def main() -> int:
     try:
-        payload = json.loads(sys.stdin.buffer.read(8193))
-        result = parse(payload)
+        maximum_bytes = int(os.environ.get("PARSER_MAX_FILE_BYTES", "31457280"))
+        request = sys.stdin.buffer.read(maximum_bytes + 8193)
+        result = parse_request(request)
     except Exception as error:
         result = {
             "status": "ERROR",
@@ -22,11 +24,54 @@ def main() -> int:
     return 0
 
 
+def parse_request(request: bytes) -> dict:
+    header_bytes, separator, content = request.partition(b"\n")
+    payload = json.loads(header_bytes if separator else request)
+    if not separator:
+        return parse(payload)
+    if not isinstance(payload, dict) or set(payload) != {
+        "mimeType",
+        "contentLength",
+        "suffix",
+    }:
+        raise ValueError("Solicitacao de parsing invalida.")
+    content_length = payload["contentLength"]
+    if (
+        not isinstance(content_length, int)
+        or isinstance(content_length, bool)
+        or content_length != len(content)
+    ):
+        raise ValueError("Conteudo do parsing esta incompleto.")
+    maximum_bytes = int(os.environ.get("PARSER_MAX_FILE_BYTES", "31457280"))
+    if content_length > maximum_bytes:
+        raise ValueError("Arquivo excede o limite do parser isolado.")
+    suffix = str(payload["suffix"])
+    allowed_suffix_characters = ".-_abcdefghijklmnopqrstuvwxyz0123456789"
+    if len(suffix) > 16 or any(
+        character not in allowed_suffix_characters for character in suffix.lower()
+    ):
+        raise ValueError("Extensao de arquivo invalida.")
+    descriptor, temporary_name = tempfile.mkstemp(prefix="gabflow-parser-", suffix=suffix)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+        return _parse_path(Path(temporary_name), str(payload["mimeType"]))
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
 def parse(payload: dict) -> dict:
     if not isinstance(payload, dict) or set(payload) != {"path", "mimeType"}:
         raise ValueError("Solicitacao de parsing invalida.")
     path = _validated_path(str(payload["path"]))
     mime_type = str(payload["mimeType"])
+    return _parse_path(path, mime_type)
+
+
+def _parse_path(path: Path, mime_type: str) -> dict:
     maximum_bytes = int(os.environ.get("PARSER_MAX_FILE_BYTES", "31457280"))
     if path.stat().st_size > maximum_bytes:
         raise ValueError("Arquivo excede o limite do parser isolado.")

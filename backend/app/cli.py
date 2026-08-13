@@ -1,5 +1,10 @@
+import hashlib
+import hmac
+import json
 import math
-from datetime import date, timedelta
+import secrets
+import uuid
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import click
@@ -61,7 +66,10 @@ from app.models import (
     Territory,
     User,
     UserStatus,
+    WhatsAppIntegration,
+    WhatsAppIntegrationStatus,
 )
+from app.outbox.service import process_batch
 from app.outbox.worker import run_worker
 from app.rag.operational_memory import (
     LEGISLATIVE_DRAFT_ENTITY,
@@ -128,6 +136,199 @@ def _parse_provider_costs(values: tuple[str, ...]) -> dict[str, float]:
 
 
 def register_commands(app: Flask) -> None:
+    development_whatsapp_secret_ref = "development://whatsapp-fixture"  # noqa: S105
+
+    def require_development_environment() -> None:
+        environment = str(current_app.config.get("APP_ENV") or "development").lower()
+        if environment not in {"development", "test"}:
+            raise click.ClickException("Este comando e restrito aos ambientes development e test.")
+
+    def development_whatsapp_integration(tenant_slug: str) -> WhatsAppIntegration:
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == tenant_slug))
+        if tenant is None:
+            raise click.ClickException(
+                f"Tenant '{tenant_slug}' nao encontrado. Execute o comando seed primeiro."
+            )
+        integration = db.session.scalar(
+            select(WhatsAppIntegration)
+            .where(WhatsAppIntegration.tenant_id == tenant.id)
+            .order_by(WhatsAppIntegration.version.desc())
+        )
+        if integration is None or integration.token_secret_ref != development_whatsapp_secret_ref:
+            raise click.ClickException(
+                "A integracao sintetica nao foi preparada. Execute whatsapp-dev-setup primeiro."
+            )
+        return integration
+
+    @app.cli.command("whatsapp-dev-setup")
+    @click.option("--tenant", default="gabinete-demo", show_default=True)
+    @click.option("--phone-number-id", default="dev-phone-number", show_default=True)
+    @click.option("--display-phone", default="+55 32 99999-0000", show_default=True)
+    def whatsapp_dev_setup(tenant: str, phone_number_id: str, display_phone: str) -> None:
+        """Prepara uma integracao WhatsApp sintetica para testes manuais locais."""
+        require_development_environment()
+        tenant_item = db.session.scalar(select(Tenant).where(Tenant.slug == tenant))
+        if tenant_item is None:
+            raise click.ClickException(
+                f"Tenant '{tenant}' nao encontrado. Execute o comando seed primeiro."
+            )
+        actor = db.session.scalar(
+            select(User)
+            .where(User.tenant_id == tenant_item.id, User.status == UserStatus.ACTIVE)
+            .order_by(User.created_at)
+        )
+        if actor is None:
+            raise click.ClickException("O tenant precisa ter um usuario ativo.")
+
+        existing = db.session.scalar(
+            select(WhatsAppIntegration)
+            .where(WhatsAppIntegration.tenant_id == tenant_item.id)
+            .order_by(WhatsAppIntegration.version.desc())
+        )
+        if existing is not None and existing.token_secret_ref != development_whatsapp_secret_ref:
+            raise click.ClickException(
+                "O tenant ja possui uma integracao nao sintetica; nenhuma alteracao foi feita."
+            )
+        conflict = db.session.scalar(
+            select(WhatsAppIntegration).where(
+                WhatsAppIntegration.phone_number_id == phone_number_id,
+                WhatsAppIntegration.status == WhatsAppIntegrationStatus.ACTIVE,
+                WhatsAppIntegration.tenant_id != tenant_item.id,
+            )
+        )
+        if conflict is not None:
+            raise click.ClickException("O phone-number-id ja pertence a outro tenant.")
+
+        now = datetime.now(UTC)
+        if existing is None:
+            existing = WhatsAppIntegration(
+                tenant_id=tenant_item.id,
+                business_portfolio_id=f"dev-portfolio-{tenant_item.id.hex[:12]}",
+                waba_id=f"dev-waba-{tenant_item.id.hex[:12]}",
+                phone_number_id=phone_number_id,
+                version=1,
+                token_secret_ref=development_whatsapp_secret_ref,
+                created_by_id=actor.id,
+            )
+            db.session.add(existing)
+        existing.phone_number_id = phone_number_id
+        existing.display_phone = display_phone
+        existing.display_name = f"WhatsApp local - {tenant_item.name}"
+        existing.status = WhatsAppIntegrationStatus.ACTIVE
+        existing.webhook_subscribed_at = now
+        existing.connected_at = existing.connected_at or now
+        existing.last_health_check_at = now
+        existing.last_health_error = None
+        db.session.commit()
+        click.echo(
+            f"Integracao WhatsApp sintetica ativa para tenant={tenant} "
+            f"phone_number_id={phone_number_id}."
+        )
+
+    @app.cli.command("whatsapp-dev-inject")
+    @click.option("--tenant", default="gabinete-demo", show_default=True)
+    @click.option(
+        "--kind",
+        type=click.Choice(["text", "handoff", "opt-out"], case_sensitive=False),
+        default="text",
+        show_default=True,
+    )
+    @click.option("--message", default="Preciso de atendimento", show_default=True)
+    @click.option("--sender", default="5532888880000", show_default=True)
+    @click.option("--sender-name", default="Cidadao de teste", show_default=True)
+    @click.option("--message-id", help="ID estavel para testar replay e idempotencia.")
+    @click.option("--repeat", type=click.IntRange(1, 10), default=1, show_default=True)
+    @click.option("--process/--no-process", default=True, show_default=True)
+    def whatsapp_dev_inject(
+        tenant: str,
+        kind: str,
+        message: str,
+        sender: str,
+        sender_name: str,
+        message_id: str | None,
+        repeat: int,
+        process: bool,
+    ) -> None:
+        """Injeta webhook Meta assinado no pipeline real, sem credenciais externas."""
+        require_development_environment()
+        integration = development_whatsapp_integration(tenant)
+        content = {
+            "text": message,
+            "handoff": "ATENDENTE",
+            "opt-out": "PARAR",
+        }[kind.lower()]
+        provider_message_id = message_id or f"wamid.dev.{uuid.uuid4().hex}"
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "id": integration.waba_id,
+                    "changes": [
+                        {
+                            "field": "messages",
+                            "value": {
+                                "metadata": {
+                                    "phone_number_id": integration.phone_number_id,
+                                    "display_phone_number": integration.display_phone,
+                                },
+                                "contacts": [
+                                    {
+                                        "wa_id": sender,
+                                        "profile": {"name": sender_name},
+                                    }
+                                ],
+                                "messages": [
+                                    {
+                                        "id": provider_message_id,
+                                        "from": sender,
+                                        "timestamp": str(int(datetime.now(UTC).timestamp())),
+                                        "type": "text",
+                                        "text": {"body": content},
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+        signing_key = secrets.token_bytes(32)
+        previous_secret = current_app.config.get("META_APP_SECRET")
+        previous_queue = current_app.config.get("WHATSAPP_INBOUND_QUEUE_BACKEND")
+        current_app.config["META_APP_SECRET"] = signing_key.hex()
+        current_app.config["WHATSAPP_INBOUND_QUEUE_BACKEND"] = "database"
+        signature = hmac.new(signing_key.hex().encode(), body, hashlib.sha256).hexdigest()
+        responses = []
+        try:
+            with current_app.test_client() as client:
+                for _ in range(repeat):
+                    response = client.post(
+                        "/api/v1/webhooks/meta/whatsapp",
+                        data=body,
+                        content_type="application/json",
+                        headers={"X-Hub-Signature-256": f"sha256={signature}"},
+                    )
+                    responses.append((response.status_code, response.get_json(silent=True) or {}))
+        finally:
+            current_app.config["META_APP_SECRET"] = previous_secret
+            current_app.config["WHATSAPP_INBOUND_QUEUE_BACKEND"] = previous_queue
+
+        failures = [status for status, _ in responses if status != 200]
+        if failures:
+            raise click.ClickException(f"O webhook retornou HTTP {failures[0]}.")
+        if process:
+            result = process_batch(f"whatsapp-dev-{uuid.uuid4().hex[:8]}")
+            processed = result.succeeded
+        else:
+            processed = 0
+        accepted = sum(int(data.get("accepted", 0)) for _, data in responses)
+        duplicated = sum(int(data.get("duplicated", 0)) for _, data in responses)
+        click.echo(
+            f"Webhook injetado: message_id={provider_message_id}, accepted={accepted}, "
+            f"duplicated={duplicated}, processed={processed}."
+        )
+
     @app.cli.command("electoral-import-geometry")
     @click.option("--source-url", default=IBGE_GEOMETRY_SOURCE, show_default=True)
     @click.option("--localities-url", default=IBGE_LOCALITIES_SOURCE, show_default=True)
@@ -270,9 +471,7 @@ def register_commands(app: Flask) -> None:
             download_official_archive(section_url) if downloaded_section else Path(section_file)
         )
         location_path = (
-            download_official_archive(location_url)
-            if downloaded_location
-            else Path(location_file)
+            download_official_archive(location_url) if downloaded_location else Path(location_file)
         )
         try:
             version, idempotent = import_territorial_detail(
@@ -421,6 +620,7 @@ def register_commands(app: Flask) -> None:
         click.echo(
             f"{total} entidade(s) operacional(is) enfileirada(s) em {len(tenants)} tenant(s)."
         )
+
     @app.cli.command("seed")
     @click.option("--tenant", default="gabinete-demo")
     @click.option("--email", default="admin@gabflow.local")
@@ -736,8 +936,7 @@ def register_commands(app: Flask) -> None:
         except TerritorialHomologationError as error:
             raise click.ClickException(str(error)) from error
         statuses = ", ".join(
-            f"{status}={total}"
-            for status, total in summary["geocode_statuses"].items()
+            f"{status}={total}" for status, total in summary["geocode_statuses"].items()
         )
         click.echo(
             f"Carga territorial aplicada em {summary['tenant']}: "
@@ -827,9 +1026,7 @@ def register_commands(app: Flask) -> None:
                     raise ValueError("Gabinete da jurisdição não encontrado.")
                 if not tenant.jurisdiction_geojson:
                     raise ValueError("O gabinete não possui geometria oficial configurada.")
-                jurisdiction_geometry = normalize_benchmark_geometry(
-                    tenant.jurisdiction_geojson
-                )
+                jurisdiction_geometry = normalize_benchmark_geometry(tenant.jurisdiction_geojson)
             providers = tuple(
                 provider_from_environment(name, timeout_seconds=timeout_seconds)
                 for name in provider_names

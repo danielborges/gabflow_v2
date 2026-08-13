@@ -2,8 +2,9 @@ import hashlib
 import re
 import unicodedata
 import uuid
+from calendar import monthrange
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 
 from app.models import RagLearningArtifactType
@@ -32,6 +33,7 @@ class QueryIntent:
 
 _STRUCTURED_PATTERNS = (
     r"\bquant[oa]s?\b",
+    r"\bquantidades?\b",
     r"\btotal\b",
     r"\bcontagem\b",
     r"\bn[uú]mero de\b",
@@ -249,16 +251,58 @@ def _structured_payload(query: str) -> dict:
         "metrica": metric,
         "agruparPor": group_by,
     }
+    period = _calendar_period_filter(query)
+    if period:
+        payload.update(period)
     days_match = re.search(r"\b(?:ultim[oa]s?|nos ultimos)\s+(\d{1,4})\s+dias\b", query)
     if days_match:
         days = max(1, min(int(days_match.group(1)), 3660))
         today = datetime.now(UTC).date()
         payload["inicio"] = (today - timedelta(days=days)).isoformat()
         payload["fim"] = today.isoformat()
+    if dataset == "SOLICITACOES" and re.search(
+        r"\b(fechad|encerrad|resolvid|concluid|cancelad)[a-z]*\b",
+        query,
+    ):
+        payload["campoData"] = "ENCERRAMENTO"
     status = _status_filter(query, dataset)
     if status:
         payload["status"] = status
     return payload
+
+
+_MONTH_NUMBERS = {
+    "janeiro": 1,
+    "fevereiro": 2,
+    "marco": 3,
+    "abril": 4,
+    "maio": 5,
+    "junho": 6,
+    "julho": 7,
+    "agosto": 8,
+    "setembro": 9,
+    "outubro": 10,
+    "novembro": 11,
+    "dezembro": 12,
+}
+
+
+def _calendar_period_filter(query: str) -> dict[str, str]:
+    month_names = "|".join(_MONTH_NUMBERS)
+    match = re.search(
+        rf"\b({month_names})\s+(?:de\s+)?(\d{{4}})\b",
+        query,
+    )
+    if match is None:
+        return {}
+    month = _MONTH_NUMBERS[match.group(1)]
+    year = int(match.group(2))
+    if not 1900 <= year <= 2200:
+        return {}
+    return {
+        "inicio": date(year, month, 1).isoformat(),
+        "fim": date(year, month, monthrange(year, month)[1]).isoformat(),
+    }
 
 
 def _status_filter(query: str, dataset: str) -> str | None:

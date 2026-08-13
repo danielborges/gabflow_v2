@@ -36,4 +36,5 @@ backend.hcl
 
 # Local deployment and homologation artifacts
 output/homologation/*.dump
+output/homologation/*.tar.gz
 backend/devprojectsgabflow_v2outputpdfagenda-executiva-semanal-exemplo.pdf
