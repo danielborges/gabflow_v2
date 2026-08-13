@@ -160,6 +160,13 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
     if period_start and period_end and period_start > period_end:
         raise ValueError("O início do período deve ser anterior ou igual ao fim.")
     model, timestamp = DATASETS[dataset]
+    date_field = str(payload.get("campoData", "PADRAO")).strip().upper()
+    if date_field not in {"PADRAO", "ENCERRAMENTO"}:
+        raise ValueError("Campo de data estruturado inválido.")
+    if date_field == "ENCERRAMENTO":
+        if dataset != "SOLICITACOES":
+            raise ValueError("Data de encerramento está disponível somente para solicitações.")
+        timestamp = ServiceRequest.closed_at
     statement = select(model).where(model.tenant_id == tenant_id)
     if period_start:
         statement = statement.where(
@@ -235,6 +242,7 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
             "tema": theme or None,
             "territorioId": str(territory_id) if territory_id else None,
             "orgaoId": str(agency_id) if agency_id else None,
+            **({"campoData": date_field} if date_field != "PADRAO" else {}),
         },
         "periodo": {
             "inicio": period_start.isoformat() if period_start else None,

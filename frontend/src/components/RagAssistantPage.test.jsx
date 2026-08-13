@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { RagAssistantPage } from "./RagAssistantPage";
 import { Workspace } from "./Workspace";
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
+});
 
 it("consulta o assistente RAG e exibe resposta com fonte", async () => {
   vi.spyOn(global, "fetch").mockResolvedValue({
@@ -66,6 +69,34 @@ it("consulta o assistente RAG e exibe resposta com fonte", async () => {
   expect(screen.getByText("0,87")).toBeInTheDocument();
   expect(screen.getByText("Trecho")).toBeInTheDocument();
   expect(screen.getByText(/Compete ao Município/)).toBeInTheDocument();
+});
+
+it("apresenta uma descrição amigável para respostas baseadas em dados estruturados", async () => {
+  vi.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      id: "query-structured",
+      consulta: "Quantos encaminhamentos estão em andamento?",
+      resposta: "Resultado estruturado para contagem: 151.",
+      fundamentada: true,
+      recusaConclusiva: false,
+      limiarEvidencia: 0,
+      modeloEmbedding: "NAO_APLICAVEL",
+      metodo: "ESTRUTURADO",
+      seguranca: { promptInjectionDetectado: false, fontesComRisco: [] },
+      fontes: [],
+    }),
+  });
+
+  render(<RagAssistantPage />);
+  fireEvent.change(screen.getByLabelText("Pergunta"), {
+    target: { value: "Quantos encaminhamentos estão em andamento?" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Consultar" }));
+
+  expect(await screen.findByText("Resposta gerada com dados estruturados do GabFlow.")).toBeInTheDocument();
+  expect(screen.queryByText(/NAO_APLICAVEL/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/limiar 0,00/)).not.toBeInTheDocument();
 });
 
 it("registra avaliação positiva, negativa e corrigida da resposta RAG", async () => {
@@ -240,8 +271,81 @@ it("deixa o Assistente RAG acessível no menu principal", async () => {
   });
 
   render(<Workspace user={{ name: "Admin", role: "admin", tenant: { name: "Gabinete" } }} onLogout={vi.fn()} />);
-  fireEvent.click(screen.getByRole("button", { name: /Assistente RAG/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Assistente RAG" }));
 
   expect(await screen.findByRole("heading", { name: "Consulta institucional" })).toBeInTheDocument();
   expect(screen.getByText("Faça perguntas sobre a base documental vigente e revise as fontes antes de usar.")).toBeInTheDocument();
+});
+
+it("permite consultar o Assistente RAG em um painel flutuante sem trocar de tela", async () => {
+  vi.spyOn(global, "fetch").mockImplementation(async (url, options = {}) => {
+    const path = String(url);
+    if (path.includes("/notificacoes/preferencias")) {
+      return { ok: true, json: async () => ({ content: [] }) };
+    }
+    if (path.includes("/notificacoes")) {
+      return { ok: true, json: async () => ({ content: [], naoLidas: 0 }) };
+    }
+    if (path.endsWith("/assistente/consultas") && options.method === "POST") {
+      return {
+        ok: true,
+        json: async () => ({
+          id: "query-floating",
+          consulta: "Quantas solicitações existem por status?",
+          resposta: "Resultado estruturado para contagem: 151.",
+          fundamentada: true,
+          recusaConclusiva: false,
+          limiarEvidencia: 0,
+          modeloEmbedding: "NAO_APLICAVEL",
+          metodo: "ESTRUTURADO",
+          seguranca: { promptInjectionDetectado: false, fontesComRisco: [] },
+          fontes: [],
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ content: [] }) };
+  });
+
+  render(<Workspace user={{ name: "Admin", role: "admin", tenant: { name: "Gabinete" } }} onLogout={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Abrir Assistente RAG" }));
+
+  const dialog = screen.getByRole("dialog", { name: "Assistente RAG flutuante" });
+  expect(within(dialog).getByText(/Apoiando seu trabalho em Solicitações/)).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Quantas solicitações estão em atendimento?" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Consultar" }));
+
+  expect(await within(dialog).findByText("Resultado estruturado para contagem: 151.")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Consulta institucional" })).not.toBeInTheDocument();
+});
+
+it("permite cancelar uma consulta pendente no painel flutuante", async () => {
+  vi.spyOn(global, "fetch").mockImplementation((url, options = {}) => {
+    const path = String(url);
+    if (path.includes("/notificacoes/preferencias")) {
+      return Promise.resolve({ ok: true, json: async () => ({ content: [] }) });
+    }
+    if (path.includes("/notificacoes")) {
+      return Promise.resolve({ ok: true, json: async () => ({ content: [], naoLidas: 0 }) });
+    }
+    if (path.endsWith("/assistente/consultas")) {
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => {
+          reject(new DOMException("Consulta interrompida", "AbortError"));
+        });
+      });
+    }
+    return Promise.resolve({ ok: true, json: async () => ({ content: [] }) });
+  });
+
+  render(<Workspace user={{ name: "Admin", role: "admin", tenant: { name: "Gabinete" } }} onLogout={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Abrir Assistente RAG" }));
+  const dialog = screen.getByRole("dialog", { name: "Assistente RAG flutuante" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Quantas solicitações estão em atendimento?" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Consultar" }));
+
+  expect(await within(dialog).findByRole("status")).toHaveTextContent("Consultando a inteligência do gabinete");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar consulta" }));
+
+  expect(await within(dialog).findByText("Consulta cancelada.")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Consultar" })).toBeEnabled();
 });

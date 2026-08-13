@@ -3454,6 +3454,9 @@ class RagDocumentVersion(db.Model):
     created_by_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retention_purged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )

@@ -20,7 +20,10 @@ from app.electoral.reports import cleanup_expired_reports
 from app.extensions import db
 from app.models import Mandate, Tenant, User
 from app.outbox.service import ProcessingResult, process_batch, worker_identity
-from app.rag.operational_memory import enqueue_expired_operational_memory
+from app.rag.operational_memory import (
+    compact_operational_histories,
+    enqueue_expired_operational_memory,
+)
 from app.tenant_context import activate_user_context, tenant_context
 from app.territorial.service import generate_deadline_notifications
 
@@ -134,11 +137,13 @@ def _run_scheduler_once() -> tuple[int, int, int, int]:
     electoral_alert_deliveries = 0
     recurring_report_jobs = 0
     territorial_deadlines = 0
+    snapshot_compactions = 0
     tenant_ids = list(db.session.scalars(select(Tenant.id).order_by(Tenant.id)))
     for tenant_id in tenant_ids:
         with tenant_context(tenant_id):
             territorial_deadlines += generate_deadline_notifications(tenant_id)
             expirations += enqueue_expired_operational_memory(tenant_id)
+            snapshot_compactions += compact_operational_histories(tenant_id)
             report_expirations += cleanup_expired_reports(tenant_id)
             recurring_report_jobs += dispatch_due_report_schedules(tenant_id)
             user_ids = list(db.session.scalars(select(User.id).where(User.tenant_id == tenant_id)))
@@ -162,5 +167,10 @@ def _run_scheduler_once() -> tuple[int, int, int, int]:
         current_app.logger.info(
             "Scheduler generated %s recurring electoral report jobs",
             recurring_report_jobs,
+        )
+    if snapshot_compactions:
+        current_app.logger.info(
+            "Scheduler compacted %s operational memory snapshots",
+            snapshot_compactions,
         )
     return reminders, expirations, report_expirations, territorial_deadlines

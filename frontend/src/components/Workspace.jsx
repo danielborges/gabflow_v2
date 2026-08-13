@@ -26,6 +26,7 @@ import { ChannelsPage } from "./ChannelsPage";
 import { DirectoryPage } from "./DirectoryPage";
 import { ElectoralIntelligencePage } from "./electoral/ElectoralIntelligencePage";
 import { electoralSectionDefinitions } from "./electoral/electoralNavigation";
+import { FloatingRagAssistant } from "./FloatingRagAssistant";
 import { GlobalSearch } from "./GlobalSearch";
 import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
 import { NotificationCenter } from "./NotificationCenter";
@@ -283,6 +284,12 @@ export function Workspace({ user, onLogout }) {
             <span className="avatar">{user.name.slice(0, 2).toUpperCase()}</span>
             <span><strong>{user.name}</strong><small>{user.chefeGabinete ? `${user.tenant.name} · Chefe de Gabinete` : user.tenant.name}</small></span>
           </div>
+          {isModuleEnabled("rag") && (
+            <FloatingRagAssistant
+              activeView={activeView}
+              onOpenFullPage={() => openView("rag-assistant")}
+            />
+          )}
           <NotificationCenter />
           <button className="icon-button" onClick={onLogout} aria-label="Sair" title="Sair">
             <LogOut size={20} />

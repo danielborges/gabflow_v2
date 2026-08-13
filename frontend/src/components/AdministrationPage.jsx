@@ -899,9 +899,9 @@ export function WhatsAppFlowsManager({ tenantId, canManage = false }) {
 
   if (!tenantId) return null;
   const labels = {
-    citizen_registration: "Cadastro do cidadÃ£o",
-    new_service_request: "Nova solicitaÃ§Ã£o",
-    request_complement: "Complemento da solicitaÃ§Ã£o",
+    citizen_registration: "Cadastro do cidadão",
+    new_service_request: "Nova solicitação",
+    request_complement: "Complemento da solicitação",
   };
   const latest = Object.values(flows.reduce((result, item) => {
     if (!result[item.chave] || result[item.chave].versao < item.versao) result[item.chave] = item;
@@ -911,26 +911,26 @@ export function WhatsAppFlowsManager({ tenantId, canManage = false }) {
   return <section className="whatsapp-flows-manager" aria-labelledby="whatsapp-flows-title">
     <header>
       <div>
-        <p className="eyebrow">ExperiÃªncia conversacional</p>
+        <p className="eyebrow">Experiência conversacional</p>
         <h2 id="whatsapp-flows-title">WhatsApp Flows</h2>
-        <p>FormulÃ¡rios versionados para cadastro, solicitaÃ§Ã£o e complemento, com fallback guiado na caixa de entrada.</p>
+        <p>Formulários versionados para cadastro, solicitação e complemento, com fallback guiado na caixa de entrada.</p>
       </div>
-      {canManage && flows.length === 0 && <button className="primary-button compact" type="button" disabled={Boolean(busyId)} onClick={() => mutate("bootstrap", () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/bootstrap`, { method: "POST" }), "Flows padrÃ£o preparados.")}><Plus size={17} /> Preparar Flows</button>}
+      {canManage && flows.length === 0 && <button className="primary-button compact" type="button" disabled={Boolean(busyId)} onClick={() => mutate("bootstrap", () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/bootstrap`, { method: "POST" }), "Flows padrão preparados.")}><Plus size={17} /> Preparar Flows</button>}
     </header>
-    {loading && <div className="table-message">Carregando versÃµes...</div>}
+    {loading && <div className="table-message">Carregando versões...</div>}
     {error && <p className="form-error" role="alert">{error}</p>}
     {notice && <p className="form-success" role="status">{notice}</p>}
-    {!loading && flows.length === 0 && <div className="whatsapp-flows-empty"><FileText size={22} /><span>Nenhuma definiÃ§Ã£o preparada para este ambiente.</span></div>}
+    {!loading && flows.length === 0 && <div className="whatsapp-flows-empty"><FileText size={22} /><span>Nenhuma definição preparada para este ambiente.</span></div>}
     <div className="whatsapp-flows-grid">{latest.map((item) => <article key={item.id}>
-      <header><div><strong>{labels[item.chave] || item.nome}</strong><small>{item.ambiente} Â· versÃ£o {item.versao}</small></div><span className={`flow-definition-status status-${item.status.toLowerCase()}`}>{item.status}</span></header>
+      <header><div><strong>{labels[item.chave] || item.nome}</strong><small>{item.ambiente} · versão {item.versao}</small></div><span className={`flow-definition-status status-${item.status.toLowerCase()}`}>{item.status}</span></header>
       <div className="whatsapp-flow-meta"><span>Schema <code>{item.schemaHash.slice(0, 10)}</code></span><span>{item.telas.length} telas</span></div>
       {item.status === "ACTIVE" ? <p className="whatsapp-flow-active"><ShieldCheck size={16} /> Ativo na Meta como {item.metaFlowId}</p> : canManage && <label>ID do Flow na Meta<input value={metaIds[item.id] || ""} onChange={(event) => setMetaIds((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="ID publicado pela Meta" /></label>}
       {canManage && <div className="form-actions">
-        {item.status !== "ACTIVE" && <button className="primary-button compact" type="button" disabled={Boolean(busyId) || (metaIds[item.id] || "").trim().length < 4} onClick={() => mutate(item.id, () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/${item.id}/activate`, { method: "POST", body: JSON.stringify({ metaFlowId: metaIds[item.id] }) }), `${labels[item.chave]} ativado.`)}>Ativar versÃ£o</button>}
-        <button className="secondary-button compact" type="button" disabled={Boolean(busyId)} onClick={() => mutate(`version-${item.chave}`, () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/versions`, { method: "POST", body: JSON.stringify({ chave: item.chave }) }), `Nova versÃ£o de ${labels[item.chave]} criada.`)}>Nova versÃ£o</button>
+        {item.status !== "ACTIVE" && <button className="primary-button compact" type="button" disabled={Boolean(busyId) || (metaIds[item.id] || "").trim().length < 4} onClick={() => mutate(item.id, () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/${item.id}/activate`, { method: "POST", body: JSON.stringify({ metaFlowId: metaIds[item.id] }) }), `${labels[item.chave]} ativado.`)}>Ativar versão</button>}
+        <button className="secondary-button compact" type="button" disabled={Boolean(busyId)} onClick={() => mutate(`version-${item.chave}`, () => apiRequest(`/api/v1/tenants/${tenantId}/whatsapp/flows/versions`, { method: "POST", body: JSON.stringify({ chave: item.chave }) }), `Nova versão de ${labels[item.chave]} criada.`)}>Nova versão</button>
       </div>}
     </article>)}</div>
-    {flows.length > latest.length && <small className="template-help">{flows.length - latest.length} versÃ£o(Ãµes) anterior(es) preservada(s) para auditoria e processamento seguro de respostas em trÃ¢nsito.</small>}
+    {flows.length > latest.length && <small className="template-help">{flows.length - latest.length} versão(ões) anterior(es) preservada(s) para auditoria e processamento seguro de respostas em trânsito.</small>}
   </section>;
 }
 

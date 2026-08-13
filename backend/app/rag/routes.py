@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.audit import add_audit
@@ -126,6 +126,66 @@ DOCUMENT_TYPES = {
     "PROCESSO",
     "PROCEDIMENTO_INTERNO",
     "OUTRO",
+}
+OPERATIONAL_MODULE_LABELS = {
+    "SOLICITACOES": "Solicitações",
+    "LEGISLATIVO": "Produção legislativa",
+    "AGENDA": "Agenda",
+    "FISCALIZACAO": "Fiscalização",
+    "ANALITICA": "Inteligência temática",
+}
+OPERATIONAL_ENTITY_LABELS = {
+    "SERVICE_REQUEST": "Solicitação",
+    "REQUEST_FORWARDING": "Encaminhamento",
+    "LEGISLATIVE_DRAFT": "Minuta legislativa",
+    "LEGISLATIVE_TRAMITATION": "Tramitação legislativa",
+    "DOCUMENT_OCR": "Documento processado",
+    "AUDIO_TRANSCRIPTION": "Transcrição de áudio",
+    "AGENDA_EVENT": "Compromisso de agenda",
+    "OVERSIGHT_ACTION": "Ação de fiscalização",
+    "THEMATIC_MEMORY": "Memória temática",
+}
+OPERATIONAL_STATUS_LABELS = {
+    "PENDENTE": "Sincronizando",
+    "ATIVA": "Disponível",
+    "QUARENTENA": "Requer revisão",
+    "INELEGIVEL": "Não elegível",
+    "EXPIRADA": "Expirada",
+    "ERRO": "Falha na sincronização",
+    "EXCLUIDA": "Descartada",
+}
+OPERATIONAL_PURPOSE_LABELS = {
+    "ATENDIMENTO_E_PLANEJAMENTO_LEGISLATIVO": (
+        "Apoiar o atendimento ao cidadão e o planejamento de iniciativas legislativas."
+    ),
+    "ACOMPANHAMENTO_DE_ENCAMINHAMENTOS_E_RESPOSTAS_OFICIAIS": (
+        "Acompanhar encaminhamentos realizados pelo gabinete e as respostas oficiais recebidas."
+    ),
+    "ACOMPANHAMENTO_DA_TRAMITACAO_LEGISLATIVA": (
+        "Acompanhar a tramitação de proposições e identificar avanços, prazos e pendências."
+    ),
+    "EVIDENCIA_DOCUMENTAL_REVISADA_DE_ATENDIMENTO": (
+        "Disponibilizar documentos de atendimento revisados como evidências "
+        "para consultas e decisões."
+    ),
+    "EVIDENCIA_DE_AUDIO_REVISADA_DE_ATENDIMENTO": (
+        "Disponibilizar transcrições de áudio revisadas como evidências dos "
+        "atendimentos realizados."
+    ),
+    "MEMORIA_DE_COMPROMISSOS_E_VISITAS_REALIZADOS": (
+        "Registrar compromissos e visitas realizados para apoiar o acompanhamento "
+        "das ações do gabinete."
+    ),
+    "MEMORIA_DE_FISCALIZACAO_E_CONTROLE": (
+        "Apoiar o acompanhamento de fiscalizações, providências e resultados de controle."
+    ),
+    "PLANEJAMENTO_TEMATICO_AGREGADO": (
+        "Reunir informações relacionadas por tema para apoiar o planejamento e a "
+        "definição de prioridades."
+    ),
+    "MEMORIA_E_PRODUCAO_LEGISLATIVA": (
+        "Preservar o contexto da produção legislativa para apoiar análises e novas iniciativas."
+    ),
 }
 
 
@@ -268,7 +328,14 @@ def _context() -> tuple[uuid.UUID, uuid.UUID]:
 @jwt_required()
 def list_documents():
     tenant_id, _ = _context()
-    statement = select(RagDocument).where(RagDocument.tenant_id == tenant_id)
+    operational_document = exists().where(
+        RagKnowledgeSource.tenant_id == RagDocument.tenant_id,
+        RagKnowledgeSource.document_id == RagDocument.id,
+    )
+    statement = select(RagDocument).where(
+        RagDocument.tenant_id == tenant_id,
+        ~operational_document,
+    )
     if get_jwt().get("role") not in {"admin", "manager"}:
         statement = statement.where(RagDocument.access_level == RagDocumentAccess.INTERNO)
     search = str(request.args.get("q", "")).strip()
@@ -1725,16 +1792,46 @@ def update_global_catalog_subscription(collection_id: uuid.UUID):
 
 
 def operational_source_data(source: RagKnowledgeSource) -> dict:
+    document = db.session.get(RagDocument, source.document_id) if source.document_id else None
+    title = document.title if document is not None else None
+    if title and title.startswith("[Memória] "):
+        title = title[len("[Memória] ") :]
+    if title and title.endswith(")") and " (" in title:
+        title = title.rsplit(" (", 1)[0]
+    available = (
+        source.status == RagKnowledgeSourceStatus.ATIVA
+        and (source.retention_until is None or source.retention_until >= date.today())
+        and bool(document and document.active)
+    )
     return {
         "id": str(source.id),
+        "titulo": title or OPERATIONAL_ENTITY_LABELS.get(source.entity_type, "Memória automática"),
+        "origem": {
+            "sistema": "GabFlow",
+            "modulo": source.source_module,
+            "moduloNome": OPERATIONAL_MODULE_LABELS.get(
+                source.source_module, source.source_module.replace("_", " ").title()
+            ),
+            "entidade": source.entity_type,
+            "entidadeNome": OPERATIONAL_ENTITY_LABELS.get(
+                source.entity_type, source.entity_type.replace("_", " ").title()
+            ),
+            "entidadeId": str(source.entity_id),
+        },
         "modulo": source.source_module,
         "entidadeTipo": source.entity_type,
         "entidadeId": str(source.entity_id),
         "versaoProjetor": source.projector_version,
         "revisaoOrigem": source.source_revision,
         "estado": source.status.value,
+        "estadoNome": OPERATIONAL_STATUS_LABELS[source.status.value],
+        "disponivelParaInteligencia": available,
         "motivoElegibilidade": source.eligibility_reason,
         "finalidade": source.purpose,
+        "finalidadeNome": OPERATIONAL_PURPOSE_LABELS.get(
+            source.purpose,
+            "Apoiar a inteligência e o trabalho diário do gabinete.",
+        ),
         "baseLegal": source.legal_basis,
         "nivelAcesso": source.access_level.value,
         "retencaoAte": (source.retention_until.isoformat() if source.retention_until else None),
@@ -1819,8 +1916,12 @@ def version_data(item: RagDocumentVersion, *, include_download: bool = True) -> 
         "verificacaoMalware": malware_scan_state(item),
         "criadaEm": item.created_at.isoformat(),
         "indexadaEm": item.indexed_at.isoformat() if item.indexed_at else None,
+        "conteudoDisponivel": item.retention_purged_at is None,
+        "conteudoDescartadoEm": (
+            item.retention_purged_at.isoformat() if item.retention_purged_at else None
+        ),
     }
-    if include_download:
+    if include_download and item.retention_purged_at is None:
         data["downloadUrl"] = (
             f"/api/v1/rag/documentos/{item.document_id}/versoes/{item.id}/download"
             f"?token={signed_rag_download_token(item.tenant_id, item.document_id, item.id)}"

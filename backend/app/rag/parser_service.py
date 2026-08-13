@@ -10,7 +10,6 @@ import threading
 from pathlib import Path
 
 SOCKET_PATH = Path(os.environ.get("DOCUMENT_PARSER_SOCKET_PATH", "/run/gabflow-parser/parser.sock"))
-MAX_REQUEST_BYTES = 8192
 WORKER_SLOTS = threading.BoundedSemaphore(int(os.environ.get("PARSER_MAX_WORKERS", "4")))
 
 
@@ -34,7 +33,8 @@ def _handle_connection(connection: socket.socket) -> None:
     with connection:
         try:
             request_size = struct.unpack("!I", _receive_exact(connection, 4))[0]
-            if request_size <= 0 or request_size > MAX_REQUEST_BYTES:
+            maximum_request = int(os.environ.get("PARSER_MAX_FILE_BYTES", "31457280")) + 8192
+            if request_size <= 0 or request_size > maximum_request:
                 raise ValueError("Solicitacao excede o limite do parser.")
             request = _receive_exact(connection, request_size)
             if not WORKER_SLOTS.acquire(timeout=1):

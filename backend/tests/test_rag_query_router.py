@@ -1,7 +1,10 @@
+import uuid
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models import RagAssistantQuery
+from app.models import RagAssistantQuery, RequestStatus, ServiceRequest
 from app.rag.router import QueryMethod, classify_query
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
@@ -52,6 +55,55 @@ def test_router_classifies_documental_structured_and_hybrid_intents():
     assert overdue.structured_payload["dataset"] == "ENCAMINHAMENTOS"
     assert overdue.structured_payload["metrica"] == "PRAZOS_VENCIDOS"
     assert overdue.structured_payload["agruparPor"] == "ORGAO"
+
+
+def test_router_understands_quantity_closed_requests_in_named_month():
+    intent = classify_query(
+        "Qual a quantidade de solicitações fechadas em Julho de 2026?"
+    )
+
+    assert intent.method == QueryMethod.ESTRUTURADO
+    assert intent.structured_payload == {
+        "dataset": "SOLICITACOES",
+        "metrica": "CONTAGEM",
+        "agruparPor": "NENHUM",
+        "inicio": "2026-07-01",
+        "fim": "2026-07-31",
+        "campoData": "ENCERRAMENTO",
+    }
+
+
+def test_structured_route_counts_requests_closed_in_named_month(app, client):
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    closed_in_july = _create_request(client, csrf, "Fechada em julho", "Atendimento")
+    closed_in_august = _create_request(client, csrf, "Fechada em agosto", "Atendimento")
+    _create_request(client, csrf, "Ainda aberta", "Atendimento")
+
+    with app.app_context():
+        july_item = db.session.get(ServiceRequest, uuid.UUID(closed_in_july["id"]))
+        july_item.status = RequestStatus.ENCERRADA
+        july_item.closed_at = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        august_item = db.session.get(ServiceRequest, uuid.UUID(closed_in_august["id"]))
+        august_item.status = RequestStatus.ENCERRADA
+        august_item.closed_at = datetime(2026, 8, 1, 12, tzinfo=UTC)
+        db.session.commit()
+
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={
+            "consulta": "Qual a quantidade de solicitações fechadas em Julho de 2026?"
+        },
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["metodo"] == "ESTRUTURADO"
+    assert response.json["resultadoEstruturado"]["total"] == 1
+    assert response.json["resultadoEstruturado"]["periodo"] == {
+        "inicio": "2026-07-01",
+        "fim": "2026-07-31",
+    }
+    assert response.json["filtrosAplicados"]["campoData"] == "ENCERRAMENTO"
 
 
 def test_structured_route_skips_document_retrieval_and_persists_decision(app, client, monkeypatch):
