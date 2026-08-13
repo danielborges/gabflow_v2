@@ -413,12 +413,15 @@ data "aws_iam_policy_document" "foundation_apply" {
   statement {
     sid = "ManageStagingRuntime"
     actions = [
+      "acm:DescribeCertificate",
+      "acm:ListTagsForCertificate",
       "application-autoscaling:*",
       "cloudwatch:DeleteAlarms",
       "cloudwatch:DeleteDashboards",
       "cloudwatch:DescribeAlarms",
       "cloudwatch:GetDashboard",
       "cloudwatch:ListDashboards",
+      "cloudwatch:ListTagsForResource",
       "cloudwatch:PutMetricAlarm",
       "cloudwatch:PutDashboard",
       "ecr:*",
@@ -428,6 +431,8 @@ data "aws_iam_policy_document" "foundation_apply" {
       "logs:AssociateKmsKey",
       "logs:DisassociateKmsKey",
       "rds:*",
+      "sqs:GetQueueAttributes",
+      "sqs:ListQueueTags",
       "wafv2:*",
     ]
     resources = ["*"]
