@@ -1,4 +1,7 @@
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   BookMarked,
   CheckCircle2,
   Clock3,
@@ -22,6 +25,8 @@ import {
   ShieldAlert,
   Sparkles,
   Milestone,
+  ChevronLeft,
+  ChevronRight,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -66,7 +71,22 @@ const NORMATIVE_TYPES = [
   ["OUTRO", "Outro"],
 ];
 
-export function LegislativeDocumentsPage({ user }) {
+const SECTION_CONTENT = {
+  drafts: ["Minutas legislativas", "Crie, revise e acompanhe documentos legislativos com rastreabilidade."],
+  precedents: ["Precedentes legislativos", "Localize proposições semelhantes no acervo do gabinete."],
+  templates: ["Templates legislativos", "Gerencie estruturas reutilizáveis para a produção de documentos."],
+  sources: ["Base normativa", "Organize as fontes usadas na fundamentação das proposições."],
+};
+const DRAFT_PAGE_SIZES = [10, 25, 50, 100];
+const DRAFT_COLUMNS = [
+  ["titulo", "Título"],
+  ["tipo", "Tipo"],
+  ["status", "Status"],
+  ["protocolo", "Protocolo"],
+  ["atualizadaEm", "Atualizada em"],
+];
+
+export function LegislativeDocumentsPage({ user, activeSection = "drafts", onSectionChange = () => {} }) {
   const manager = ["admin", "manager"].includes(user.role);
   const approver = ["admin", "manager", "representative"].includes(user.role);
   const [items, setItems] = useState([]);
@@ -75,22 +95,39 @@ export function LegislativeDocumentsPage({ user }) {
   const [draft, setDraft] = useState(null);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
-  const [activeSection, setActiveSection] = useState("drafts");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [sort, setSort] = useState({ key: "atualizadaEm", direction: "desc" });
+  const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
 
-  const load = useCallback(async () => {
+  const loadDrafts = useCallback(async () => {
+    setLoading(true);
     setError("");
     try {
-      const suffix = query ? `?q=${encodeURIComponent(query)}` : "";
-      const [drafts, templateData] = await Promise.all([
-        apiRequest(`/api/v1/legislativo/minutas${suffix}`),
-        apiRequest(`/api/v1/legislativo/templates${manager ? "?incluirInativos=true" : ""}`),
-      ]);
-      setItems(drafts.content);
-      setTemplates(templateData.content);
+      const params = new URLSearchParams({ page: String(page), size: String(pageSize), sort: sort.key, direction: sort.direction });
+      if (query.trim()) params.set("q", query.trim());
+      if (statusFilter) params.set("status", statusFilter);
+      if (typeFilter) params.set("tipo", typeFilter);
+      const drafts = await apiRequest(`/api/v1/legislativo/minutas?${params}`);
+      setItems(drafts.content || []);
+      setTotalElements(drafts.totalElements ?? drafts.content?.length ?? 0);
+      setTotalPages(drafts.totalPages ?? (drafts.content?.length ? 1 : 0));
     } catch (requestError) { setError(requestError.message); }
-  }, [manager, query]);
+    finally { setLoading(false); }
+  }, [page, pageSize, query, sort, statusFilter, typeFilter]);
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      const templateData = await apiRequest(`/api/v1/legislativo/templates${manager ? "?incluirInativos=true" : ""}`);
+      setTemplates(templateData.content || []);
+    } catch (requestError) { setError(requestError.message); }
+  }, [manager]);
 
   const loadDetail = useCallback(async (id) => {
     if (!id) return undefined;
@@ -102,7 +139,12 @@ export function LegislativeDocumentsPage({ user }) {
     } catch (requestError) { setError(requestError.message); return undefined; }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (activeSection !== "drafts") return undefined;
+    const timer = setTimeout(loadDrafts, 250);
+    return () => clearTimeout(timer);
+  }, [activeSection, loadDrafts]);
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
   useEffect(() => { loadDetail(selectedId); }, [loadDetail, selectedId]);
   useEffect(() => {
     if (!draft || !["PENDENTE", "PROCESSANDO"].includes(draft.statusGeracao)) return undefined;
@@ -117,7 +159,7 @@ export function LegislativeDocumentsPage({ user }) {
     setBusy(true); setError("");
     try {
       const created = await apiRequest(`/api/v1/solicitacoes/${values.requestId}/gerar-minuta`, { method: "POST", body: JSON.stringify(values.payload) });
-      setCreating(false); setItems((current) => [created, ...current]); setSelectedId(created.id); setDraft(created);
+      setCreating(false); setPage(0); setItems((current) => [created, ...current]); setSelectedId(created.id); setDraft(created);
     } catch (requestError) { setError(requestError.message); } finally { setBusy(false); }
   }
 
@@ -125,19 +167,41 @@ export function LegislativeDocumentsPage({ user }) {
     setBusy(true); setError("");
     try {
       const updated = await apiRequest(`/api/v1/legislativo/minutas/${draft.id}/revisao`, { method: "POST", body: JSON.stringify({ acao: action, ...values }) });
-      setDraft(updated); await load();
+      setDraft(updated); await loadDrafts();
     } catch (requestError) { setError(requestError.message); } finally { setBusy(false); }
   }
 
+  function changeSort(key) {
+    setPage(0);
+    setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }));
+  }
+
+  const [sectionTitle, sectionDescription] = SECTION_CONTENT[activeSection] || SECTION_CONTENT.drafts;
+  const firstItem = totalElements ? page * pageSize + 1 : 0;
+  const lastItem = Math.min((page + 1) * pageSize, totalElements);
+
   return <>
-    <section className="page-heading legislative-heading"><div><p className="eyebrow">Produção legislativa</p><h1>Documentos e minutas</h1><p>Transforme demandas selecionadas em proposições revisáveis e rastreáveis.</p></div><div className="legislative-heading-actions"><div className="legislative-view-switch" role="tablist" aria-label="Área legislativa"><button role="tab" aria-selected={activeSection === "drafts"} className={activeSection === "drafts" ? "active" : ""} onClick={() => setActiveSection("drafts")}><FileText size={17} /> Minutas</button><button role="tab" aria-selected={activeSection === "precedents"} className={activeSection === "precedents" ? "active" : ""} onClick={() => { setActiveSection("precedents"); setCreating(false); }}><Library size={17} /> Precedentes</button><button role="tab" aria-selected={activeSection === "templates"} className={activeSection === "templates" ? "active" : ""} onClick={() => { setActiveSection("templates"); setCreating(false); }}><LayoutTemplate size={17} /> Templates</button>{manager && <button role="tab" aria-selected={activeSection === "sources"} className={activeSection === "sources" ? "active" : ""} onClick={() => { setActiveSection("sources"); setCreating(false); }}><BookMarked size={17} /> Base normativa</button>}</div>{activeSection === "drafts" && user.role !== "representative" && <button className="primary-button" onClick={() => setCreating(true)}><FilePlus2 size={18} /> Nova minuta</button>}</div></section>
+    <section className="page-heading legislative-heading"><div><p className="eyebrow">Produção legislativa</p><h1>{sectionTitle}</h1><p>{sectionDescription}</p></div>{activeSection === "drafts" && user.role !== "representative" && <button className="primary-button" onClick={() => setCreating(true)}><FilePlus2 size={18} /> Nova minuta</button>}</section>
     {error && <p className="form-error">{error}</p>}
     {activeSection === "drafts" && creating && <DraftCreationForm templates={templates} busy={busy} onCancel={() => setCreating(false)} onSubmit={createDraft} />}
-    {activeSection === "drafts" && <section className="legislative-workspace">
-      <aside className="legislative-list"><div className="legislative-search"><Search size={17} /><input aria-label="Pesquisar minutas" placeholder="Título ou protocolo" value={query} onChange={(event) => setQuery(event.target.value)} /><button className="icon-button" onClick={load} title="Atualizar"><RefreshCw size={17} /></button></div><div className="legislative-items">{items.map((item) => <button key={item.id} className={selectedId === item.id ? "legislative-item active" : "legislative-item"} onClick={() => setSelectedId(item.id)}><FileText size={18} /><span><strong>{item.titulo}</strong><small>{typeLabel(item.tipo)} · {STATUS_LABELS[item.status] || item.status}</small></span><StatusDot status={item.status} /></button>)}{!items.length && <p className="table-message">Nenhuma minuta cadastrada.</p>}</div></aside>
-      <div className="legislative-editor-area">{draft ? <DraftEditor draft={draft} user={user} approver={approver} busy={busy} onReview={review} onChange={setDraft} onReload={() => loadDetail(draft.id)} onOpenDraft={setSelectedId} /> : <div className="legislative-empty"><FileText size={34} /><h2>Selecione uma minuta</h2><p>O conteúdo, fontes, versões e decisões aparecerão aqui.</p></div>}</div>
-    </section>}
-    {activeSection === "precedents" && <PrecedentSearch onOpenDraft={(id) => { setSelectedId(id); setActiveSection("drafts"); }} />}
+    {activeSection === "drafts" && <>
+      <section className="legislative-drafts-page">
+        <div className="legislative-table-toolbar">
+          <label className="legislative-search"><Search size={17} /><input aria-label="Pesquisar minutas" placeholder="Buscar por título ou protocolo" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} /></label>
+          <label><span>Status da minuta</span><select aria-label="Filtrar minutas por status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(0); }}><option value="">Todos</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><span>Tipo de minuta</span><select aria-label="Filtrar minutas por tipo" value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(0); }}><option value="">Todos</option>{TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <button className="secondary-button" onClick={loadDrafts} disabled={loading}><RefreshCw size={17} /> Atualizar</button>
+        </div>
+        <div className="request-grid-summary"><span>{loading ? "Carregando minutas..." : `${totalElements} ${totalElements === 1 ? "minuta encontrada" : "minutas encontradas"}`}</span><label>Itens por página <select aria-label="Itens por página" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }}>{DRAFT_PAGE_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label></div>
+        <div className="table-scroll"><table className="request-table legislative-table"><thead><tr>{DRAFT_COLUMNS.map(([key, label]) => <th key={key}><button className="request-sort-button" onClick={() => changeSort(key)}>{label}{sort.key !== key ? <ArrowUpDown size={14} /> : sort.direction === "asc" ? <ArrowUp size={14} /> : <ArrowDown size={14} />}</button></th>)}<th><span className="sr-only">Ações</span></th></tr></thead><tbody>
+          {!loading && items.map((item) => <tr key={item.id} className={selectedId === item.id ? "selected" : ""} onClick={() => setSelectedId(item.id)}><td><strong>{item.titulo}</strong></td><td>{typeLabel(item.tipo)}</td><td><span className={`status-badge status-${item.status.toLowerCase()}`}><StatusDot status={item.status} />{STATUS_LABELS[item.status] || item.status}</span></td><td>{item.protocolo || "—"}</td><td>{formatDateTime(item.atualizadaEm)}</td><td><button className="icon-button" aria-label={`Abrir minuta ${item.titulo}`} onClick={(event) => { event.stopPropagation(); setSelectedId(item.id); }}><Eye size={17} /></button></td></tr>)}
+          {!loading && !items.length && <tr><td colSpan="6" className="table-message">Nenhuma minuta encontrada com os filtros aplicados.</td></tr>}
+        </tbody></table></div>
+        <div className="request-pagination"><span>{firstItem}-{lastItem} de {totalElements}</span><div><button className="secondary-button" disabled={page === 0 || loading} onClick={() => setPage((current) => current - 1)}><ChevronLeft size={16} /> Anterior</button><button className="secondary-button" disabled={page + 1 >= totalPages || loading} onClick={() => setPage((current) => current + 1)}>Próxima <ChevronRight size={16} /></button></div></div>
+      </section>
+      {draft && <section className="legislative-detail-section"><DraftEditor draft={draft} user={user} approver={approver} busy={busy} onReview={review} onChange={setDraft} onReload={() => loadDetail(draft.id)} onOpenDraft={setSelectedId} /></section>}
+    </>}
+    {activeSection === "precedents" && <PrecedentSearch onOpenDraft={(id) => { setSelectedId(id); onSectionChange("drafts"); }} />}
     {activeSection === "templates" && <TemplateManagement templates={templates} manager={manager} onTemplatesChange={setTemplates} />}
     {activeSection === "sources" && manager && <NormativeSourceManagement />}
   </>;
@@ -628,6 +692,7 @@ function TramitationPanel({ draft, manager, onReload }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [correction, setCorrection] = useState(null);
 
   async function submit(event) {
     event.preventDefault();
@@ -662,20 +727,75 @@ function TramitationPanel({ draft, manager, onReload }) {
     }
   }
 
+  function startProtocolCorrection() {
+    const current = [...(draft.tramitacoes || [])].reverse().find((item) => item.status === "PROTOCOLADA" && !item.retificada);
+    setCorrection({ kind: "protocol", targetId: current?.id, protocolo: draft.protocolo || "", ocorridaEm: toDateTimeLocal(draft.protocoladaEm), motivo: "", observacoes: "" });
+    setError("");
+  }
+
+  function startMovementCorrection(item) {
+    setCorrection({ kind: "movement", targetId: item.id, status: item.status, etapa: item.etapa || "", destino: item.destino || "", referenciaExterna: item.referenciaExterna || "", observacoes: item.observacoes || "", ocorridaEm: toDateTimeLocal(item.ocorridaEm), motivo: "" });
+    setError("");
+  }
+
+  async function submitCorrection(event) {
+    event.preventDefault();
+    if (!correction || correction.motivo.trim().length < 10) return;
+    setSaving(true);
+    setError("");
+    try {
+      const path = correction.kind === "protocol"
+        ? `/api/v1/legislativo/minutas/${draft.id}/protocolo/retificacoes`
+        : `/api/v1/legislativo/minutas/${draft.id}/tramitacoes/${correction.targetId}/retificacoes`;
+      const payload = correction.kind === "protocol"
+        ? { protocolo: correction.protocolo.trim(), protocoladaEm: correction.ocorridaEm ? new Date(correction.ocorridaEm).toISOString() : undefined, motivo: correction.motivo.trim(), observacoes: correction.observacoes }
+        : { status: correction.status, etapa: correction.etapa.trim(), destino: correction.destino, referenciaExterna: correction.referenciaExterna, observacoes: correction.observacoes, ocorridaEm: correction.ocorridaEm ? new Date(correction.ocorridaEm).toISOString() : undefined, motivo: correction.motivo.trim() };
+      await apiRequest(path, { method: "POST", body: JSON.stringify(payload) });
+      setCorrection(null);
+      await onReload();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return <section className="tramitation-section">
     <header className="tramitation-header">
       <div><Milestone size={19} /><span><strong>Tramitação legislativa</strong><small>Protocolo {draft.protocolo}</small></span></div>
-      <span className="tramitation-current">{TRAMITATION_STATUS_LABELS[draft.statusTramitacao] || draft.statusTramitacao}</span>
+      <div className="tramitation-header-actions"><span className="tramitation-current">{TRAMITATION_STATUS_LABELS[draft.statusTramitacao] || draft.statusTramitacao}</span>{manager && <button type="button" className="secondary-button compact" onClick={startProtocolCorrection}><RotateCcw size={15} /> Retificar protocolo</button>}</div>
     </header>
     <div className="tramitation-timeline">
-      {(draft.tramitacoes || []).map((item) => <article key={item.id}>
+      {(draft.tramitacoes || []).map((item) => <article key={item.id} className={item.retificada ? "tramitation-rectified" : item.tipoRegistro === "RETIFICACAO" ? "tramitation-correction" : ""}>
         <span className="tramitation-marker"><Clock3 size={14} /></span>
-        <div className="tramitation-event-heading"><strong>{TRAMITATION_STATUS_LABELS[item.status] || item.status}</strong><time>{formatDateTime(item.ocorridaEm)}</time></div>
+        <div className="tramitation-event-heading"><strong>{TRAMITATION_STATUS_LABELS[item.status] || item.status}{item.tipoRegistro === "RETIFICACAO" ? " · Retificação" : item.retificada ? " · Retificado" : ""}</strong><time>{formatDateTime(item.ocorridaEm)}</time></div>
         <p>{item.etapa}</p>
         {(item.destino || item.referenciaExterna) && <small>{[item.destino, item.referenciaExterna].filter(Boolean).join(" · ")}</small>}
         {item.observacoes && <p className="tramitation-notes">{item.observacoes}</p>}
+        {item.motivoRetificacao && <p className="tramitation-reason"><strong>Motivo:</strong> {item.motivoRetificacao}</p>}
+        {manager && item.status !== "PROTOCOLADA" && !item.retificada && <button type="button" className="tramitation-rectify-button" onClick={() => startMovementCorrection(item)}><RotateCcw size={14} /> Retificar andamento</button>}
       </article>)}
     </div>
+    {manager && correction && <form className="tramitation-form tramitation-correction-form" onSubmit={submitCorrection}>
+      <h3>{correction.kind === "protocol" ? "Retificar protocolo" : "Retificar andamento"}</h3>
+      <p className="muted">O registro original será preservado e vinculado a este evento compensatório.</p>
+      <div className="tramitation-form-grid">
+        {correction.kind === "protocol" ? <>
+          <label>Número do protocolo<input aria-label="Protocolo retificado" value={correction.protocolo} maxLength={100} onChange={(event) => setCorrection({ ...correction, protocolo: event.target.value })} /></label>
+          <label>Data e hora do protocolo<input aria-label="Data do protocolo retificado" type="datetime-local" value={correction.ocorridaEm} onChange={(event) => setCorrection({ ...correction, ocorridaEm: event.target.value })} /></label>
+        </> : <>
+          <label>Status<select aria-label="Status retificado" value={correction.status} onChange={(event) => setCorrection({ ...correction, status: event.target.value })}>{Object.entries(TRAMITATION_STATUS_LABELS).filter(([value]) => value !== "PROTOCOLADA").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Data e hora<input aria-label="Data do andamento retificado" type="datetime-local" value={correction.ocorridaEm} onChange={(event) => setCorrection({ ...correction, ocorridaEm: event.target.value })} /></label>
+          <label className="full-width">Etapa<input aria-label="Etapa retificada" value={correction.etapa} maxLength={160} onChange={(event) => setCorrection({ ...correction, etapa: event.target.value })} /></label>
+          <label>Destino<input aria-label="Destino retificado" value={correction.destino} maxLength={180} onChange={(event) => setCorrection({ ...correction, destino: event.target.value })} /></label>
+          <label>Referência externa<input aria-label="Referência externa retificada" value={correction.referenciaExterna} maxLength={180} onChange={(event) => setCorrection({ ...correction, referenciaExterna: event.target.value })} /></label>
+        </>}
+        <label className="full-width">Motivo da retificação<input aria-label="Motivo da retificação" value={correction.motivo} maxLength={500} onChange={(event) => setCorrection({ ...correction, motivo: event.target.value })} placeholder="Descreva o erro material e a fonte conferida" /></label>
+        <label className="full-width">Observações<textarea aria-label="Observações da retificação" rows={3} value={correction.observacoes} onChange={(event) => setCorrection({ ...correction, observacoes: event.target.value })} /></label>
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      <div className="tramitation-form-actions"><button type="button" className="secondary-button" onClick={() => setCorrection(null)}>Cancelar</button><button className="primary-button" disabled={saving || correction.motivo.trim().length < 10 || (correction.kind === "protocol" ? !correction.protocolo.trim() : !correction.etapa.trim())}><RotateCcw size={17} /> {saving ? "Retificando..." : "Registrar retificação"}</button></div>
+    </form>}
     {manager && <form className="tramitation-form" onSubmit={submit}>
       <h3>Registrar novo andamento</h3>
       <div className="tramitation-form-grid">
@@ -699,3 +819,4 @@ function StatusDot({ status }) {
 }
 function typeLabel(value) { return TYPES.find(([type]) => type === value)?.[1] || value; }
 function formatDateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : ""; }
+function toDateTimeLocal(value) { if (!value) return ""; const date = new Date(value); const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return local.toISOString().slice(0, 16); }

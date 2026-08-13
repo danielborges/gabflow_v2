@@ -545,6 +545,13 @@ def test_representative_profile_consults_and_approves_without_admin_access(app, 
     assert approved.status_code == 200
     assert approved.json["status"] == "APROVADA"
 
+    forbidden_protocol = client.post(
+        f"/api/v1/legislativo/minutas/{draft_id}/protocolo",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"protocolo": "CM-2026-PARLAMENTAR"},
+    )
+    assert forbidden_protocol.status_code == 403
+
 
 def test_chief_of_staff_designation_grants_supervision_without_admin_role(app, client):
     csrf = _login(client)
@@ -606,9 +613,20 @@ def test_chief_of_staff_designation_grants_supervision_without_admin_role(app, c
             created_by_id=admin.id,
             approved_by_id=admin.id,
         )
-        db.session.add(draft)
+        review_draft = LegislativeDraft(
+            tenant_id=tenant.id,
+            document_type=LegislativeDocumentType.REQUERIMENTO,
+            status=LegislativeDraftStatus.EM_REVISAO,
+            generation_status=LegislativeGenerationStatus.CONCLUIDA,
+            title="Requerimento aguardando decisão política",
+            content="Texto submetido para aprovação.",
+            current_version=1,
+            created_by_id=admin.id,
+        )
+        db.session.add_all([draft, review_draft])
         db.session.commit()
         draft_id = draft.id
+        review_draft_id = review_draft.id
 
     csrf = _login(client, email="assessor.regular@teste.local")
     blocked = client.post(
@@ -625,6 +643,13 @@ def test_chief_of_staff_designation_grants_supervision_without_admin_role(app, c
     assert me.json["user"]["chefeGabinete"] is True
     assert client.get("/api/v1/admin/perfil-gabinete").status_code == 403
 
+    forbidden_approval = client.post(
+        f"/api/v1/legislativo/minutas/{review_draft_id}/revisao",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={"acao": "APROVAR", "confirmarFundamentacao": True},
+    )
+    assert forbidden_approval.status_code == 403
+
     protocolled = client.post(
         f"/api/v1/legislativo/minutas/{draft_id}/protocolo",
         headers={"X-CSRF-TOKEN": csrf},
@@ -632,3 +657,14 @@ def test_chief_of_staff_designation_grants_supervision_without_admin_role(app, c
     )
     assert protocolled.status_code == 200
     assert protocolled.json["protocolo"] == "CM-2026-CHEFE"
+
+    rectified = client.post(
+        f"/api/v1/legislativo/minutas/{draft_id}/protocolo/retificacoes",
+        headers={"X-CSRF-TOKEN": csrf},
+        json={
+            "protocolo": "CM-2026-CHEFE-R",
+            "motivo": "Correção de erro material identificado após conferência.",
+        },
+    )
+    assert rectified.status_code == 201
+    assert rectified.json["protocolo"] == "CM-2026-CHEFE-R"

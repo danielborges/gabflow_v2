@@ -90,3 +90,11 @@
 - **RN-091** O ranking de eficiência considera somente a equipe operacional elegível e nunca atribui score ao Parlamentar.
 - **RN-092** Relatórios por período devem expor data inicial, data final, filtros e base de cálculo; a leitura em semáforo é explicativa e não pode ser apresentada como causalidade automática.
 - **RN-093** O intervalo dos relatórios é inclusivo nas datas inicial e final, deve ter início anterior ou igual ao fim e não pode exceder 731 dias.
+- **RN-094** A aprovação de minuta legislativa é decisão política permitida a `admin`, `manager` e `representative`; a função `chefe_gabinete` não concede aprovação política.
+- **RN-095** A rejeição, o registro ou a retificação de protocolo e o registro ou a retificação de tramitação são ações de supervisão permitidas a `admin`, `manager` e à função auditável `chefe_gabinete`; `representative` não recebe essas mutações operacionais.
+- **RN-096** Assessor comum pode criar, editar e submeter minutas, mas não pode aprovar, rejeitar, protocolar, tramitar ou retificar registros legislativos.
+- **RN-097** Protocolo e andamento nunca são editados ou excluídos. Correção de erro material cria evento compensatório com motivo, autor e instante de registro, preserva o original e impede duas retificações diretas do mesmo registro; nova correção deve retificar o evento compensatório vigente.
+- **RN-098** Todo tenant deve possuir o modo legislativo `MANUAL`; conectores externos são opcionais, habilitados por capability e nunca podem impedir criação, revisão, aprovação, exportação ou registro manual.
+- **RN-099** Submissão a sistema legislativo externo exige ação humana explícita, versão aprovada imutável e chave idempotente; timeout ou resposta ambígua exige reconciliação antes de qualquer reenvio.
+- **RN-100** Evento legislativo externo é normalizado e acrescentado à timeline, nunca sobrescreve registro existente; estado externo desconhecido permanece não mapeado até decisão humana ou nova versão homologada do conector.
+- **RN-101** Configuração de integração armazena somente referência opaca ao segredo. Credenciais, tokens, certificados e chaves privadas não podem aparecer em banco funcional, contrato HTTP, log ou auditoria.

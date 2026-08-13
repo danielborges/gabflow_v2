@@ -442,7 +442,9 @@ suspensão e revogação. A Release 4.3 adicionou concessões protegidas por RLS
 resolução de política e jurisdição, view global `security_barrier` e recuperação
 federada global + privada com proveniência explícita. A Release 4.4 adicionou
 memória operacional privada governada para solicitações, interações e minutas
-legislativas. A Release 4.5
+legislativas. A expansão operacional posterior incluiu encaminhamentos e respostas
+oficiais, tramitações, OCR e transcrições revisados, atas concluídas, fiscalizações
+concluídas e memórias temáticas. A Release 4.5
 adicionou filas escaláveis, índices de claim, scheduler com lock, reconciliação em
 lotes, logs estruturados, métricas e SLOs. A Release 4.7 adicionou o ciclo
 controlado de feedback, dataset, artefatos candidatos, canário e rollback. A

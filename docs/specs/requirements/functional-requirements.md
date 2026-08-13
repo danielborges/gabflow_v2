@@ -76,15 +76,20 @@
 
 ## Produção legislativa
 
-- **RF-060** Criar minuta a partir de solicitação.
-- **RF-061** Suportar indicação, requerimento, ofício, moção, pedido de informação e projeto de lei.
+- **RF-060** Criar minuta a partir de solicitação. **Implementado no P2.**
+- **RF-061** Suportar indicação, requerimento, ofício, moção, pedido de informação e projeto de lei. **Implementado no P2.**
 - **RF-062** Aplicar templates configuráveis. **Implementado no P2.**
 - **RF-063** Relacionar uma proposição a uma ou mais solicitações. **Implementado no P2.**
 - **RF-064** Controlar versões. **Implementado no P2 com histórico, comparação e restauração auditável.**
-- **RF-065** Implementar revisão e aprovação.
-- **RF-066** Exportar para DOCX e PDF.
-- **RF-067** Registrar protocolo e tramitação.
+- **RF-065** Implementar revisão e aprovação com matriz explícita de ações por papel e função. **Implementado no P2; matriz consolidada na evolução de retificações legislativas.**
+- **RF-066** Exportar para DOCX e PDF. **Implementado no P2.**
+- **RF-067** Registrar protocolo e tramitação. **Implementado no P2 pelo adaptador manual; integração externa seguirá a porta canônica definida no [ADR-013](../adr/ADR-013-generic-legislative-integration.md).**
+- **RF-067A** Configurar por tenant uma integração legislativa que declare fornecedor, versão, capabilities, mapeamentos canônicos e referência opaca de segredo, mantendo `MANUAL` como padrão obrigatório. **Especificado; pendente.**
+- **RF-067B** Executar submissões externas por operação assíncrona, idempotente e auditável, sempre iniciada por ação humana explícita e sem bloquear a gestão interna da minuta. **Especificado; pendente.**
+- **RF-067C** Importar andamentos por webhook ou polling somente quando a capability estiver disponível, deduplicando eventos e preservando a timeline append-only. **Especificado; pendente.**
+- **RF-067D** Exibir diagnóstico, última sincronização, divergências, eventos não mapeados e reconciliação necessária sem revelar credenciais ou payload sensível. **Especificado; pendente.**
 - **RF-068** Pesquisar proposições semelhantes. **Implementado no P2 com embeddings locais, filtros e fallback lexical.**
+- **RF-069** Retificar erro material de protocolo ou andamento por evento compensatório append-only, com motivo obrigatório, vínculo ao registro substituído, recálculo do estado vigente e auditoria. **Implementado.**
 
 ## Fiscalização
 
@@ -134,7 +139,7 @@
 - **RF-095** Administrar coleções privadas e selecionar coleções globais opcionais. **Implementado parcialmente: adesão a coleções globais está disponível; coleções privadas administráveis permanecem planejadas.**
 - **RF-096** Configurar atualização automática, versão fixada ou fork privado para uma fonte global. **Implementado parcialmente para atualização automática e versão fixada; fork privado permanece planejado.**
 - **RF-097** Exibir em respostas e citações se a fonte é global ou privada. **Implementado na recuperação hierárquica.**
-- **RF-098** Monitorar e governar a ingestão automática das entidades internas elegíveis no RAG Privado, conforme finalidade, base legal, retenção e nível de acesso. **Implementado para solicitações, interações, encaminhamentos/respostas oficiais, minutas, tramitações, OCR/transcrições revisados, atas concluídas, fiscalizações concluídas e memórias temáticas.**
+- **RF-098** Monitorar e governar a ingestão automática das entidades internas elegíveis no RAG Privado, conforme finalidade, base legal, retenção e nível de acesso. **Implementado para solicitações, interações, encaminhamentos/respostas oficiais, minutas, tramitações, fontes normativas, OCR/transcrições revisados, atas concluídas, fiscalizações concluídas e memórias temáticas.**
 - **RF-099** Consultar histórico de ingestão, concessões, forks, recuperação e feedback do próprio tenant. **Implementado parcialmente para ingestão, concessões, consultas e feedback; forks e visão administrativa consolidada permanecem planejados.**
 - **RF-100** Cadastrar e versionar projetores autorizados por módulo, tipo de entidade e ação, com allowlist de campos e política de elegibilidade. **Implementado como registry em código para todas as fontes operacionais cobertas; administração dinâmica permanece fora do escopo atual.**
 - **RF-101** Exibir estado, origem, versão, hash, finalidade, base legal, ACL, retenção, erro e última projeção de cada fonte operacional. **Implementado na listagem administrativa tenant-scoped.**

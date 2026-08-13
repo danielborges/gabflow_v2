@@ -257,15 +257,266 @@ O conteúdo binário permanece no armazenamento privado; a tabela conserva somen
 metadados, integridade e chave opaca. As relações incluem `tenant_id`, a leitura exige
 autorização e o upload passa pelas políticas de validação, antimalware e criptografia.
 
-## Proposicao
-- id
-- tenant_id
-- tipo
-- título
-- conteúdo
-- status
-- versão
-- protocolo_externo
+## Domínio de produção legislativa
+
+O agregado central é `MinutaLegislativa` (`legislative_drafts` na implementação), e não
+uma `Proposicao` genérica. A minuta começa antes da existência de protocolo, conserva o
+estado de geração assistida, passa por revisão e aprovação humana e somente então pode
+originar a cadeia de tramitação. O contrato HTTP usa os nomes em português; entre
+parênteses são indicadas as tabelas físicas atuais.
+
+```mermaid
+erDiagram
+    Tenant ||--o{ TemplateLegislativo : possui
+    Tenant ||--o{ FonteNormativa : possui
+    Tenant ||--o{ MinutaLegislativa : possui
+    Usuario ||--o{ TemplateLegislativo : cria
+    Usuario ||--o{ FonteNormativa : cadastra
+    Usuario ||--o{ MinutaLegislativa : cria_revisa_aprova
+    TemplateLegislativo o|--o{ MinutaLegislativa : orienta
+    ExecucaoIA o|--o| MinutaLegislativa : gera
+    MinutaLegislativa ||--|{ VinculoMinutaSolicitacao : agrega
+    Solicitacao ||--o{ VinculoMinutaSolicitacao : fundamenta
+    MinutaLegislativa ||--o{ VersaoMinutaLegislativa : versiona
+    Usuario ||--o{ VersaoMinutaLegislativa : autoria
+    MinutaLegislativa ||--o{ TramitacaoLegislativa : projeta
+    TramitacaoLegislativa o|--o| TramitacaoLegislativa : retifica
+    FonteNormativa }o..o{ VersaoMinutaLegislativa : citacao_snapshot
+```
+
+### MinutaLegislativa (`legislative_drafts`)
+
+- `id`
+- `tenant_id`
+- `document_type`: `INDICACAO`, `REQUERIMENTO`, `OFICIO`, `MOCAO`,
+  `PEDIDO_INFORMACAO` ou `PROJETO_LEI`
+- `status`: `RASCUNHO`, `EM_REVISAO`, `APROVADA` ou `REJEITADA`
+- `generation_status`: `PENDENTE`, `PROCESSANDO`, `CONCLUIDA` ou `FALHOU`
+- `title`
+- `content`
+- `justification`
+- `legal_basis`: snapshots JSON das citações normativas confirmadas
+- `sources`: fontes usadas na geração
+- `unsupported_passages`: trechos ainda sem fundamentação
+- `similar_proposals`: precedentes recuperados
+- `generation_metadata`: parâmetros, ordem das solicitações e evidências da geração
+- `template_id` opcional
+- `ai_execution_id` opcional e único
+- `current_version`: projeção do maior número de versão persistido
+- `protocol_number` opcional e único por tenant
+- `protocolled_at` opcional
+- `current_tramitation_status` opcional: projeção do último evento vigente
+- `created_by_id`, `reviewed_by_id`, `approved_by_id`
+- `reviewed_at`, `approved_at`
+- `error`
+- `created_at`, `updated_at`
+
+`content`, `justification` e `legal_basis` representam o estado editável corrente. Eles
+não substituem o histórico: toda alteração aceita de conteúdo cria um snapshot em
+`VersaoMinutaLegislativa`. `current_version`, protocolo e status de tramitação são campos
+de leitura rápida e devem ser reconstruíveis a partir das versões e dos eventos.
+
+### VinculoMinutaSolicitacao (`legislative_draft_requests`)
+
+- `id`
+- `tenant_id`
+- `draft_id`
+- `request_id`
+- `created_at`
+
+Existe unicidade por `draft_id + request_id`. A regra de negócio exige entre uma e vinte
+solicitações do mesmo tenant. A solicitação principal e a ordem são atualmente
+preservadas em `MinutaLegislativa.generation_metadata.solicitacoesIds`; o primeiro ID é a
+principal. Essa decisão mantém compatibilidade com a implementação, mas não constitui
+integridade relacional forte. A evolução recomendada é adicionar `position` e
+`is_primary` ao vínculo, com uma única principal por minuta e índice único de posição.
+
+### VersaoMinutaLegislativa (`legislative_draft_versions`)
+
+- `id`
+- `tenant_id`
+- `draft_id`
+- `version_number`
+- `title`
+- `content`
+- `justification`
+- `legal_basis`
+- `unsupported_passages`
+- `change_reason`
+- `created_by_id`
+- `created_at`
+
+A chave `draft_id + version_number` é única e a numeração é crescente. Cada registro é
+um snapshot completo do conteúdo legislativo editável, suficiente para consulta,
+comparação e restauração desses campos. Restaurar uma versão nunca sobrescreve snapshots:
+copia seu conteúdo para o estado corrente e cria outra versão com novo número e motivo
+obrigatório. A imutabilidade é hoje garantida pela
+camada de serviço e pela auditoria; o banco ainda não possui trigger que negue `UPDATE`
+ou `DELETE`, e a FK usa `ON DELETE CASCADE` quando a minuta é removida. Portanto,
+retenção física/WORM continua sendo uma decisão arquitetural pendente caso haja exigência
+legal de não apagamento no banco.
+
+### TemplateLegislativo (`legislative_templates`)
+
+- `id`
+- `tenant_id`
+- `document_type`
+- `name`, único por tenant
+- `structure`
+- `active`
+- `created_by_id`
+- `created_at`, `updated_at`
+
+Templates são desativados, não excluídos no fluxo funcional. Somente templates ativos e
+compatíveis com o tipo podem iniciar novas minutas. `MinutaLegislativa.template_id` é
+opcional e usa `ON DELETE SET NULL`; o conteúdo já gerado permanece nas versões, mas a
+proveniência do template deixa de ser relacional se houver exclusão física. A política
+arquitetural é impedir essa exclusão pelo serviço e preservar o registro inativo.
+
+### FonteNormativa (`normative_sources`)
+
+- `id`
+- `tenant_id`
+- `source_type`
+- `title`, `reference`, `excerpt`
+- `jurisdiction`, `source_url`
+- `version`
+- `checksum`
+- `valid_from`, `valid_until`
+- `rag_collection`, atualmente `legislacao`
+- `active`
+- `created_by_id`
+- `created_at`, `updated_at`
+
+A chave conceitual `tenant_id + title + reference + version` é única. Minutas e versões
+persistem a citação como snapshot JSON contendo, quando disponível, `sourceId`,
+`versaoFonte`, `checksum`, referência, trecho e URL. Não há tabela de junção entre versão
+e fonte: o snapshot conserva a evidência citada mesmo após desativação ou edição da fonte.
+O endpoint atual permite atualizar a mesma linha, inclusive seu conteúdo, versão e
+checksum; portanto `sourceId` sozinho não identifica historicamente o texto recuperado.
+Para versionamento relacional forte, uma mudança material deve criar nova linha (ou uma
+tabela `normative_source_versions`) e tornar versões publicadas imutáveis. Até essa
+evolução, a prova histórica é o snapshot com checksum armazenado na versão da minuta.
+
+Cada alteração também gera uma projeção governada `NORMATIVE_SOURCE` em
+`rag_knowledge_sources`. O projetor cria versões imutáveis em `rag_document_versions` e
+chunks em `rag_chunks`, propagando ativação e vigência. Essa projeção serve à descoberta
+semântica; a linha em `normative_sources` continua sendo reconsultada antes da sugestão e
+da aplicação, portanto o índice não decide validade jurídica.
+
+### TramitacaoLegislativa (`legislative_tramitations`)
+
+- `id`
+- `tenant_id`
+- `draft_id`
+- `status`: `PROTOCOLADA`, `DISTRIBUIDA`, `EM_COMISSAO`, `EM_PAUTA`, `APROVADA`,
+  `REJEITADA`, `SANCIONADA`, `VETADA`, `ARQUIVADA` ou `RETIRADA`
+- `stage`
+- `destination`
+- `external_reference`
+- `notes`
+- `occurred_at`: instante do fato no processo legislativo
+- `created_at`: instante do registro no GabFlow
+- `created_by_id`
+- `rectifies_id` opcional
+- `rectification_reason` obrigatório para retificações
+
+O protocolo manual cria o primeiro evento `PROTOCOLADA`; não existe protocolo
+automático. Eventos são append-only e respeitam a ordem de `occurred_at`. Uma retificação
+cria novo evento que aponta para o registro corrigido por `rectifies_id`, preservando o
+original. A restrição única sobre `rectifies_id` impede duas correções diretas do mesmo
+evento; nova correção deve retificar o evento compensatório vigente. A projeção em
+`MinutaLegislativa` considera somente o fim vigente da cadeia. `rectificada`,
+`retificadaPorId` e `tipoRegistro` são propriedades derivadas na API, não colunas.
+
+### Regras transacionais do agregado
+
+1. A criação persiste minuta, de um a vinte vínculos e execução de IA na mesma unidade
+   lógica; o worker só recebe IDs tenant-scoped.
+2. A geração concluída cria a versão inicial e atualiza `current_version`.
+3. Edição, submissão, aplicação de fundamentação e restauração criam novas versões
+   imutáveis com autor, motivo e instante; aprovação e rejeição alteram o estado e geram
+   auditoria, sem duplicar o conteúdo quando não houve edição.
+4. Apenas minuta aprovada pode receber protocolo; o protocolo é ação humana explícita.
+5. Protocolo, andamento e retificação são gravados com auditoria na mesma transação.
+6. Retificação nunca altera ou apaga o evento original.
+
+### Integridade tenant-scoped e lacunas físicas conhecidas
+
+Todas as consultas e comandos legislativos filtram `tenant_id`, validam que solicitações,
+usuários e registros relacionados pertencem ao tenant e registram auditoria. Contudo, as
+FKs físicas atuais deste agregado referenciam apenas o `id` da entidade relacionada; não
+são FKs compostas com `tenant_id`. Assim, a proteção existe na aplicação, mas o banco não
+impede sozinho um vínculo cruzado criado fora desses serviços. Para cumprir integralmente
+o invariante arquitetural descrito ao final deste documento, as tabelas legislativas
+devem migrar para chaves/constraints compostas `(tenant_id, id)` sem alterar o contrato
+HTTP.
+
+### Integração legislativa genérica — modelo planejado
+
+Estas entidades materializam o [ADR-013](../adr/ADR-013-generic-legislative-integration.md)
+e ainda não fazem parte da implementação física.
+
+#### IntegracaoSistemaLegislativo
+
+- `id`, `tenant_id`
+- `name`
+- `adapter_type`: `MANUAL`, `DECLARATIVE_HTTP` ou `DEDICATED`
+- `adapter_key`, `adapter_version`
+- `capabilities`
+- `configuration`: somente valores não secretos validados pelo schema do adaptador
+- `secret_reference` opcional
+- `document_type_mapping`, `status_mapping`
+- `active`, `health_status`
+- `last_success_at`, `last_error_code`
+- `created_by_id`, `created_at`, `updated_at`
+
+Existe no máximo uma integração ativa para submissão por tenant. O adaptador `MANUAL`
+sempre existe logicamente e não possui `secret_reference`.
+
+#### OperacaoIntegracaoLegislativa
+
+- `id`, `tenant_id`, `integration_id`
+- `draft_id`, `draft_version_number`
+- `operation_type`
+- `idempotency_key`, única por integração
+- `request_hash`
+- `status`: `PENDENTE`, `PROCESSANDO`, `CONCLUIDA`, `FALHOU` ou
+  `RECONCILIACAO_NECESSARIA`
+- `attempt_count`, `next_attempt_at`
+- `external_process_id`, `external_protocol`
+- `response_metadata` sanitizado
+- `error_code`, `created_by_id`
+- `created_at`, `started_at`, `completed_at`
+
+A operação aponta para uma versão imutável da minuta, não para conteúdo mutável. O hash
+e a chave idempotente impedem submissões duplicadas.
+
+#### VinculoProcessoLegislativoExterno
+
+- `id`, `tenant_id`, `integration_id`, `draft_id`
+- `external_process_id`, `external_protocol`
+- `external_url` validada pelo adaptador
+- `last_external_status`, `last_canonical_status`
+- `sync_cursor`, `last_synced_at`
+- `created_at`, `updated_at`
+
+O vínculo é único por integração e identificador externo. Divergências preservam estado
+interno e externo até reconciliação, sem sobrescrita silenciosa.
+
+#### RecebimentoEventoLegislativoExterno
+
+- `id`, `tenant_id`, `integration_id`
+- `external_event_id` ou `canonical_hash`
+- `received_at`, `external_occurred_at`
+- `validation_status`, `mapping_status`
+- `normalized_event_type`
+- `tramitation_id` opcional
+- `retention_until`
+
+Este envelope implementa deduplicação e rastreabilidade de webhook/polling. O payload
+bruto, quando indispensável, possui retenção curta e armazenamento protegido; não integra
+a auditoria funcional nem o modelo canônico.
 
 ## DocumentoFonte
 - id
@@ -278,6 +529,11 @@ autorização e o upload passa pelas políticas de validação, antimalware e cr
 - nível_acesso
 - checksum
 - status_indexacao
+
+`DocumentoFonte` é o documento genérico da base de conhecimento. Ele não substitui
+`FonteNormativa`, que possui versão, checksum, vigência e semântica próprias para a
+fundamentação legislativa. Fontes normativas elegíveis já são projetadas no RAG Privado;
+o índice acompanha o ciclo do catálogo, mas não assume sua autoridade jurídica.
 
 ## ExecucaoIA
 - id

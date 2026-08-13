@@ -34,6 +34,10 @@ class Projection:
     access_level: RagDocumentAccess
     retention_until: date | None
     content: str
+    valid_from: date | None = None
+    valid_until: date | None = None
+    source_url: str | None = None
+    agency: str | None = None
 
 
 @dataclass(frozen=True)

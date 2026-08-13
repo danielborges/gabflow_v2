@@ -24,6 +24,7 @@ import { AgendaPage } from "./AgendaPage";
 import { AIQualityPage } from "./AIQualityPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { DirectoryPage } from "./DirectoryPage";
+import { documentSectionDefinitions } from "./documentsNavigation";
 import { ElectoralIntelligencePage } from "./electoral/ElectoralIntelligencePage";
 import { electoralSectionDefinitions } from "./electoral/electoralNavigation";
 import { FloatingRagAssistant } from "./FloatingRagAssistant";
@@ -80,6 +81,14 @@ export function Workspace({ user, onLogout }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState(initialView);
   const [electoralMenuOpen, setElectoralMenuOpen] = useState(false);
+  const [documentsMenuOpen, setDocumentsMenuOpen] = useState(initialView === "documents");
+  const [documentSection, setDocumentSection] = useState(() => {
+    const section = new URLSearchParams(window.location.search).get("secao");
+    const allowed = documentSectionDefinitions.some((item) => (
+      item.id === section && (!item.managerOnly || ["admin", "manager"].includes(user.role))
+    ));
+    return allowed ? section : "drafts";
+  });
   const [electoralSection, setElectoralSection] = useState(() => (
     new URLSearchParams(window.location.search).get("secao") || "overview"
   ));
@@ -119,6 +128,7 @@ export function Workspace({ user, onLogout }) {
     setActiveView(item.view || "requests");
     syncViewQuery(item.view || "requests");
     setElectoralMenuOpen(item.view === "electoral");
+    setDocumentsMenuOpen(item.view === "documents");
     setMenuOpen(false);
   }
 
@@ -131,11 +141,24 @@ export function Workspace({ user, onLogout }) {
         syncViewQuery(id);
         setElectoralMenuOpen(true);
       }
+      setDocumentsMenuOpen(false);
+      return;
+    }
+    if (id === "documents") {
+      if (activeView === "documents") {
+        setDocumentsMenuOpen((current) => !current);
+      } else {
+        setActiveView(id);
+        syncViewQuery(id);
+        setDocumentsMenuOpen(true);
+      }
+      setElectoralMenuOpen(false);
       return;
     }
     setActiveView(id);
     syncViewQuery(id);
     setElectoralMenuOpen(false);
+    setDocumentsMenuOpen(false);
     setMenuOpen(false);
   }
 
@@ -197,8 +220,21 @@ export function Workspace({ user, onLogout }) {
     setActiveView("electoral");
     setElectoralSection(sectionId);
     setElectoralMenuOpen(true);
+    setDocumentsMenuOpen(false);
     setMenuOpen(false);
     const params = new URLSearchParams(window.location.search);
+    params.set("secao", sectionId);
+    window.history.pushState({}, "", `${window.location.pathname}?${params}`);
+  }
+
+  function openDocumentSection(sectionId) {
+    setActiveView("documents");
+    setDocumentSection(sectionId);
+    setDocumentsMenuOpen(true);
+    setElectoralMenuOpen(false);
+    setMenuOpen(false);
+    const params = new URLSearchParams(window.location.search);
+    params.set("tela", "documents");
     params.set("secao", sectionId);
     window.history.pushState({}, "", `${window.location.pathname}?${params}`);
   }
@@ -218,17 +254,17 @@ export function Workspace({ user, onLogout }) {
         </div>
         <nav aria-label="Navegacao principal">
           {availableNavigation.map(({ id, label, icon: Icon, enabled, managerOnly }) => (
-            <div className={id === "electoral" ? "nav-group" : undefined} key={id}>
+            <div className={["electoral", "documents"].includes(id) ? "nav-group" : undefined} key={id}>
               <button
                 className={activeView === id ? "nav-item active" : "nav-item"}
                 disabled={!enabled || (managerOnly && !["admin", "manager"].includes(user.role))}
                 onClick={() => openView(id)}
-                aria-expanded={id === "electoral" ? electoralMenuOpen : undefined}
+                aria-expanded={id === "electoral" ? electoralMenuOpen : id === "documents" ? documentsMenuOpen : undefined}
               >
                 <Icon size={19} />
                 <span>{label}</span>
-                {id === "electoral" && <ChevronDown
-                  className={electoralMenuOpen ? "nav-group-chevron expanded" : "nav-group-chevron"}
+                {["electoral", "documents"].includes(id) && <ChevronDown
+                  className={(id === "electoral" ? electoralMenuOpen : documentsMenuOpen) ? "nav-group-chevron expanded" : "nav-group-chevron"}
                   size={16}
                   aria-hidden="true"
                 />}
@@ -248,6 +284,27 @@ export function Workspace({ user, onLogout }) {
                       className={electoralSection === section.id ? "active" : ""}
                       aria-current={electoralSection === section.id ? "page" : undefined}
                       onClick={() => openElectoralSection(section.id)}
+                    >
+                      <SectionIcon size={16} aria-hidden="true" />
+                      <span>{section.label}</span>
+                    </button>;
+                  })}
+              </div>}
+              {id === "documents" && documentsMenuOpen && <div
+                className="nav-submenu"
+                role="group"
+                aria-label="Submenu Documentos"
+              >
+                {documentSectionDefinitions
+                  .filter((section) => !section.managerOnly || ["admin", "manager"].includes(user.role))
+                  .map((section) => {
+                    const SectionIcon = section.icon;
+                    return <button
+                      type="button"
+                      key={section.id}
+                      className={documentSection === section.id ? "active" : ""}
+                      aria-current={documentSection === section.id ? "page" : undefined}
+                      onClick={() => openDocumentSection(section.id)}
                     >
                       <SectionIcon size={16} aria-hidden="true" />
                       <span>{section.label}</span>
@@ -313,7 +370,11 @@ export function Workspace({ user, onLogout }) {
         {activeView === "ai-quality" && isModuleEnabled("ia") && <AIQualityPage />}
         {activeView === "rag-assistant" && isModuleEnabled("rag") && <RagAssistantPage />}
         {activeView === "documents" && isModuleEnabled("documentos") && (
-          <LegislativeDocumentsPage user={user} />
+          <LegislativeDocumentsPage
+            user={user}
+            activeSection={documentSection}
+            onSectionChange={openDocumentSection}
+          />
         )}
         {activeView === "rag" && isModuleEnabled("rag") && <RagKnowledgeBasePage />}
         {activeView === "admin" && user.role === "admin" && <AdministrationPage user={user} />}

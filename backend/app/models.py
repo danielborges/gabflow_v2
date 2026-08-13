@@ -4679,6 +4679,9 @@ class LegislativeDraftVersion(db.Model):
 
 class LegislativeTramitation(db.Model):
     __tablename__ = "legislative_tramitations"
+    __table_args__ = (
+        UniqueConstraint("rectifies_id", name="uq_legislative_tramitations_rectifies_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -4700,6 +4703,10 @@ class LegislativeTramitation(db.Model):
     destination: Mapped[str | None] = mapped_column(String(180))
     external_reference: Mapped[str | None] = mapped_column(String(180))
     notes: Mapped[str | None] = mapped_column(Text)
+    rectifies_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("legislative_tramitations.id", ondelete="RESTRICT"), index=True
+    )
+    rectification_reason: Mapped[str | None] = mapped_column(String(500))
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )

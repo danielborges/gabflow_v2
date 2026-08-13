@@ -58,6 +58,45 @@ def _request(client, csrf):
     return response.json
 
 
+def test_legislative_drafts_are_paginated_filtered_and_sorted(app, client):
+    csrf = _login(client)
+    with app.app_context():
+        tenant = db.session.execute(select(Tenant).where(Tenant.slug == "gabinete-a")).scalar_one()
+        admin = db.session.execute(
+            select(User).where(User.tenant_id == tenant.id, User.email == "admin@teste.local")
+        ).scalar_one()
+        db.session.add_all(
+            [
+                LegislativeDraft(
+                    tenant_id=tenant.id,
+                    document_type=LegislativeDocumentType.INDICACAO,
+                    status=LegislativeDraftStatus.RASCUNHO,
+                    generation_status=LegislativeGenerationStatus.CONCLUIDA,
+                    title=title,
+                    content=f"Conteúdo de {title}",
+                    created_by_id=admin.id,
+                )
+                for title in ["Zeladoria da cidade", "Audiência pública", "Mobilidade ativa"]
+            ]
+        )
+        db.session.commit()
+
+    response = client.get(
+        "/api/v1/legislativo/minutas?page=0&size=10&sort=titulo&direction=asc&q=idade",
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    assert response.status_code == 200
+    assert response.json["totalElements"] == 2
+    assert response.json["totalPages"] == 1
+    assert [item["titulo"] for item in response.json["content"]] == [
+        "Mobilidade ativa",
+        "Zeladoria da cidade",
+    ]
+
+    invalid = client.get("/api/v1/legislativo/minutas?size=200")
+    assert invalid.status_code == 422
+
+
 def test_legislative_draft_full_human_review_flow(app, client):
     csrf = _login(client)
     service_request = _request(client, csrf)
@@ -245,6 +284,69 @@ def test_legislative_draft_full_human_review_flow(app, client):
         "EM_COMISSAO",
     ]
 
+    protocol_rectification = _post(
+        client,
+        f"/api/v1/legislativo/minutas/{detail.json['id']}/protocolo/retificacoes",
+        csrf,
+        {
+            "protocolo": "CM-2026-001-R",
+            "motivo": "Correção de erro material no número informado pelo sistema oficial.",
+        },
+    )
+    assert protocol_rectification.status_code == 201
+    assert protocol_rectification.json["protocolo"] == "CM-2026-001-R"
+    protocol_events = [
+        item
+        for item in protocol_rectification.json["tramitacoes"]
+        if item["status"] == "PROTOCOLADA"
+    ]
+    assert protocol_events[0]["retificada"] is True
+    assert protocol_events[1]["tipoRegistro"] == "RETIFICACAO"
+    assert protocol_events[1]["retificaId"] == protocol_events[0]["id"]
+
+    movement_id = movement.json["tramitacoes"][1]["id"]
+    movement_rectification = _post(
+        client,
+        (
+            f"/api/v1/legislativo/minutas/{detail.json['id']}"
+            f"/tramitacoes/{movement_id}/retificacoes"
+        ),
+        csrf,
+        {
+            "status": "DISTRIBUIDA",
+            "etapa": "Distribuição à Comissão de Obras",
+            "destino": "Secretaria das Comissões",
+            "referenciaExterna": "MOV-2026-002-R",
+            "motivo": "Correção do status e do destino lançados no andamento original.",
+        },
+    )
+    assert movement_rectification.status_code == 201
+    assert movement_rectification.json["statusTramitacao"] == "DISTRIBUIDA"
+    original = next(
+        item for item in movement_rectification.json["tramitacoes"] if item["id"] == movement_id
+    )
+    correction = next(
+        item
+        for item in movement_rectification.json["tramitacoes"]
+        if item["retificaId"] == movement_id
+    )
+    assert original["retificada"] is True
+    assert correction["status"] == "DISTRIBUIDA"
+    assert correction["motivoRetificacao"].startswith("Correção do status")
+
+    duplicate_rectification = _post(
+        client,
+        (
+            f"/api/v1/legislativo/minutas/{detail.json['id']}"
+            f"/tramitacoes/{movement_id}/retificacoes"
+        ),
+        csrf,
+        {
+            "motivo": "Nova tentativa de corrigir diretamente o registro já substituído.",
+        },
+    )
+    assert duplicate_rectification.status_code == 409
+
     docx = client.get(f"/api/v1/legislativo/minutas/{detail.json['id']}/exportar/docx")
     pdf = client.get(f"/api/v1/legislativo/minutas/{detail.json['id']}/exportar/pdf")
     assert docx.status_code == 200
@@ -269,6 +371,12 @@ def test_legislative_draft_full_human_review_flow(app, client):
         ).scalar_one()
         assert db.session.execute(
             select(AuditLog).where(AuditLog.action == "legislative_draft.tramitation_added")
+        ).scalar_one()
+        assert db.session.execute(
+            select(AuditLog).where(AuditLog.action == "legislative_draft.protocol_rectified")
+        ).scalar_one()
+        assert db.session.execute(
+            select(AuditLog).where(AuditLog.action == "legislative_draft.tramitation_rectified")
         ).scalar_one()
         assert db.session.execute(
             select(AuditLog).where(AuditLog.action == "legislative_draft.version_restored")

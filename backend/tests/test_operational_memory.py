@@ -7,12 +7,14 @@ from sqlalchemy import select
 
 from app.ai.duplicates import EmbeddingProviderError
 from app.extensions import db
+from app.legislative.foundation import foundation_retriever
 from app.models import (
     AuditLog,
     Citizen,
     LegislativeDocumentType,
     LegislativeDraft,
     LegislativeGenerationStatus,
+    NormativeSource,
     OutboxEvent,
     RagChunk,
     RagDocument,
@@ -26,6 +28,7 @@ from app.models import (
 )
 from app.outbox.service import process_batch
 from app.rag.operational_memory import (
+    NORMATIVE_SOURCE_ENTITY,
     OPERATIONAL_MEMORY_EVENT,
     REQUEST_FORWARDING_ENTITY,
     SERVICE_REQUEST_ENTITY,
@@ -54,6 +57,91 @@ def _drain_outbox(app):
             result = process_batch(f"operational-memory-{index}")
             if not result.claimed:
                 break
+
+
+def test_normative_catalog_is_projected_and_retrieved_through_private_rag(app, client):
+    app.config["RAG_OPERATIONAL_MEMORY_ENABLED"] = True
+    _login(client)
+    with app.app_context():
+        user = db.session.scalar(select(User).where(User.email == "admin@teste.local"))
+        source = NormativeSource(
+            tenant_id=user.tenant_id,
+            source_type="LEI_MUNICIPAL",
+            title="Lei Municipal de Iluminacao Publica",
+            reference="art. 12, inciso III",
+            excerpt=(
+                "Compete ao Municipio manter iluminadas as pracas, vias e demais "
+                "areas publicas para seguranca da populacao."
+            ),
+            jurisdiction="Municipio de Teste",
+            source_url="https://leis.example.test/iluminacao",
+            version="2026",
+            checksum="a" * 64,
+            valid_from=date(2026, 1, 1),
+            created_by_id=user.id,
+        )
+        db.session.add(source)
+        db.session.commit()
+        event = db.session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.event_type == OPERATIONAL_MEMORY_EVENT,
+                OutboxEvent.aggregate_type == NORMATIVE_SOURCE_ENTITY,
+                OutboxEvent.aggregate_id == str(source.id),
+            )
+        )
+        assert event.payload["sourceModule"] == "LEGISLATIVO"
+
+    _drain_outbox(app)
+
+    with app.app_context():
+        source = db.session.scalar(select(NormativeSource))
+        projection = db.session.scalar(
+            select(RagKnowledgeSource).where(
+                RagKnowledgeSource.entity_type == NORMATIVE_SOURCE_ENTITY,
+                RagKnowledgeSource.entity_id == source.id,
+            )
+        )
+        assert projection.status == RagKnowledgeSourceStatus.ATIVA
+        version = db.session.get(RagDocumentVersion, projection.latest_version_id)
+        document = db.session.get(RagDocument, projection.document_id)
+        assert document.document_type == "FONTE_NORMATIVA"
+        assert document.agency == source.jurisdiction
+        assert version.valid_from == source.valid_from
+        assert version.source_url == source.source_url
+
+        recovery = foundation_retriever().retrieve(
+            source.tenant_id,
+            "iluminacao de pracas e vias publicas",
+            5,
+        )
+        assert recovery["origemRecuperacao"] == "RAG_PRIVADO"
+        assert recovery["catalogoAutoritativo"] is True
+        assert recovery["revalidacaoCatalogo"] is True
+        assert recovery["fontes"][0]["id"] == str(source.id)
+
+        source.active = False
+        db.session.commit()
+
+    _drain_outbox(app)
+
+    with app.app_context():
+        source = db.session.scalar(select(NormativeSource))
+        projection = db.session.scalar(
+            select(RagKnowledgeSource).where(
+                RagKnowledgeSource.entity_type == NORMATIVE_SOURCE_ENTITY,
+                RagKnowledgeSource.entity_id == source.id,
+            )
+        )
+        document = db.session.get(RagDocument, projection.document_id)
+        assert projection.status == RagKnowledgeSourceStatus.INELEGIVEL
+        assert projection.eligibility_reason == "SOURCE_INACTIVE"
+        assert document.active is False
+        recovery = foundation_retriever().retrieve(
+            source.tenant_id,
+            "iluminacao de pracas e vias publicas",
+            5,
+        )
+        assert recovery["fontes"] == []
 
 
 def test_request_changes_become_versioned_minimized_private_memory(app, client):

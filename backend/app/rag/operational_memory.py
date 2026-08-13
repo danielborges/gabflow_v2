@@ -28,6 +28,7 @@ from app.models import (
     LegislativeDraftVersion,
     LegislativeGenerationStatus,
     LegislativeTramitation,
+    NormativeSource,
     OutboxEvent,
     OversightAction,
     OversightActionStatus,
@@ -73,6 +74,7 @@ AUDIO_TRANSCRIPTION_ENTITY = "AUDIO_TRANSCRIPTION"
 AGENDA_EVENT_ENTITY = "AGENDA_EVENT"
 OVERSIGHT_ACTION_ENTITY = "OVERSIGHT_ACTION"
 THEMATIC_MEMORY_ENTITY = "THEMATIC_MEMORY"
+NORMATIVE_SOURCE_ENTITY = "NORMATIVE_SOURCE"
 _REGISTERED = False
 _REDACTED = "[DADO_PESSOAL_REMOVIDO]"
 
@@ -810,10 +812,80 @@ class LegislativeDraftProjector:
         )
 
 
+class NormativeSourceProjector:
+    definition = ProjectorDefinition(
+        module="LEGISLATIVO",
+        entity_type=NORMATIVE_SOURCE_ENTITY,
+        version="1.0.0",
+        owner="Modulo Legislativo",
+        supported_actions=frozenset(ProjectorAction),
+        field_allowlist=frozenset(
+            {
+                "source_type",
+                "title",
+                "reference",
+                "excerpt",
+                "jurisdiction",
+                "source_url",
+                "version",
+                "checksum",
+                "valid_from",
+                "valid_until",
+                "active",
+            }
+        ),
+        purpose="FUNDAMENTACAO_NORMATIVA_LEGISLATIVA",
+        default_legal_basis="EXERCICIO_DA_FUNCAO_LEGISLATIVA",
+        access_level=RagDocumentAccess.INTERNO,
+        retention_data_type="FONTE_NORMATIVA",
+        quarantine_policy="QUARANTINE_SUSPICIOUS_NORMATIVE_CONTENT",
+        purge_policy="PURGE_DERIVED_CONTENT_ON_SOURCE_DELETION",
+    )
+
+    def project(self, tenant_id: uuid.UUID, entity_id: uuid.UUID) -> Projection:
+        item = db.session.get(NormativeSource, entity_id)
+        if item is None or item.tenant_id != tenant_id:
+            return _ineligible(self.definition, "ENTITY_NOT_FOUND")
+        today = date.today()
+        if not item.active:
+            return _ineligible(self.definition, "SOURCE_INACTIVE")
+        if item.valid_from and item.valid_from > today:
+            return _ineligible(self.definition, "SOURCE_NOT_YET_VALID")
+        if item.valid_until and item.valid_until < today:
+            return _ineligible(self.definition, "SOURCE_EXPIRED", item.valid_until)
+        return Projection(
+            True,
+            None,
+            item.title,
+            "FONTE_NORMATIVA",
+            self.definition.purpose,
+            self.definition.default_legal_basis,
+            self.definition.access_level,
+            item.valid_until,
+            _render_normative_source(item),
+            valid_from=item.valid_from,
+            valid_until=item.valid_until,
+            source_url=item.source_url,
+            agency=item.jurisdiction,
+        )
+
+    def created_by(self, tenant_id: uuid.UUID, entity_id: uuid.UUID) -> uuid.UUID:
+        item = db.session.get(NormativeSource, entity_id)
+        if item is None or item.tenant_id != tenant_id:
+            raise ValueError("Fonte normativa nao encontrada.")
+        return item.created_by_id
+
+    def entity_ids(self, tenant_id: uuid.UUID):
+        return db.session.scalars(
+            select(NormativeSource.id).where(NormativeSource.tenant_id == tenant_id)
+        )
+
+
 projector_registry = ProjectorRegistry()
 projector_registry.register(ServiceRequestProjector())
 projector_registry.register(RequestForwardingProjector())
 projector_registry.register(LegislativeDraftProjector())
+projector_registry.register(NormativeSourceProjector())
 projector_registry.register(LegislativeTramitationProjector())
 projector_registry.register(DocumentOcrProjector())
 projector_registry.register(AudioTranscriptionProjector())
@@ -1006,6 +1078,7 @@ def execute_operational_memory_sync(
             tenant_id=tenant_id,
             title=_unique_title(projection.title, entity_id),
             document_type=projection.document_type,
+            agency=projection.agency,
             access_level=projection.access_level,
             created_by_id=actor_id,
         )
@@ -1016,6 +1089,7 @@ def execute_operational_memory_sync(
         document.title = _unique_title(projection.title, entity_id)
         document.document_type = projection.document_type
         document.access_level = projection.access_level
+        document.agency = projection.agency
         document.active = True
 
     version_number = source.source_version + 1
@@ -1031,6 +1105,9 @@ def execute_operational_memory_sync(
         version_label=f"operacional-{version_number}",
         lifecycle_status=RagDocumentLifecycle.RASCUNHO,
         ingestion_status=RagIngestionStatus.PENDENTE,
+        valid_from=projection.valid_from,
+        valid_until=projection.valid_until,
+        source_url=projection.source_url,
         created_by_id=actor_id,
         **stored,
     )
@@ -1380,6 +1457,7 @@ def _collect_changed_entities(session: Session, _flush_context, _instances) -> N
         | LegislativeDraft
         | LegislativeDraftVersion
         | LegislativeTramitation
+        | NormativeSource
         | DocumentOcr
         | AudioTranscription
         | AgendaEvent
@@ -1405,6 +1483,7 @@ def _collect_changed_entities(session: Session, _flush_context, _instances) -> N
             | LegislativeDraft
             | LegislativeDraftVersion
             | LegislativeTramitation
+            | NormativeSource
             | DocumentOcr
             | AudioTranscription
             | RagThematicMemory,
@@ -1575,6 +1654,14 @@ def _enqueue_changed_entities(session: Session, _flush_context) -> None:
                 origins,
                 item.tenant_id,
                 LEGISLATIVE_TRAMITATION_ENTITY,
+                item.id,
+                action,
+            )
+        elif isinstance(item, NormativeSource):
+            _remember_origin(
+                origins,
+                item.tenant_id,
+                NORMATIVE_SOURCE_ENTITY,
                 item.id,
                 action,
             )
@@ -1960,6 +2047,26 @@ def _render_draft(item: LegislativeDraft) -> str:
             f"Fundamentação: {bases}",
             f"Situação: {item.status.value}",
             f"Protocolo legislativo: {_minimize(item.protocol_number)}",
+        ]
+    )
+
+
+def _render_normative_source(item: NormativeSource) -> str:
+    return "\n".join(
+        [
+            f"Tipo normativo: {_minimize(item.source_type)}",
+            f"Titulo: {_minimize(item.title)}",
+            f"Referencia: {_minimize(item.reference)}",
+            f"Jurisdicao: {_minimize(item.jurisdiction) or 'Nao informada'}",
+            f"Versao: {_minimize(item.version)}",
+            f"Vigente desde: {item.valid_from.isoformat() if item.valid_from else 'Nao informada'}",
+            (
+                "Vigente ate: "
+                f"{item.valid_until.isoformat() if item.valid_until else 'Sem termino cadastrado'}"
+            ),
+            f"URL oficial: {_minimize(item.source_url) or 'Nao informada'}",
+            f"Checksum do catalogo: {item.checksum}",
+            f"Trecho normativo: {_minimize(item.excerpt)}",
         ]
     )
 
