@@ -10,6 +10,7 @@ from app.rag.operational_memory import (
     DOCUMENT_OCR_ENTITY,
     LEGISLATIVE_DRAFT_ENTITY,
     LEGISLATIVE_TRAMITATION_ENTITY,
+    NORMATIVE_SOURCE_ENTITY,
     OVERSIGHT_ACTION_ENTITY,
     REQUEST_FORWARDING_ENTITY,
     SERVICE_REQUEST_ENTITY,
@@ -71,6 +72,7 @@ def test_builtin_projectors_expose_versioned_governance_contract():
     transcription = projector_registry.require(AUDIO_TRANSCRIPTION_ENTITY)
     draft = projector_registry.require(LEGISLATIVE_DRAFT_ENTITY)
     tramitation = projector_registry.require(LEGISLATIVE_TRAMITATION_ENTITY)
+    normative_source = projector_registry.require(NORMATIVE_SOURCE_ENTITY)
     agenda = projector_registry.require(AGENDA_EVENT_ENTITY)
     oversight = projector_registry.require(OVERSIGHT_ACTION_ENTITY)
     thematic = projector_registry.require(THEMATIC_MEMORY_ENTITY)
@@ -96,7 +98,13 @@ def test_builtin_projectors_expose_versioned_governance_contract():
     assert draft.definition.module == "LEGISLATIVO"
     assert draft.definition.version == "1.0.0"
     assert "content" in draft.definition.field_allowlist
-    assert projector_registry.for_module("LEGISLATIVO") == (draft, tramitation)
+    assert normative_source.definition.purpose == "FUNDAMENTACAO_NORMATIVA_LEGISLATIVA"
+    assert "checksum" in normative_source.definition.field_allowlist
+    assert projector_registry.for_module("LEGISLATIVO") == (
+        draft,
+        normative_source,
+        tramitation,
+    )
     assert agenda.definition.field_allowlist.isdisjoint({"participants", "photos", "citizen"})
     assert oversight.definition.field_allowlist.isdisjoint(
         {"responsible_parties", "photos", "location"}

@@ -49,6 +49,22 @@ def _context() -> tuple[uuid.UUID, uuid.UUID]:
 def list_drafts():
     tenant_id, _ = _context()
     statement = select(LegislativeDraft).where(LegislativeDraft.tenant_id == tenant_id)
+    page = request.args.get("page", default=0, type=int)
+    size = request.args.get("size", default=25, type=int)
+    sort_key = str(request.args.get("sort", "atualizadaEm"))
+    direction = str(request.args.get("direction", "desc")).lower()
+    if page is None or page < 0 or size not in {10, 25, 50, 100}:
+        return jsonify(error="validation_error", message="Paginação de minutas inválida."), 422
+    sort_columns = {
+        "titulo": LegislativeDraft.title,
+        "tipo": LegislativeDraft.document_type,
+        "status": LegislativeDraft.status,
+        "protocolo": LegislativeDraft.protocol_number,
+        "criadaEm": LegislativeDraft.created_at,
+        "atualizadaEm": LegislativeDraft.updated_at,
+    }
+    if sort_key not in sort_columns or direction not in {"asc", "desc"}:
+        return jsonify(error="validation_error", message="Ordenação de minutas inválida."), 422
     status = str(request.args.get("status", "")).upper()
     document_type = str(request.args.get("tipo", "")).upper()
     search = str(request.args.get("q", "")).strip()
@@ -72,12 +88,27 @@ def list_drafts():
                 LegislativeDraft.protocol_number.ilike(f"%{search[:100]}%"),
             )
         )
+    total_elements = db.session.execute(
+        select(func.count()).select_from(statement.subquery())
+    ).scalar_one()
+    sort_column = sort_columns[sort_key]
+    order = sort_column.asc() if direction == "asc" else sort_column.desc()
     items = (
-        db.session.execute(statement.order_by(LegislativeDraft.updated_at.desc()).limit(200))
+        db.session.execute(
+            statement.order_by(order, LegislativeDraft.id.asc()).offset(page * size).limit(size)
+        )
         .scalars()
         .all()
     )
-    return jsonify(content=[draft_data(item, include_detail=False) for item in items])
+    return jsonify(
+        content=[draft_data(item, include_detail=False) for item in items],
+        page=page,
+        size=size,
+        totalElements=total_elements,
+        totalPages=(total_elements + size - 1) // size,
+        sort=sort_key,
+        direction=direction,
+    )
 
 
 @legislative_bp.get("/legislativo/minutas/<uuid:draft_id>")
@@ -497,6 +528,117 @@ def register_protocol(draft_id: uuid.UUID):
     return jsonify(draft_data(draft, include_detail=True))
 
 
+@legislative_bp.post("/legislativo/minutas/<uuid:draft_id>/protocolo/retificacoes")
+@roles_or_chief_required("admin", "manager")
+def rectify_protocol(draft_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    draft = _draft(tenant_id, draft_id)
+    if draft is None:
+        return jsonify(error="resource_not_found", message="Minuta não encontrada."), 404
+    if draft.status != LegislativeDraftStatus.APROVADA or not draft.protocol_number:
+        return jsonify(
+            error="conflict", message="A retificação exige uma minuta aprovada e protocolada."
+        ), 409
+
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("motivo", "")).strip()
+    protocol = str(payload.get("protocolo", "")).strip()
+    if len(reason) < 10 or len(reason) > 500:
+        return jsonify(
+            error="validation_error",
+            message="Informe um motivo de retificação entre 10 e 500 caracteres.",
+        ), 422
+    if not protocol or len(protocol) > 100:
+        return jsonify(error="validation_error", message="Informe um protocolo válido."), 422
+    try:
+        protocolled_at = (
+            _parse_occurred_at(payload.get("protocoladaEm"))
+            if payload.get("protocoladaEm") not in (None, "")
+            else _as_utc(draft.protocolled_at)
+        )
+    except ValueError:
+        return jsonify(
+            error="validation_error", message="Informe uma data de protocolo válida."
+        ), 422
+    if protocolled_at > datetime.now(UTC) + timedelta(minutes=5):
+        return jsonify(
+            error="validation_error", message="A data do protocolo não pode estar no futuro."
+        ), 422
+
+    effective_items = _effective_tramitation_items(draft)
+    protocol_item = next(
+        (
+            item
+            for item in effective_items
+            if item.status == LegislativeTramitationStatus.PROTOCOLADA
+        ),
+        None,
+    )
+    if protocol_item is None:
+        return jsonify(
+            error="conflict", message="O evento vigente de protocolo não foi encontrado."
+        ), 409
+    later_items = [
+        item
+        for item in effective_items
+        if item.status != LegislativeTramitationStatus.PROTOCOLADA
+    ]
+    if later_items and protocolled_at > min(_as_utc(item.occurred_at) for item in later_items):
+        return jsonify(
+            error="validation_error",
+            message="A data retificada do protocolo não pode ser posterior a um andamento vigente.",
+        ), 422
+    if protocol == draft.protocol_number and protocolled_at == _as_utc(draft.protocolled_at):
+        return jsonify(
+            error="validation_error", message="A retificação deve alterar o número ou a data."
+        ), 422
+
+    before = {
+        "protocolo": draft.protocol_number,
+        "protocoladaEm": _as_utc(draft.protocolled_at).isoformat(),
+        "eventoId": str(protocol_item.id),
+    }
+    correction = LegislativeTramitation(
+        tenant_id=tenant_id,
+        draft_id=draft.id,
+        status=LegislativeTramitationStatus.PROTOCOLADA,
+        stage="Retificação de protocolo",
+        destination=str(payload.get("destino") or protocol_item.destination or "").strip()[:180]
+        or None,
+        external_reference=protocol,
+        notes=str(payload.get("observacoes") or "").strip()[:4000] or None,
+        rectifies_id=protocol_item.id,
+        rectification_reason=reason,
+        occurred_at=protocolled_at,
+        created_by_id=user_id,
+    )
+    draft.protocol_number = protocol
+    draft.protocolled_at = protocolled_at
+    db.session.add(correction)
+    db.session.flush()
+    _refresh_current_tramitation_status(draft)
+    add_audit(
+        tenant_id,
+        user_id,
+        "legislative_draft.protocol_rectified",
+        "legislative_draft",
+        draft.id,
+        before=before,
+        after={
+            "protocolo": protocol,
+            "protocoladaEm": protocolled_at.isoformat(),
+            "retificacaoId": str(correction.id),
+            "motivo": reason,
+        },
+    )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="conflict", message="Este protocolo já está registrado."), 409
+    return jsonify(draft_data(draft, include_detail=True)), 201
+
+
 @legislative_bp.get("/legislativo/minutas/<uuid:draft_id>/tramitacoes")
 @jwt_required()
 def list_tramitations(draft_id: uuid.UUID):
@@ -593,6 +735,123 @@ def add_tramitation(draft_id: uuid.UUID):
         after=tramitation_data(item),
     )
     db.session.commit()
+    return jsonify(draft_data(draft, include_detail=True)), 201
+
+
+@legislative_bp.post(
+    "/legislativo/minutas/<uuid:draft_id>/tramitacoes/<uuid:tramitation_id>/retificacoes"
+)
+@roles_or_chief_required("admin", "manager")
+def rectify_tramitation(draft_id: uuid.UUID, tramitation_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    draft = _draft(tenant_id, draft_id)
+    if draft is None:
+        return jsonify(error="resource_not_found", message="Minuta não encontrada."), 404
+    if draft.status != LegislativeDraftStatus.APROVADA or not draft.protocol_number:
+        return jsonify(
+            error="conflict", message="A retificação exige uma minuta aprovada e protocolada."
+        ), 409
+    target = db.session.execute(
+        select(LegislativeTramitation).where(
+            LegislativeTramitation.id == tramitation_id,
+            LegislativeTramitation.draft_id == draft.id,
+            LegislativeTramitation.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        return jsonify(error="resource_not_found", message="Andamento não encontrado."), 404
+    if target.status == LegislativeTramitationStatus.PROTOCOLADA:
+        return jsonify(
+            error="validation_error",
+            message="Use a retificação de protocolo para corrigir o evento inicial.",
+        ), 422
+    already_rectified = db.session.execute(
+        select(LegislativeTramitation.id).where(
+            LegislativeTramitation.tenant_id == tenant_id,
+            LegislativeTramitation.rectifies_id == target.id,
+        )
+    ).scalar_one_or_none()
+    if already_rectified:
+        return jsonify(
+            error="conflict",
+            message="Este registro já foi retificado; retifique o registro compensatório vigente.",
+        ), 409
+
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("motivo", "")).strip()
+    if len(reason) < 10 or len(reason) > 500:
+        return jsonify(
+            error="validation_error",
+            message="Informe um motivo de retificação entre 10 e 500 caracteres.",
+        ), 422
+    try:
+        status = LegislativeTramitationStatus(
+            str(payload.get("status", target.status.value)).upper()
+        )
+    except ValueError:
+        return jsonify(error="validation_error", message="Status de tramitação inválido."), 422
+    if status == LegislativeTramitationStatus.PROTOCOLADA:
+        return jsonify(
+            error="validation_error", message="Um andamento não pode substituir o protocolo."
+        ), 422
+    stage = str(payload.get("etapa", target.stage)).strip()
+    if not stage or len(stage) > 160:
+        return jsonify(error="validation_error", message="Informe uma etapa válida."), 422
+    try:
+        occurred_at = (
+            _parse_occurred_at(payload.get("ocorridaEm"))
+            if payload.get("ocorridaEm") not in (None, "")
+            else _as_utc(target.occurred_at)
+        )
+    except ValueError:
+        return jsonify(
+            error="validation_error", message="Informe uma data de ocorrência válida."
+        ), 422
+    if occurred_at < _as_utc(draft.protocolled_at):
+        return jsonify(
+            error="validation_error", message="A ocorrência não pode ser anterior ao protocolo."
+        ), 422
+    if occurred_at > datetime.now(UTC) + timedelta(minutes=5):
+        return jsonify(
+            error="validation_error", message="A ocorrência não pode estar no futuro."
+        ), 422
+
+    correction = LegislativeTramitation(
+        tenant_id=tenant_id,
+        draft_id=draft.id,
+        status=status,
+        stage=stage,
+        destination=str(payload.get("destino", target.destination) or "").strip()[:180] or None,
+        external_reference=(
+            str(payload.get("referenciaExterna", target.external_reference) or "").strip()[:180]
+            or None
+        ),
+        notes=str(payload.get("observacoes", target.notes) or "").strip()[:4000] or None,
+        rectifies_id=target.id,
+        rectification_reason=reason,
+        occurred_at=occurred_at,
+        created_by_id=user_id,
+    )
+    db.session.add(correction)
+    db.session.flush()
+    _refresh_current_tramitation_status(draft)
+    add_audit(
+        tenant_id,
+        user_id,
+        "legislative_draft.tramitation_rectified",
+        "legislative_draft",
+        draft.id,
+        before=tramitation_data(target),
+        after=tramitation_data(correction),
+    )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(
+            error="conflict",
+            message="Este registro foi retificado por outra operação; recarregue a timeline.",
+        ), 409
     return jsonify(draft_data(draft, include_detail=True)), 201
 
 
@@ -1228,7 +1487,11 @@ def version_comparison(
     }
 
 
-def tramitation_data(item: LegislativeTramitation) -> dict:
+def tramitation_data(
+    item: LegislativeTramitation,
+    *,
+    rectified_by_id: uuid.UUID | None = None,
+) -> dict:
     return {
         "id": str(item.id),
         "status": item.status.value,
@@ -1236,13 +1499,18 @@ def tramitation_data(item: LegislativeTramitation) -> dict:
         "destino": item.destination,
         "referenciaExterna": item.external_reference,
         "observacoes": item.notes,
+        "tipoRegistro": "RETIFICACAO" if item.rectifies_id else "ORIGINAL",
+        "retificaId": str(item.rectifies_id) if item.rectifies_id else None,
+        "motivoRetificacao": item.rectification_reason,
+        "retificada": rectified_by_id is not None,
+        "retificadaPorId": str(rectified_by_id) if rectified_by_id else None,
         "ocorridaEm": item.occurred_at.isoformat(),
         "registradaEm": item.created_at.isoformat(),
     }
 
 
-def _tramitations(draft: LegislativeDraft) -> list[dict]:
-    items = (
+def _tramitation_items(draft: LegislativeDraft) -> list[LegislativeTramitation]:
+    return (
         db.session.execute(
             select(LegislativeTramitation)
             .where(
@@ -1257,7 +1525,32 @@ def _tramitations(draft: LegislativeDraft) -> list[dict]:
         .scalars()
         .all()
     )
-    return [tramitation_data(item) for item in items]
+
+
+def _effective_tramitation_items(draft: LegislativeDraft) -> list[LegislativeTramitation]:
+    items = _tramitation_items(draft)
+    rectified_ids = {item.rectifies_id for item in items if item.rectifies_id}
+    return [item for item in items if item.id not in rectified_ids]
+
+
+def _refresh_current_tramitation_status(draft: LegislativeDraft) -> None:
+    effective_items = _effective_tramitation_items(draft)
+    if not effective_items:
+        draft.current_tramitation_status = None
+        return
+    latest = max(
+        effective_items,
+        key=lambda item: (_as_utc(item.occurred_at), _as_utc(item.created_at)),
+    )
+    draft.current_tramitation_status = latest.status
+
+
+def _tramitations(draft: LegislativeDraft) -> list[dict]:
+    items = _tramitation_items(draft)
+    rectified_by = {item.rectifies_id: item.id for item in items if item.rectifies_id}
+    return [
+        tramitation_data(item, rectified_by_id=rectified_by.get(item.id)) for item in items
+    ]
 
 
 def _parse_occurred_at(value) -> datetime:

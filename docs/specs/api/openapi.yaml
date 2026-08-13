@@ -1626,8 +1626,29 @@ paths:
         - { in: query, name: q, schema: { type: string } }
         - { in: query, name: status, schema: { type: string } }
         - { in: query, name: tipo, schema: { type: string } }
+        - { in: query, name: page, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: size, schema: { type: integer, enum: [10, 25, 50, 100], default: 25 } }
+        - { in: query, name: sort, schema: { type: string, enum: [titulo, tipo, status, protocolo, criadaEm, atualizadaEm], default: atualizadaEm } }
+        - { in: query, name: direction, schema: { type: string, enum: [asc, desc], default: desc } }
       responses:
-        "200": { description: Minutas filtradas do tenant }
+        "200":
+          description: Página de minutas filtradas e ordenadas do tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content, page, size, totalElements, totalPages, sort, direction]
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/MinutaLegislativa" }
+                  page: { type: integer }
+                  size: { type: integer }
+                  totalElements: { type: integer }
+                  totalPages: { type: integer }
+                  sort: { type: string }
+                  direction: { type: string, enum: [asc, desc] }
+        "422": { description: Paginação, filtro ou ordenação inválida }
   /legislativo/minutas/{id}:
     get:
       summary: Consulta conteúdo, fontes, versões e vínculos da minuta
@@ -1744,6 +1765,7 @@ paths:
                 confirmarFundamentacao: { type: boolean }
       responses:
         "200": { description: Decisão humana registrada e auditada }
+        "403": { description: Ação não permitida pela matriz legislativa do papel ou função }
         "409": { description: Estado incompatível ou fundamentação sem confirmação }
   /legislativo/minutas/{id}/protocolo:
     post:
@@ -1761,7 +1783,37 @@ paths:
                 protocolo: { type: string, maxLength: 100 }
       responses:
         "200": { description: Protocolo manual registrado }
+        "403": { description: Papel ou função sem permissão de supervisão }
         "409": { description: Minuta não aprovada ou protocolo duplicado }
+  /legislativo/minutas/{id}/protocolo/retificacoes:
+    post:
+      summary: Retifica número ou data do protocolo por evento compensatório
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [protocolo, motivo]
+              properties:
+                protocolo: { type: string, minLength: 1, maxLength: 100 }
+                protocoladaEm: { type: string, format: date-time }
+                destino: { type: string, maxLength: 180 }
+                observacoes: { type: string, maxLength: 4000 }
+                motivo: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        "201":
+          description: Retificação registrada, vinculada ao evento anterior e auditada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MinutaLegislativa" }
+        "403": { description: Papel ou função sem permissão de supervisão }
+        "404": { description: Minuta inexistente no tenant }
+        "409": { description: Minuta não protocolada ou protocolo duplicado }
+        "422": { description: Dados iguais aos vigentes, motivo ou data inválida }
   /legislativo/minutas/{id}/tramitacoes:
     get:
       summary: Lista a timeline imutável de tramitação da minuta
@@ -1809,6 +1861,43 @@ paths:
         "404": { description: Minuta inexistente no tenant }
         "409": { description: Minuta ainda não aprovada e protocolada }
         "422": { description: Estado, etapa ou data inválida }
+  /legislativo/minutas/{id}/tramitacoes/{tramitacaoId}/retificacoes:
+    post:
+      summary: Retifica andamento por evento compensatório sem alterar o original
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: path
+          name: tramitacaoId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [motivo]
+              properties:
+                status:
+                  type: string
+                  enum: [DISTRIBUIDA, EM_COMISSAO, EM_PAUTA, APROVADA, REJEITADA, SANCIONADA, VETADA, ARQUIVADA, RETIRADA]
+                etapa: { type: string, minLength: 1, maxLength: 160 }
+                destino: { type: string, maxLength: 180 }
+                referenciaExterna: { type: string, maxLength: 180 }
+                observacoes: { type: string, maxLength: 4000 }
+                ocorridaEm: { type: string, format: date-time }
+                motivo: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        "201":
+          description: Retificação registrada, estado vigente recalculado e auditoria criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MinutaLegislativa" }
+        "403": { description: Papel ou função sem permissão de supervisão }
+        "404": { description: Minuta ou andamento inexistente no tenant }
+        "409": { description: Registro já retificado ou minuta incompatível }
+        "422": { description: Protocolo usado na rota errada, motivo ou dados inválidos }
   /legislativo/minutas/{id}/exportar/{formato}:
     get:
       summary: Exporta uma minuta para DOCX ou PDF
@@ -3783,15 +3872,21 @@ components:
               items: { type: string }
     ResultadoRecuperacaoFundamentacao:
       type: object
-      required: [consulta, colecao, modelo, fallbackUtilizado, limiar, totalCandidatos, fontes, grounded, revisaoHumanaObrigatoria, aplicacaoAutomatica, conteudoTratadoComoDado]
+      required: [consulta, colecao, origemRecuperacao, catalogoAutoritativo, revalidacaoCatalogo, modelo, fallbackUtilizado, limiar, totalCandidatos, totalCandidatosIndexados, fontes, grounded, revisaoHumanaObrigatoria, aplicacaoAutomatica, conteudoTratadoComoDado]
       properties:
         consulta: { type: string }
         colecao: { type: string, enum: [legislacao] }
+        origemRecuperacao:
+          type: string
+          enum: [RAG_PRIVADO, RAG_PRIVADO_COM_FALLBACK_PARCIAL, CATALOGO_RELACIONAL_FALLBACK]
+        catalogoAutoritativo: { type: boolean, enum: [true] }
+        revalidacaoCatalogo: { type: boolean, enum: [true] }
         modelo: { type: string }
         fallbackUtilizado: { type: boolean }
         erroFallback: { type: string, nullable: true }
         limiar: { type: number, minimum: 0, maximum: 1 }
         totalCandidatos: { type: integer, minimum: 0 }
+        totalCandidatosIndexados: { type: integer, minimum: 0 }
         fontes:
           type: array
           items: { $ref: "#/components/schemas/FonteNormativaCatalogo" }
@@ -3974,6 +4069,11 @@ components:
         destino: { type: string }
         referenciaExterna: { type: string }
         observacoes: { type: string }
+        tipoRegistro: { type: string, enum: [ORIGINAL, RETIFICACAO] }
+        retificaId: { type: string, format: uuid, nullable: true }
+        motivoRetificacao: { type: string, nullable: true }
+        retificada: { type: boolean }
+        retificadaPorId: { type: string, format: uuid, nullable: true }
         ocorridaEm: { type: string, format: date-time }
         registradaEm: { type: string, format: date-time }
     RagQueryRequest:

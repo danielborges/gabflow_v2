@@ -1,9 +1,68 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { LegislativeDocumentsPage } from "./LegislativeDocumentsPage";
+import { Workspace } from "./Workspace";
+
+function DocumentsHarness({ user, initialSection = "drafts" }) {
+  const [section, setSection] = useState(initialSection);
+  return <LegislativeDocumentsPage user={user} activeSection={section} onSectionChange={setSection} />;
+}
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
+});
+
+it("expõe as quatro áreas de Documentos como submenu lateral", async () => {
+  window.history.replaceState({}, "", "/?tela=documents&secao=drafts");
+  vi.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ content: [] }) });
+  render(<Workspace user={{ name: "Admin", role: "admin", tenant: { name: "Gabinete", modulosHabilitados: ["documentos"] } }} onLogout={vi.fn()} />);
+
+  const submenu = await screen.findByRole("group", { name: "Submenu Documentos" });
+  expect(within(submenu).getByRole("button", { name: "Minutas" })).toHaveAttribute("aria-current", "page");
+  expect(within(submenu).getByRole("button", { name: "Precedentes" })).toBeInTheDocument();
+  expect(within(submenu).getByRole("button", { name: "Templates" })).toBeInTheDocument();
+  expect(within(submenu).getByRole("button", { name: "Base normativa" })).toBeInTheDocument();
+  expect(screen.queryByRole("tablist", { name: "Área legislativa" })).not.toBeInTheDocument();
+
+  fireEvent.click(within(submenu).getByRole("button", { name: "Precedentes" }));
+  expect(await screen.findByRole("heading", { name: "Precedentes legislativos" })).toBeInTheDocument();
+  expect(window.location.search).toContain("secao=precedents");
+});
+
+it("lista minutas em tabela com busca, filtros, ordenação e paginação", async () => {
+  const draft = {
+    id: "draft-table-1",
+    titulo: "Mobilidade ativa",
+    tipo: "INDICACAO",
+    status: "RASCUNHO",
+    protocolo: null,
+    atualizadaEm: "2026-08-13T12:00:00Z",
+  };
+  vi.spyOn(global, "fetch").mockImplementation(async (url) => ({
+    ok: true,
+    json: async () => String(url).includes("/templates")
+      ? { content: [] }
+      : { content: [draft], page: 0, size: 25, totalElements: 31, totalPages: 2 },
+  }));
+
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} />);
+
+  expect(await screen.findByRole("columnheader", { name: "Título" })).toBeInTheDocument();
+  expect(await screen.findByText("31 minutas encontradas")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Pesquisar minutas"), { target: { value: "mobilidade" } });
+  fireEvent.change(screen.getByLabelText("Filtrar minutas por status"), { target: { value: "RASCUNHO" } });
+  fireEvent.click(screen.getByRole("button", { name: "Título" }));
+
+  await waitFor(() => {
+    const listCall = global.fetch.mock.calls.findLast(([url]) => String(url).includes("/minutas?"));
+    expect(String(listCall[0])).toContain("q=mobilidade");
+    expect(String(listCall[0])).toContain("status=RASCUNHO");
+    expect(String(listCall[0])).toContain("sort=titulo");
+    expect(String(listCall[0])).toContain("direction=asc");
+  });
+  expect(screen.getByRole("button", { name: /Próxima/ })).toBeEnabled();
 });
 
 it("apresenta minuta, fundamentação pendente e protocolo somente manual", async () => {
@@ -116,6 +175,19 @@ it("apresenta a timeline e registra um novo andamento legislativo", async () => 
     }],
   };
   vi.spyOn(global, "fetch").mockImplementation(async (url, options = {}) => {
+    if (String(url).includes("/tramitacoes/movement-2/retificacoes") && options.method === "POST") {
+      const payload = JSON.parse(options.body);
+      draft = {
+        ...draft,
+        statusTramitacao: payload.status,
+        tramitacoes: [
+          draft.tramitacoes[0],
+          { ...draft.tramitacoes[1], retificada: true, retificadaPorId: "movement-3" },
+          { id: "movement-3", ...payload, tipoRegistro: "RETIFICACAO", retificaId: "movement-2", motivoRetificacao: payload.motivo, ocorridaEm: "2026-07-17T13:00:00+00:00" },
+        ],
+      };
+      return { ok: true, json: async () => draft };
+    }
     if (String(url).endsWith("/tramitacoes") && options.method === "POST") {
       const movement = {
         id: "movement-2",
@@ -152,6 +224,19 @@ it("apresenta a timeline e registra um novo andamento legislativo", async () => 
   ));
   expect((await screen.findAllByText("Em comissão")).length).toBeGreaterThan(0);
   expect(screen.getByText("Comissão de Justiça")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Retificar andamento" }));
+  fireEvent.change(screen.getByLabelText("Status retificado"), { target: { value: "DISTRIBUIDA" } });
+  fireEvent.change(screen.getByLabelText("Etapa retificada"), { target: { value: "Distribuição à comissão" } });
+  fireEvent.change(screen.getByLabelText("Motivo da retificação"), { target: { value: "Correção de erro material no status registrado." } });
+  fireEvent.click(screen.getByRole("button", { name: "Registrar retificação" }));
+
+  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+    "/api/v1/legislativo/minutas/draft-2/tramitacoes/movement-2/retificacoes",
+    expect.objectContaining({ method: "POST" }),
+  ));
+  expect(await screen.findByText("Distribuição à comissão")).toBeInTheDocument();
+  expect(screen.getByText(/Correção de erro material/)).toBeInTheDocument();
 });
 
 it("permite criar, editar e desativar templates pela gestão visual", async () => {
@@ -184,8 +269,7 @@ it("permite criar, editar e desativar templates pela gestão visual", async () =
     };
   });
 
-  render(<LegislativeDocumentsPage user={{ role: "admin" }} />);
-  fireEvent.click(screen.getByRole("tab", { name: "Templates" }));
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} activeSection="templates" />);
 
   expect((await screen.findAllByText("Indicação urbana")).length).toBeGreaterThan(0);
   const name = await screen.findByLabelText("Nome");
@@ -407,8 +491,7 @@ it("pesquisa precedentes semanticamente e abre a minuta encontrada", async () =>
     };
   });
 
-  render(<LegislativeDocumentsPage user={{ role: "admin" }} />);
-  fireEvent.click(screen.getByRole("tab", { name: "Precedentes" }));
+  render(<DocumentsHarness user={{ role: "admin" }} initialSection="precedents" />);
   fireEvent.change(screen.getByLabelText("Assunto do precedente"), {
     target: { value: "segurança noturna em espaços públicos" },
   });
@@ -445,8 +528,7 @@ it("cadastra e versiona fontes na base normativa", async () => {
     return { ok: true, json: async () => ({ content: [] }) };
   });
 
-  render(<LegislativeDocumentsPage user={{ role: "admin" }} />);
-  fireEvent.click(screen.getByRole("tab", { name: "Base normativa" }));
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} activeSection="sources" />);
   fireEvent.change(await screen.findByLabelText("Título da fonte"), { target: { value: "Lei de iluminação pública" } });
   fireEvent.change(screen.getByLabelText("Referência normativa"), { target: { value: "art. 12" } });
   fireEvent.change(screen.getByLabelText("Trecho normativo"), { target: { value: "O Município manterá iluminadas as praças e vias públicas." } });
@@ -504,10 +586,13 @@ it("aplica fundamentação recuperada somente após seleção e justificativa", 
   expect(screen.getByRole("button", { name: "Aplicar fontes selecionadas" })).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.change(screen.getByLabelText("Motivo da fundamentação"), { target: { value: "Dispositivo pertinente" } });
-  fireEvent.click(screen.getByRole("button", { name: "Aplicar fontes selecionadas" }));
+  const applyButton = screen.getByRole("button", { name: "Aplicar fontes selecionadas" });
+  await waitFor(() => expect(applyButton).toBeEnabled());
+  fireEvent.click(applyButton);
 
   await waitFor(() => {
     const call = global.fetch.mock.calls.find(([url]) => String(url).endsWith("/fundamentacao/aplicar"));
+    expect(call).toBeDefined();
     expect(JSON.parse(call[1].body)).toEqual({ fonteIds: ["source-1"], motivo: "Dispositivo pertinente" });
   });
   expect(await screen.findByText(/Indicação · versão 2/)).toBeInTheDocument();

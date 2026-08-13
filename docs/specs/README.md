@@ -84,7 +84,8 @@ gabflow-spec-driven/
 │   ├── ADR-009-controlled-feedback-learning.md
 │   ├── ADR-010-assisted-whatsapp-email-identity.md
 │   ├── ADR-011-governed-geospatial-provider.md
-│   └── ADR-012-aws-production-platform.md
+│   ├── ADR-012-aws-production-platform.md
+│   └── ADR-013-generic-legislative-integration.md
 ├── governance/
 │   ├── definition-of-ready.md
 │   ├── definition-of-done.md

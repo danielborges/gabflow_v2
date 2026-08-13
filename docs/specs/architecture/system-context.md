@@ -13,8 +13,7 @@
 - Provedores de mensageria
 - Provedores de IA
 - Serviço de mapas e geocodificação
-- Sistemas legislativos
-- Sistemas de protocolo
+- Sistemas legislativos e de protocolo heterogêneos, acessados exclusivamente pela porta canônica e por adaptadores tenant-scoped do ADR-013
 - APIs públicas e bases normativas homologadas
 
 ## Sistemas externos
@@ -38,3 +37,11 @@ O GabFlow não substitui:
 - sistema corporativo da Prefeitura;
 - decisão jurídica;
 - decisão política ou administrativa humana.
+
+## Fronteira de integração legislativa
+
+O GabFlow não assume fornecedor, API ou disponibilidade de integração. O modo `MANUAL`
+é o adaptador padrão. Quando um gabinete habilita conector externo, o domínio continua
+isolado pelo contrato canônico, por capabilities e por operações assíncronas idempotentes.
+Configuração e estado são exclusivos do tenant; segredos permanecem fora do banco
+funcional. Consulte o [ADR-013](../adr/ADR-013-generic-legislative-integration.md).

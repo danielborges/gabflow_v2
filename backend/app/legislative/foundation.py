@@ -1,4 +1,5 @@
 import hashlib
+import math
 import uuid
 from datetime import date
 from typing import Protocol
@@ -13,7 +14,18 @@ from app.ai.duplicates import (
     OllamaEmbeddingProvider,
 )
 from app.extensions import db
-from app.models import NormativeSource
+from app.models import (
+    NormativeSource,
+    RagChunk,
+    RagDocument,
+    RagDocumentLifecycle,
+    RagDocumentVersion,
+    RagIngestionStatus,
+    RagKnowledgeSource,
+    RagKnowledgeSourceStatus,
+)
+from app.rag.operational_memory import NORMATIVE_SOURCE_ENTITY
+from app.rag.service import rag_embedding_provider
 
 SOURCE_TYPES = {
     "LEI_ORGANICA",
@@ -51,10 +63,109 @@ class HybridNormativeRetriever:
                 .limit(candidate_limit)
             ).scalars()
         )
-        texts = [_source_text(item) for item in candidates]
-        provider = _foundation_provider()
+        if not candidates:
+            return _recovery_response(
+                query,
+                limit,
+                candidates,
+                [],
+                model=_foundation_provider().model,
+                used_fallback=False,
+                fallback_error=None,
+                retrieval_origin="RAG_PRIVADO",
+                indexed_count=0,
+            )
+        indexed = _indexed_normative_texts(
+            tenant_id,
+            {item.id for item in candidates},
+        )
+        if indexed:
+            return self._retrieve_from_private_rag(query, limit, candidates, indexed)
+        return self._retrieve_from_catalog_fallback(query, limit, candidates)
+
+    def _retrieve_from_private_rag(
+        self,
+        query: str,
+        limit: int,
+        candidates: list[NormativeSource],
+        indexed: dict[uuid.UUID, list[RagChunk]],
+    ) -> dict:
+        provider = rag_embedding_provider()
         used_fallback = False
         fallback_error = None
+        query_vector: list[float] | None = None
+        try:
+            query_vector = provider.embeddings([query])[0]
+        except (EmbeddingProviderError, IndexError) as error:
+            current_app.logger.warning(
+                "Falha no embedding da recuperacao normativa; "
+                "usando os chunks do RAG em modo lexical: %s",
+                error,
+            )
+            provider = LocalSimilarityProvider()
+            used_fallback = True
+            fallback_error = str(error)
+
+        ranked = []
+        unindexed = []
+        for item in candidates:
+            chunks = indexed.get(item.id)
+            if not chunks:
+                unindexed.append(item)
+                continue
+            text = "\n".join(chunk.content for chunk in chunks)
+            lexical_score = LocalSimilarityProvider().similarities(query, [text])[0]
+            compatible = [
+                chunk
+                for chunk in chunks
+                if query_vector
+                and chunk.embedding_model == getattr(provider, "model", None)
+                and len(chunk.embedding) == len(query_vector)
+            ]
+            semantic_score = (
+                max(_cosine(query_vector, chunk.embedding) for chunk in compatible)
+                if compatible and query_vector
+                else lexical_score
+            )
+            _append_ranked(ranked, item, semantic_score, lexical_score)
+        if unindexed:
+            local = LocalSimilarityProvider()
+            texts = [_source_text(item) for item in unindexed]
+            scores = local.similarities(query, texts)
+            for item, score in zip(unindexed, scores, strict=True):
+                _append_ranked(ranked, item, score, score)
+            used_fallback = True
+            lag_message = (
+                f"{len(unindexed)} fonte(s) vigente(s) ainda aguardam indexacao no RAG privado."
+            )
+            fallback_error = "; ".join(
+                value for value in (fallback_error, lag_message) if value
+            )
+        return _recovery_response(
+            query,
+            limit,
+            candidates,
+            ranked,
+            model=provider.model,
+            used_fallback=used_fallback,
+            fallback_error=fallback_error,
+            retrieval_origin=(
+                "RAG_PRIVADO_COM_FALLBACK_PARCIAL"
+                if unindexed
+                else "RAG_PRIVADO"
+            ),
+            indexed_count=len(indexed),
+        )
+
+    def _retrieve_from_catalog_fallback(
+        self,
+        query: str,
+        limit: int,
+        candidates: list[NormativeSource],
+    ) -> dict:
+        texts = [_source_text(item) for item in candidates]
+        provider = _foundation_provider()
+        fallback_error = "Indice normativo do RAG privado ainda indisponivel."
         similarities: list[float] = []
         if candidates:
             try:
@@ -67,43 +178,125 @@ class HybridNormativeRetriever:
                 )
                 provider = LocalSimilarityProvider()
                 similarities = provider.similarities(query, texts)
-                used_fallback = True
-                fallback_error = str(error)
+                fallback_error = f"{fallback_error} {error}"
 
         lexical_scores = LocalSimilarityProvider().similarities(query, texts)
-        threshold = current_app.config["AI_FOUNDATION_SCORE_THRESHOLD"]
         ranked = []
         for item, semantic_score, lexical_score in zip(
             candidates, similarities, lexical_scores, strict=True
         ):
-            score = semantic_score * 0.9 + lexical_score * 0.1
-            if score < threshold:
-                continue
-            citation = normative_source_data(item)
-            citation.update(
-                {
-                    "pontuacao": round(score, 4),
-                    "similaridadeSemantica": round(semantic_score, 4),
-                    "similaridadeLexical": round(lexical_score, 4),
-                    "justificativas": _reasons(item, semantic_score, lexical_score),
-                }
-            )
-            ranked.append(citation)
-        ranked.sort(key=lambda item: item["pontuacao"], reverse=True)
-        return {
-            "consulta": query,
-            "colecao": "legislacao",
-            "modelo": provider.model,
-            "fallbackUtilizado": used_fallback,
-            "erroFallback": fallback_error,
-            "limiar": threshold,
-            "totalCandidatos": len(candidates),
-            "fontes": ranked[:limit],
-            "grounded": bool(ranked),
-            "revisaoHumanaObrigatoria": True,
-            "aplicacaoAutomatica": False,
-            "conteudoTratadoComoDado": True,
+            _append_ranked(ranked, item, semantic_score, lexical_score)
+        return _recovery_response(
+            query,
+            limit,
+            candidates,
+            ranked,
+            model=provider.model,
+            used_fallback=True,
+            fallback_error=fallback_error,
+            retrieval_origin="CATALOGO_RELACIONAL_FALLBACK",
+            indexed_count=0,
+        )
+
+
+def _indexed_normative_texts(
+    tenant_id: uuid.UUID,
+    source_ids: set[uuid.UUID],
+) -> dict[uuid.UUID, list[RagChunk]]:
+    if not source_ids:
+        return {}
+    rows = db.session.execute(
+        select(RagKnowledgeSource.entity_id, RagChunk)
+        .join(
+            RagDocumentVersion,
+            RagDocumentVersion.id == RagKnowledgeSource.latest_version_id,
+        )
+        .join(
+            RagDocument,
+            RagDocument.id == RagDocumentVersion.document_id,
+        )
+        .join(RagChunk, RagChunk.version_id == RagDocumentVersion.id)
+        .where(
+            RagKnowledgeSource.tenant_id == tenant_id,
+            RagKnowledgeSource.entity_type == NORMATIVE_SOURCE_ENTITY,
+            RagKnowledgeSource.entity_id.in_(source_ids),
+            RagKnowledgeSource.status == RagKnowledgeSourceStatus.ATIVA,
+            RagDocumentVersion.tenant_id == tenant_id,
+            RagDocument.tenant_id == tenant_id,
+            RagDocument.active.is_(True),
+            RagDocumentVersion.ingestion_status == RagIngestionStatus.INDEXADO,
+            RagDocumentVersion.lifecycle_status == RagDocumentLifecycle.VIGENTE,
+            RagChunk.tenant_id == tenant_id,
+        )
+        .order_by(RagKnowledgeSource.entity_id, RagChunk.position)
+    ).all()
+    indexed: dict[uuid.UUID, list[RagChunk]] = {}
+    for entity_id, chunk in rows:
+        indexed.setdefault(entity_id, []).append(chunk)
+    return indexed
+
+
+def _append_ranked(
+    ranked: list[dict],
+    item: NormativeSource,
+    semantic_score: float,
+    lexical_score: float,
+) -> None:
+    score = semantic_score * 0.9 + lexical_score * 0.1
+    if score < current_app.config["AI_FOUNDATION_SCORE_THRESHOLD"]:
+        return
+    citation = normative_source_data(item)
+    citation.update(
+        {
+            "pontuacao": round(score, 4),
+            "similaridadeSemantica": round(semantic_score, 4),
+            "similaridadeLexical": round(lexical_score, 4),
+            "justificativas": _reasons(item, semantic_score, lexical_score),
         }
+    )
+    ranked.append(citation)
+
+
+def _recovery_response(
+    query: str,
+    limit: int,
+    candidates: list[NormativeSource],
+    ranked: list[dict],
+    *,
+    model: str,
+    used_fallback: bool,
+    fallback_error: str | None,
+    retrieval_origin: str,
+    indexed_count: int,
+) -> dict:
+    ranked.sort(key=lambda item: item["pontuacao"], reverse=True)
+    return {
+        "consulta": query,
+        "colecao": "legislacao",
+        "origemRecuperacao": retrieval_origin,
+        "catalogoAutoritativo": True,
+        "revalidacaoCatalogo": True,
+        "modelo": model,
+        "fallbackUtilizado": used_fallback,
+        "erroFallback": fallback_error,
+        "limiar": current_app.config["AI_FOUNDATION_SCORE_THRESHOLD"],
+        "totalCandidatos": len(candidates),
+        "totalCandidatosIndexados": indexed_count,
+        "fontes": ranked[:limit],
+        "grounded": bool(ranked),
+        "revisaoHumanaObrigatoria": True,
+        "aplicacaoAutomatica": False,
+        "conteudoTratadoComoDado": True,
+    }
+
+
+def _cosine(first: list[float], second: list[float]) -> float:
+    first_norm = math.sqrt(sum(value * value for value in first))
+    second_norm = math.sqrt(sum(value * value for value in second))
+    if not first_norm or not second_norm:
+        return 0.0
+    dot_product = sum(a * b for a, b in zip(first, second, strict=True))
+    return max(0.0, min(1.0, dot_product / (first_norm * second_norm)))
 
 
 def foundation_retriever() -> FoundationRetriever:

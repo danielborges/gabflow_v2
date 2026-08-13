@@ -176,4 +176,6 @@ Plano detalhado: [`Territorial-intelligence-evolution-strategy.md`](../../implem
 - Formulário público.
 - Redes sociais.
 - Aplicativo móvel.
-- Integração com sistemas legislativos e protocolos externos.
+- Porta canônica e adaptadores tenant-scoped para sistemas legislativos e protocolos
+  externos, preservando o modo manual como fallback; implementação incremental conforme
+  o [ADR-013](../adr/ADR-013-generic-legislative-integration.md).

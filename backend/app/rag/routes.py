@@ -139,6 +139,7 @@ OPERATIONAL_ENTITY_LABELS = {
     "REQUEST_FORWARDING": "Encaminhamento",
     "LEGISLATIVE_DRAFT": "Minuta legislativa",
     "LEGISLATIVE_TRAMITATION": "Tramitação legislativa",
+    "NORMATIVE_SOURCE": "Fonte normativa",
     "DOCUMENT_OCR": "Documento processado",
     "AUDIO_TRANSCRIPTION": "Transcrição de áudio",
     "AGENDA_EVENT": "Compromisso de agenda",
@@ -185,6 +186,9 @@ OPERATIONAL_PURPOSE_LABELS = {
     ),
     "MEMORIA_E_PRODUCAO_LEGISLATIVA": (
         "Preservar o contexto da produção legislativa para apoiar análises e novas iniciativas."
+    ),
+    "FUNDAMENTACAO_NORMATIVA_LEGISLATIVA": (
+        "Localizar fontes normativas governadas para fundamentar a produção legislativa."
     ),
 }
 

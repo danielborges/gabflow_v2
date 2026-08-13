@@ -1,6 +1,19 @@
 # language: pt
 Funcionalidade: Geração assistida de documentos legislativos
 
+  Cenário: Navegar pelas áreas independentes de Documentos
+    Dado que o usuário acessou o módulo Documentos
+    Então o menu lateral deve apresentar Minutas, Precedentes, Templates e, quando autorizado, Base normativa
+    E cada opção deve abrir uma página própria sem duplicar a navegação dentro do conteúdo
+
+  Cenário: Consultar minutas em tabela paginada
+    Dado que existem minutas no tenant atual
+    Quando o usuário acessar a opção Minutas
+    Então deve visualizar uma tabela com busca, filtros de status e tipo
+    E deve poder ordenar pelas colunas disponíveis
+    E deve poder escolher o tamanho da página e navegar entre páginas
+    E a API deve aplicar paginação, filtros e ordenação antes de retornar os registros
+
   Cenário: Criar indicação a partir de uma solicitação
     Dado que a solicitação contém fatos, local e órgão competente
     Quando o assessor solicitar uma minuta de indicação
@@ -40,7 +53,8 @@ Funcionalidade: Geração assistida de documentos legislativos
   Cenário: Recuperar fundamentação normativa automaticamente
     Dado que o tenant possui fontes normativas ativas, versionadas e vigentes
     Quando o worker concluir a geração de uma minuta
-    Então o sistema deve recuperar fontes por similaridade semântica e lexical
+    Então o sistema deve recuperar fontes projetadas no RAG Privado por similaridade semântica e lexical
+    E deve revalidar os resultados no catálogo normativo autoritativo
     E deve informar score, modelo, versão, vigência e referência de cada fonte
     E deve tratar o conteúdo recuperado como dado, nunca como instrução
     E não deve aplicar nenhuma fonte automaticamente
@@ -59,6 +73,13 @@ Funcionalidade: Geração assistida de documentos legislativos
     Então deve utilizar a similaridade lexical local configurada
     E deve sinalizar o fallback ao usuário
     E não deve consultar fontes de outro tenant
+
+  Cenário: Propagar o ciclo de vida normativo para o RAG Privado
+    Dado que um gestor cadastrou, alterou ou desativou uma fonte normativa
+    Quando a transação for confirmada
+    Então o sistema deve publicar no outbox apenas a identidade tenant-scoped da fonte
+    E o worker deve criar nova versão, despublicar ou expirar os derivados correspondentes
+    E o catálogo relacional deve permanecer como fonte autoritativa de vigência e versão
 
   Cenário: Recuperar proposições semelhantes do mesmo tenant
     Dado que existem proposições legislativas anteriores do gabinete
@@ -109,12 +130,49 @@ Funcionalidade: Geração assistida de documentos legislativos
     Então o gestor pode aprovar ou rejeitar a minuta
     E trechos sem fundamentação devem exigir confirmação explícita
 
+  Esquema do Cenário: Aplicar a matriz de permissões legislativas
+    Dado que o usuário possui o papel ou função <ator>
+    Quando tentar executar a ação <acao>
+    Então o sistema deve retornar <resultado>
+
+    Exemplos:
+      | ator             | acao                         | resultado |
+      | assessor         | editar e submeter minuta     | permitido |
+      | assessor         | aprovar minuta               | proibido  |
+      | parlamentar      | aprovar minuta               | permitido |
+      | parlamentar      | registrar protocolo          | proibido  |
+      | chefe de gabinete | rejeitar minuta                  | permitido |
+      | chefe de gabinete | aprovar minuta                   | proibido  |
+      | chefe de gabinete | protocolar, tramitar e retificar | permitido |
+
   Cenário: Impedir protocolo automático
     Dado que a minuta foi aprovada
     Então a minuta deve permanecer sem protocolo
     Quando um gestor informar manualmente um protocolo externo
     Então o sistema deve registrar o número e a data na auditoria
     E nenhuma integração de protocolo deve ser acionada automaticamente
+
+  Cenário: Operar sem API do sistema legislativo
+    Dado que o gabinete utiliza o adaptador legislativo manual
+    Quando uma minuta aprovada precisar ser protocolada
+    Então o usuário deve poder exportar o documento e registrar o protocolo informado pelo sistema oficial
+    E a indisponibilidade de integração externa não deve bloquear o fluxo interno
+
+  Cenário: Submeter documento por conector habilitado
+    Dado que o tenant possui uma integração ativa com a capability PROTOCOL_SUBMISSION
+    E existe uma versão aprovada e imutável da minuta
+    Quando um usuário autorizado solicitar explicitamente a submissão
+    Então o sistema deve criar uma operação assíncrona com chave idempotente
+    E não deve registrar novo protocolo enquanto a resposta externa não for inequívoca
+    E timeout ou resposta ambígua deve exigir reconciliação antes de reenvio
+
+  Cenário: Importar andamento externo sem perder o histórico
+    Dado que o conector suporta webhook ou consulta de andamentos
+    Quando receber um evento externo ainda não processado
+    Então o sistema deve normalizar o estado conforme o mapeamento versionado do tenant
+    E deve acrescentar o evento à timeline sem editar registros anteriores
+    E estado externo desconhecido deve permanecer não mapeado para revisão humana
+    E uma entrega repetida não deve criar outro andamento
 
   Cenário: Registrar a tramitação após o protocolo
     Dado que uma minuta aprovada possui protocolo externo
@@ -126,5 +184,22 @@ Funcionalidade: Geração assistida de documentos legislativos
   Cenário: Preservar o histórico de tramitação
     Dado que uma minuta possui andamentos legislativos registrados
     Então nenhum andamento deve possuir operação de edição ou exclusão
+    E uma correção deve ser registrada somente por evento compensatório vinculado
     E uma ocorrência não pode anteceder o protocolo ou o último andamento
     E usuários de outro tenant não podem consultar nem registrar andamentos
+
+  Cenário: Retificar erro material no protocolo
+    Dado que uma minuta aprovada possui protocolo externo
+    Quando um supervisor autorizado informar novo número ou data e motivo da retificação
+    Então o protocolo vigente deve refletir os dados corrigidos
+    E o evento original deve permanecer na timeline marcado como retificado
+    E um evento compensatório deve referenciar o evento original
+    E a decisão deve ser incluída na auditoria
+
+  Cenário: Retificar erro material em andamento
+    Dado que uma minuta protocolada possui um andamento vigente
+    Quando um supervisor autorizado corrigir status, etapa, data ou referência e informar o motivo
+    Então o sistema deve preservar o andamento original
+    E deve acrescentar um evento compensatório vinculado ao original
+    E deve recalcular o status vigente considerando somente a cadeia efetiva
+    E deve impedir nova retificação direta do registro já substituído
