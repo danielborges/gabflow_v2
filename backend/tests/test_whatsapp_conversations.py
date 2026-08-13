@@ -42,6 +42,10 @@ ADMIN_A_PASSWORD = "SenhaForte123!"  # noqa: S105
 ADMIN_B_PASSWORD = "OutraSenha123!"  # noqa: S105
 
 
+def _current_provider_timestamp() -> str:
+    return str(int(datetime.now(UTC).timestamp()))
+
+
 def _login(client, tenant="gabinete-a", email="admin@teste.local", password=None):
     password = password or ADMIN_A_PASSWORD
     return client.post(
@@ -79,7 +83,7 @@ def _payload(content="Preciso de atendimento", message_id="wamid.conversation.1"
                     "messages": [{
                         "id": message_id,
                         "from": "553288880000",
-                        "timestamp": "1786500000",
+                        "timestamp": _current_provider_timestamp(),
                         "type": "text",
                         "text": {"body": content},
                     }],
@@ -111,7 +115,7 @@ def _flow_payload(flow_token, *, message_id="wamid.flow.1", values=None):
                     "messages": [{
                         "id": message_id,
                         "from": "553288880000",
-                        "timestamp": "1786500200",
+                        "timestamp": _current_provider_timestamp(),
                         "type": "interactive",
                         "interactive": {
                             "type": "nfm_reply",
@@ -153,7 +157,7 @@ def _status_payload(message_id, status):
                     "statuses": [{
                         "id": message_id,
                         "status": status,
-                        "timestamp": "1786500300",
+                        "timestamp": _current_provider_timestamp(),
                     }],
                 },
             }],
