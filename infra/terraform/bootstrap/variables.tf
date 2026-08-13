@@ -35,6 +35,17 @@ variable "github_repository" {
   }
 }
 
+variable "github_repository_immutable" {
+  description = "Repositorio autorizado no formato imutavel owner@owner_id/repo@repo_id do GitHub OIDC."
+  type        = string
+  default     = "danielborges@841223/gabflow_v2@1302993051"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+@[0-9]+/[A-Za-z0-9_.-]+@[0-9]+$", var.github_repository_immutable))
+    error_message = "github_repository_immutable deve usar owner@owner_id/repo@repo_id."
+  }
+}
+
 variable "github_apply_branches" {
   description = "Branches autorizadas a assumir a role de apply."
   type        = set(string)

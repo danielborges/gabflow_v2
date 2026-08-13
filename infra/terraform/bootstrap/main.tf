@@ -7,10 +7,19 @@ data "tls_certificate" "github" {
 
 locals {
   name_prefix = "gabflow-${var.environment}"
-  github_apply_subjects = concat(
-    [for branch in var.github_apply_branches : "repo:${var.github_repository}:ref:refs/heads/${branch}"],
-    ["repo:${var.github_repository}:environment:${var.environment}"]
-  )
+  github_repository_subjects = toset([
+    var.github_repository,
+    var.github_repository_immutable,
+  ])
+  github_apply_subjects = flatten([
+    for repository in local.github_repository_subjects : concat(
+      [for branch in var.github_apply_branches : "repo:${repository}:ref:refs/heads/${branch}"],
+      ["repo:${repository}:environment:${var.environment}"]
+    )
+  ])
+  github_plan_subjects = toset([
+    for repository in local.github_repository_subjects : "repo:${repository}:pull_request"
+  ])
 }
 
 resource "aws_kms_key" "terraform_state" {
@@ -142,7 +151,7 @@ data "aws_iam_policy_document" "github_plan_assume" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:pull_request"]
+      values   = local.github_plan_subjects
     }
   }
 }

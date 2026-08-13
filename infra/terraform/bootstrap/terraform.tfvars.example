@@ -1,6 +1,7 @@
 environment       = "staging"
 state_bucket_name = "gabflow-staging-ACCOUNT_ID-tfstate"
 github_repository = "danielborges/gabflow_v2"
+github_repository_immutable = "danielborges@841223/gabflow_v2@1302993051"
 owner             = "gabflow-platform"
 cost_center       = "gabflow"
 

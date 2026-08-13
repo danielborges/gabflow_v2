@@ -110,6 +110,10 @@ redrive restrito a fila de origem e alarmes de profundidade da DLQ e idade da me
 `whatsapp_runtime_configuration` fornece `inbound_queue_backend=aws-sqs` e a URL da fila para as
 tasks ECS, sem credenciais estaticas.
 
+O bootstrap autoriza os subjects OIDC nominal e imutavel do repositorio. O formato imutavel
+`owner@owner_id/repo@repo_id`, adotado pelo GitHub para novos repositorios, deve permanecer
+restrito aos IDs declarados em `github_repository_immutable`; nao use wildcard nessa condicao.
+
 O ambiente `staging` tambem inclui o modulo `runtime`: ECR imutavel, ECS Fargate, ALB, WAF,
 RDS PostgreSQL, EFS, logs, alarmes e uma task de migration one-shot. Por seguranca,
 `enable_services=false` e o padrao. A ativacao acontece somente depois da publicacao das imagens,
