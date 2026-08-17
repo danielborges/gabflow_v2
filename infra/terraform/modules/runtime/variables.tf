@@ -1,5 +1,20 @@
 variable "name_prefix" { type = string }
 variable "environment" { type = string }
+variable "rag_prompt_injection_classifier_provider" {
+  type        = string
+  description = "Provider do classificador de prompt injection usado pelo RAG."
+  default     = "ollama"
+
+  validation {
+    condition     = contains(["local", "ollama", "http"], var.rag_prompt_injection_classifier_provider)
+    error_message = "O provider do classificador deve ser local, ollama ou http."
+  }
+}
+variable "rag_prompt_injection_classifier_model" {
+  type        = string
+  description = "Identificador do modelo ou conjunto de regras do classificador de prompt injection."
+  default     = "qwen2.5:1.5b"
+}
 variable "aws_region" { type = string }
 variable "vpc_id" { type = string }
 variable "public_subnet_ids" { type = list(string) }

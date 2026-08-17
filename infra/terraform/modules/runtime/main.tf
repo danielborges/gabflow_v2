@@ -20,6 +20,8 @@ locals {
     { name = "APP_ENV", value = var.environment },
     { name = "APP_RELEASE", value = var.image_tag },
     { name = "AWS_REGION", value = var.aws_region },
+    { name = "RAG_PROMPT_INJECTION_CLASSIFIER_PROVIDER", value = var.rag_prompt_injection_classifier_provider },
+    { name = "RAG_PROMPT_INJECTION_CLASSIFIER_MODEL", value = var.rag_prompt_injection_classifier_model },
     { name = "DB_ENFORCE_RUNTIME_ROLE", value = "true" },
     { name = "ATTACHMENT_STORAGE_PATH", value = "/app/data/attachments" },
     { name = "RAG_STORAGE_PATH", value = "/app/data/rag" },
