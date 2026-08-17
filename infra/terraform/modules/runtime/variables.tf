@@ -1,5 +1,15 @@
 variable "name_prefix" { type = string }
 variable "environment" { type = string }
+variable "rag_embedding_provider" {
+  type        = string
+  description = "Provider de embeddings usado pela indexacao RAG."
+  default     = "ollama"
+
+  validation {
+    condition     = contains(["local", "ollama"], var.rag_embedding_provider)
+    error_message = "O provider de embeddings deve ser local ou ollama."
+  }
+}
 variable "rag_prompt_injection_classifier_provider" {
   type        = string
   description = "Provider do classificador de prompt injection usado pelo RAG."

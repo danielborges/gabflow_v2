@@ -64,6 +64,7 @@ module "runtime" {
 
   name_prefix                              = local.name_prefix
   environment                              = local.environment
+  rag_embedding_provider                   = "local"
   rag_prompt_injection_classifier_provider = "local"
   rag_prompt_injection_classifier_model    = "gabflow-prompt-injection-rules-v1"
   aws_region                               = var.aws_region
