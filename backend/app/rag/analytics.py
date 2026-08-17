@@ -1,3 +1,5 @@
+import re
+import unicodedata
 import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
@@ -8,6 +10,7 @@ from sqlalchemy import select
 from app.extensions import db
 from app.models import (
     AgendaEvent,
+    Citizen,
     ExternalAgency,
     LegislativeTramitation,
     OversightAction,
@@ -20,6 +23,7 @@ from app.models import (
 )
 
 DATASETS = {
+    "CIDADAOS": (Citizen, Citizen.created_at),
     "SOLICITACOES": (ServiceRequest, ServiceRequest.created_at),
     "ENCAMINHAMENTOS": (RequestForwarding, RequestForwarding.created_at),
     "TRAMITACOES": (LegislativeTramitation, LegislativeTramitation.occurred_at),
@@ -168,6 +172,8 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
             raise ValueError("Data de encerramento está disponível somente para solicitações.")
         timestamp = ServiceRequest.closed_at
     statement = select(model).where(model.tenant_id == tenant_id)
+    if dataset == "CIDADAOS":
+        statement = statement.where(Citizen.anonymized_at.is_(None))
     if period_start:
         statement = statement.where(
             timestamp >= datetime.combine(period_start, time.min, tzinfo=UTC)
@@ -202,6 +208,20 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
         items = [
             item for item in items if getattr(item, "agency_id", None) == agency_id
         ]
+    name = str(payload.get("nome", "")).strip()
+    if name:
+        normalized_name = _normalize_person_name(name)
+        name_pattern = re.compile(rf"(?:^|\s){re.escape(normalized_name)}(?:\s|$)")
+        items = [
+            item
+            for item in items
+            if name_pattern.search(
+                _normalize_person_name(getattr(item, "name", "") or "")
+            )
+            or name_pattern.search(
+                _normalize_person_name(getattr(item, "social_name", "") or "")
+            )
+        ]
 
     agency_names = {
         item.id: item.name
@@ -232,18 +252,21 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
         value = _metric_value(metric, group_items)
         results.append({"grupo": label, "valor": value})
     total = _metric_value(metric, items)
+    applied_filters = {
+        "status": status or None,
+        "tema": theme or None,
+        "territorioId": str(territory_id) if territory_id else None,
+        "orgaoId": str(agency_id) if agency_id else None,
+        **({"campoData": date_field} if date_field != "PADRAO" else {}),
+    }
+    if dataset == "CIDADAOS":
+        applied_filters["nome"] = name or None
     return {
         "metodo": "ESTRUTURADO",
         "dataset": dataset,
         "metrica": metric,
         "agruparPor": group_by,
-        "filtros": {
-            "status": status or None,
-            "tema": theme or None,
-            "territorioId": str(territory_id) if territory_id else None,
-            "orgaoId": str(agency_id) if agency_id else None,
-            **({"campoData": date_field} if date_field != "PADRAO" else {}),
-        },
+        "filtros": applied_filters,
         "periodo": {
             "inicio": period_start.isoformat() if period_start else None,
             "fim": period_end.isoformat() if period_end else None,
@@ -328,3 +351,11 @@ def _as_utc(value: datetime) -> datetime:
 
 def _group_label(value: str, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit]
+
+
+def _normalize_person_name(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(value).casefold())
+    without_accents = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", without_accents).split())

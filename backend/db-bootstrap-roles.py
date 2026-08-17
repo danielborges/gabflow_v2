@@ -73,6 +73,39 @@ def _grant_runtime_access(cursor, role: str, database: str, migrator: str) -> No
             "GRANT USAGE, SELECT ON SEQUENCES TO {}"
         ).format(sql.Identifier(migrator), sql.Identifier(role))
     )
+    cursor.execute(
+        "SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global'"
+    )
+    if cursor.fetchone() is None:
+        return
+    cursor.execute(
+        sql.SQL("GRANT USAGE ON SCHEMA rag_global TO {}").format(
+            sql.Identifier(role)
+        )
+    )
+    cursor.execute(
+        sql.SQL(
+            "GRANT SELECT, INSERT, UPDATE, DELETE "
+            "ON ALL TABLES IN SCHEMA rag_global TO {}"
+        ).format(sql.Identifier(role))
+    )
+    cursor.execute(
+        sql.SQL(
+            "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag_global TO {}"
+        ).format(sql.Identifier(role))
+    )
+    cursor.execute(
+        sql.SQL(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA rag_global "
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+        ).format(sql.Identifier(migrator), sql.Identifier(role))
+    )
+    cursor.execute(
+        sql.SQL(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA rag_global "
+            "GRANT USAGE, SELECT ON SEQUENCES TO {}"
+        ).format(sql.Identifier(migrator), sql.Identifier(role))
+    )
 
 
 def main() -> None:

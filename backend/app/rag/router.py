@@ -70,6 +70,7 @@ _STRUCTURED_FILTER_KEYS = {
     "tema",
     "territorioId",
     "orgaoId",
+    "nome",
 }
 _FILTER_KEYS = _STRUCTURED_FILTER_KEYS | DOCUMENTARY_FILTER_KEYS
 
@@ -212,7 +213,9 @@ def classify_query(
 
 
 def _structured_payload(query: str) -> dict:
-    if re.search(r"\b(tramita|comiss[aã]o|pauta legislativa)\w*", query):
+    if re.search(r"\bcidad(?:ao|aos|oes|a|as)\b", query):
+        dataset = "CIDADAOS"
+    elif re.search(r"\b(tramita|comiss[aã]o|pauta legislativa)\w*", query):
         dataset = "TRAMITACOES"
     elif re.search(r"\b(encaminh|resposta do [oó]rg[aã]o|retorno do [oó]rg[aã]o)\w*", query):
         dataset = "ENCAMINHAMENTOS"
@@ -268,7 +271,23 @@ def _structured_payload(query: str) -> dict:
     status = _status_filter(query, dataset)
     if status:
         payload["status"] = status
+    if dataset == "CIDADAOS":
+        name = _citizen_name_filter(query)
+        if name:
+            payload["nome"] = name
     return payload
+
+
+def _citizen_name_filter(query: str) -> str | None:
+    match = re.search(
+        r"\bcom\s+(?:o\s+)?nome\s+"
+        r"([a-z][a-z' -]{0,79}?)"
+        r"(?=\s+(?:estao|foram|cadastrad\w*|existem|ha)\b|[?.!,]|$)",
+        query,
+    )
+    if match is None:
+        return None
+    return " ".join(part.capitalize() for part in match.group(1).split())
 
 
 _MONTH_NUMBERS = {
@@ -337,6 +356,7 @@ def _status_filter(query: str, dataset: str) -> str | None:
             "ARQUIVADA",
             "RETIRADA",
         ),
+        "CIDADAOS": (),
     }
     comparable = query.replace(" ", "_")
     for status in values[dataset]:

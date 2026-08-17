@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models import RagAssistantQuery, RequestStatus, ServiceRequest
+from app.models import Citizen, RagAssistantQuery, RequestStatus, ServiceRequest, Tenant
 from app.rag.router import QueryMethod, classify_query
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
@@ -71,6 +71,67 @@ def test_router_understands_quantity_closed_requests_in_named_month():
         "fim": "2026-07-31",
         "campoData": "ENCERRAMENTO",
     }
+
+
+def test_router_understands_citizen_count_filtered_by_name():
+    intent = classify_query("Quantos cidadões com o nome Daniel estão cadastrados?")
+
+    assert intent.method == QueryMethod.ESTRUTURADO
+    assert intent.structured_payload == {
+        "dataset": "CIDADAOS",
+        "metrica": "CONTAGEM",
+        "agruparPor": "NENHUM",
+        "nome": "Daniel",
+    }
+
+
+def test_structured_route_counts_only_active_citizens_with_name_in_tenant(app, client):
+    with app.app_context():
+        tenant_a = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        tenant_b = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-b"))
+        db.session.add_all(
+            [
+                Citizen(
+                    tenant_id=tenant_a.id,
+                    name=f"Daniel Teste {index}",
+                    legal_basis="EXECUCAO_POLITICA_PUBLICA",
+                )
+                for index in range(5)
+            ]
+            + [
+                Citizen(
+                    tenant_id=tenant_a.id,
+                    name="Daniel Anonimizado",
+                    legal_basis="EXECUCAO_POLITICA_PUBLICA",
+                    anonymized_at=datetime.now(UTC),
+                ),
+                Citizen(
+                    tenant_id=tenant_a.id,
+                    name="Ana Teste",
+                    social_name="Daniela Teste",
+                    legal_basis="EXECUCAO_POLITICA_PUBLICA",
+                ),
+                Citizen(
+                    tenant_id=tenant_b.id,
+                    name="Daniel Outro Gabinete",
+                    legal_basis="EXECUCAO_POLITICA_PUBLICA",
+                ),
+            ]
+        )
+        db.session.commit()
+
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Quantos cidadões com o nome Daniel estão cadastrados?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["metodo"] == "ESTRUTURADO"
+    assert response.json["resultadoEstruturado"]["dataset"] == "CIDADAOS"
+    assert response.json["resultadoEstruturado"]["total"] == 5
+    assert response.json["filtrosAplicados"]["nome"] == "Daniel"
 
 
 def test_structured_route_counts_requests_closed_in_named_month(app, client):
@@ -181,3 +242,23 @@ def test_automatic_structured_query_remains_tenant_scoped(app, client):
     assert response.json["metodo"] == "ESTRUTURADO"
     assert response.json["resultadoEstruturado"]["total"] == 0
     assert response.json["filtrosAplicados"]["status"] == "NOVA"
+
+
+def test_assistant_accepts_consecutive_structured_and_documentary_queries(client):
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+
+    first = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Quantos cidadãos estão cadastrados?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    second = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Quais documentos orientam o atendimento ao cidadão?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json["metodo"] == "ESTRUTURADO"
+    assert second.json["metodo"] == "DOCUMENTAL"

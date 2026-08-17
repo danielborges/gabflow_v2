@@ -465,7 +465,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .directory-folder-tabs { position: relative; z-index: 1; max-width: calc(100% - 72px); margin: 0 36px; padding-bottom: 0; border-bottom: 0; border-radius: 7px 7px 0 0; }
 .directory-folder-tabs button { height: 38px; border-radius: 5px 5px 0 0; }
 .directory-folder-tabs button.active { position: relative; height: 39px; margin-bottom: -1px; border: 1px solid var(--line); border-bottom-color: white; box-shadow: none; }
-.directory-tab-panel { --directory-workspace-height: clamp(480px, calc(100dvh - 250px), 760px); min-width: 0; margin: 0 36px 36px; padding: 10px; border: 1px solid var(--line); border-radius: 0 8px 8px; background: white; box-shadow: 0 1px 4px #061a4208; }
+.directory-tab-panel { --directory-workspace-height: max(480px, calc(100dvh - 250px)); min-width: 0; margin: 0 36px 36px; padding: 10px; border: 1px solid var(--line); border-radius: 0 8px 8px; background: white; box-shadow: 0 1px 4px #061a4208; }
 .directory-tab-panel .directory-list { padding: 0; }
 .directory-list { padding: 0 36px 36px; }
 .entity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }

@@ -62,12 +62,16 @@ async function readResponsePayload(response) {
     return response.json().catch(() => ({}));
   }
   const text = await response.text?.().catch(() => "");
-  return text ? { message: text } : {};
+  const isHtml = contentType.includes("text/html") || /^\s*<(?:!doctype|html)\b/i.test(text);
+  return text && !isHtml ? { message: text } : {};
 }
 
 function errorMessageFor(response, data, fallback) {
   if (response.status === 413) {
     return "O arquivo enviado excede o limite permitido. Para a base documental RAG, use arquivos de até 25 MB.";
+  }
+  if (response.status === 403 && !data.message && !data.error) {
+    return "A operação foi bloqueada pela camada de segurança. Tente novamente ou contate o suporte.";
   }
   return data.message || data.error || fallback;
 }
