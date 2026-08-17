@@ -376,7 +376,8 @@ it("explora o catálogo geral e usa confirmação manual apenas como contingênc
 
   expect(await screen.findByRole("heading", { name: "Explorar outras eleições" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Minhas participações" })).toBeInTheDocument();
-  expect(screen.getByText("Cadastro oficial ainda não sincronizado")).toBeInTheDocument();
+  expect(screen.getByText("Participação eleitoral confirmada")).toBeInTheDocument();
+  expect(screen.getByText(/confirmação manual porque o cadastro oficial/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Nome ou número da candidatura"), { target: { value: "Mauricio" } });
   fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
 
