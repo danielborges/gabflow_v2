@@ -413,8 +413,13 @@ data "aws_iam_policy_document" "foundation_apply" {
   statement {
     sid = "ManageStagingRuntime"
     actions = [
+      "acm:AddTagsToCertificate",
+      "acm:DeleteCertificate",
       "acm:DescribeCertificate",
       "acm:ListTagsForCertificate",
+      "acm:RemoveTagsFromCertificate",
+      "acm:RequestCertificate",
+      "acm:UpdateCertificateOptions",
       "application-autoscaling:*",
       "cloudwatch:DeleteAlarms",
       "cloudwatch:DeleteDashboards",
