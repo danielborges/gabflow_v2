@@ -6,6 +6,11 @@ markers = [
     "postgres: integration tests that require an isolated PostgreSQL database",
 ]
 
+[tool.coverage.run]
+omit = [
+    "app/staging_stress_seed.py",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
