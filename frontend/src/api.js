@@ -73,5 +73,5 @@ function errorMessageFor(response, data, fallback) {
   if (response.status === 403 && !data.message && !data.error) {
     return "A operação foi bloqueada pela camada de segurança. Tente novamente ou contate o suporte.";
   }
-  return data.message || data.error || fallback;
+  return data.message || data.error || data.erro || fallback;
 }

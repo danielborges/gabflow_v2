@@ -508,8 +508,18 @@ class Config:
     NORMATIVE_LEXML_BASE_URL = os.getenv(
         "NORMATIVE_LEXML_BASE_URL", "https://www.lexml.gov.br/busca/SRU"
     )
+    NORMATIVE_SENADO_BASE_URL = os.getenv(
+        "NORMATIVE_SENADO_BASE_URL",
+        "https://legis.senado.leg.br/dadosabertos/legislacao/lista.json",
+    )
     NORMATIVE_SYNC_TIMEOUT_SECONDS = int(os.getenv("NORMATIVE_SYNC_TIMEOUT_SECONDS", "20"))
     NORMATIVE_SYNC_MAX_RECORDS = int(os.getenv("NORMATIVE_SYNC_MAX_RECORDS", "50"))
+    NORMATIVE_SYNC_FAILURE_RETRY_BASE_MINUTES = int(
+        os.getenv("NORMATIVE_SYNC_FAILURE_RETRY_BASE_MINUTES", "15")
+    )
+    NORMATIVE_SYNC_FAILURE_RETRY_MAX_MINUTES = int(
+        os.getenv("NORMATIVE_SYNC_FAILURE_RETRY_MAX_MINUTES", "360")
+    )
     AUDIO_TRANSCRIPTION_PROVIDER = os.getenv("AUDIO_TRANSCRIPTION_PROVIDER", "faster-whisper")
     AUDIO_TRANSCRIPTION_MODEL = os.getenv("AUDIO_TRANSCRIPTION_MODEL", "base")
     AUDIO_TRANSCRIPTION_DEVICE = os.getenv("AUDIO_TRANSCRIPTION_DEVICE", "cpu")

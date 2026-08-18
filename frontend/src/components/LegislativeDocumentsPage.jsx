@@ -61,8 +61,10 @@ const TRAMITATION_STATUS_LABELS = {
   RETIRADA: "Retirada",
 };
 const NORMATIVE_TYPES = [
+  ["CONSTITUICAO", "Constituição"],
   ["LEI_ORGANICA", "Lei orgânica"],
   ["REGIMENTO_INTERNO", "Regimento interno"],
+  ["LEI_FEDERAL", "Lei federal"],
   ["LEI_MUNICIPAL", "Lei municipal"],
   ["DECRETO", "Decreto"],
   ["PLANO_DIRETOR", "Plano diretor"],
@@ -70,6 +72,24 @@ const NORMATIVE_TYPES = [
   ["CODIGO_POSTURAS", "Código de posturas"],
   ["OUTRO", "Outro"],
 ];
+const CONNECTOR_PRESETS = {
+  SENADO: {
+    provedor: "SENADO",
+    nome: "Senado - legislação federal",
+    consulta: `tipo=LEI&ano=${new Date().getFullYear()}`,
+    jurisdicao: "Federal",
+    frequenciaHoras: 24,
+    ativa: true,
+  },
+  LEXML: {
+    provedor: "LEXML",
+    nome: "LexML - acervo legislativo",
+    consulta: "legislação municipal",
+    jurisdicao: "",
+    frequenciaHoras: 24,
+    ativa: true,
+  },
+};
 
 const SECTION_CONTENT = {
   drafts: ["Minutas legislativas", "Crie, revise e acompanhe documentos legislativos com rastreabilidade."],
@@ -354,7 +374,7 @@ function TemplateManagement({ templates, manager, onTemplatesChange }) {
 
 function NormativeSourceManagement() {
   const emptyForm = { tipo: "LEI_MUNICIPAL", titulo: "", referencia: "", trecho: "", jurisdicao: "", url: "", versao: "1", vigenteDesde: "", vigenteAte: "" };
-  const emptyConnector = { provedor: "LEXML", nome: "LexML - legislação municipal", consulta: "legislação municipal", jurisdicao: "", frequenciaHoras: 24, ativa: true };
+  const emptyConnector = CONNECTOR_PRESETS.SENADO;
   const [items, setItems] = useState([]);
   const [dashboard, setDashboard] = useState({ total: 0, ativas: 0, sincronizadas: 0, vencidas: 0, pendentes: 0, integracoesAtivas: 0 });
   const [candidates, setCandidates] = useState([]);
@@ -434,7 +454,10 @@ function NormativeSourceManagement() {
       const result = await apiRequest(`/api/v1/legislativo/fontes-normativas/integracoes/${id}/sincronizar`, { method: "POST" });
       await loadSources();
       if (result.novosCandidatos) setView("review");
-    } catch (requestError) { setError(requestError.message); } finally { setSaving(false); }
+    } catch (requestError) {
+      await loadSources();
+      setError(requestError.message);
+    } finally { setSaving(false); }
   }
 
   async function decideCandidate(decisao) {
@@ -467,7 +490,27 @@ function NormativeSourceManagement() {
       <aside className="normative-review-list"><header><div><p className="eyebrow">Governança humana</p><h2>Atualizações encontradas</h2></div><span>{candidates.length}</span></header>{candidates.map((item) => <button key={item.id} className={selectedCandidate?.id === item.id ? "active" : ""} onClick={() => { setSelectedCandidateId(item.id); setReviewReason(""); }}><ShieldAlert size={18} /><span><strong>{item.titulo}</strong><small>{item.integracao} · {item.fonteExistenteId ? "nova versão" : "nova fonte"}</small></span></button>)}{!candidates.length && <div className="normative-empty-state"><CheckCircle2 size={34} /><h3>Tudo revisado</h3><p>Não há atualizações externas aguardando decisão.</p></div>}</aside>
       <div className="normative-review-detail">{selectedCandidate ? <><header><div><p className="eyebrow">{selectedCandidate.provedor} · {selectedCandidate.integracao}</p><h2>{selectedCandidate.titulo}</h2><p>{selectedCandidate.referencia} · versão {selectedCandidate.versao}</p></div>{selectedCandidate.url && <a className="secondary-button" href={selectedCandidate.url} target="_blank" rel="noreferrer">Fonte oficial <ExternalLink size={15} /></a>}</header><div className="normative-review-meta"><span><strong>{selectedCandidate.fonteExistenteId ? "Atualização" : "Nova fonte"}</strong><small>tipo de mudança</small></span><span><strong>{selectedCandidate.jurisdicao || "Não informada"}</strong><small>jurisdição</small></span><span><strong>{formatDate(selectedCandidate.descobertaEm)}</strong><small>descoberta</small></span></div><section className="normative-text-preview"><h3>Texto recebido da fonte</h3><p>{selectedCandidate.trecho}</p></section><label className="normative-review-reason">Justificativa da decisão<textarea aria-label="Justificativa da revisão" value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="Registre por que esta versão deve ser publicada ou rejeitada." maxLength={500} /></label><div className="normative-review-actions"><button className="secondary-button danger" disabled={saving || reviewReason.trim().length < 5} onClick={() => decideCandidate("REJEITAR")}><XCircle size={17} /> Rejeitar</button><button className="primary-button" disabled={saving || reviewReason.trim().length < 5} onClick={() => decideCandidate("APROVAR")}><CheckCircle2 size={17} /> Aprovar e publicar</button></div></> : <div className="normative-empty-state"><ShieldAlert size={34} /><h3>Selecione uma atualização</h3></div>}</div>
     </section>}
-    {view === "connectors" && <section className="normative-connectors-layout"><div className="normative-connectors-list"><header><div><p className="eyebrow">Sincronização automática</p><h2>Fontes conectadas</h2></div></header>{connectors.map((item) => <article key={item.id}><div className={`connector-icon ${item.ultimoStatus === "FALHOU" ? "error" : ""}`}><Link2 size={19} /></div><div><strong>{item.nome}</strong><small>{item.provedor} · a cada {item.frequenciaHoras}h</small><p>{item.ultimoStatus === "NUNCA_EXECUTADA" ? "Aguardando primeira sincronização" : item.ultimoStatus === "FALHOU" ? item.ultimoErro : `Última sincronização: ${formatDate(item.ultimaSincronizacaoEm)}`}</p></div><span className={item.ativa ? "template-status active" : "template-status"}>{item.ativa ? "Ativa" : "Pausada"}</span><button className="secondary-button" disabled={saving || !item.ativa} onClick={() => syncConnector(item.id)}><RefreshCw size={15} /> Sincronizar</button></article>)}{!connectors.length && <div className="normative-empty-state"><Link2 size={34} /><h3>Nenhuma fonte conectada</h3><p>Conecte o LexML para receber atualizações sem cadastro repetitivo.</p></div>}</div><form className="normative-connector-form" onSubmit={createConnector}><header><p className="eyebrow">Nova integração</p><h2>Conectar fonte oficial</h2><p>Os resultados entram em revisão e nunca alteram o catálogo automaticamente.</p></header><label>Provedor<select aria-label="Provedor normativo" value={connectorForm.provedor} onChange={(event) => setConnectorForm({ ...connectorForm, provedor: event.target.value })}><option value="LEXML">LexML Brasil</option></select></label><label>Nome da integração<input aria-label="Nome da integração" value={connectorForm.nome} maxLength={160} onChange={(event) => setConnectorForm({ ...connectorForm, nome: event.target.value })} /></label><label>Consulta de sincronização<input aria-label="Consulta de sincronização" value={connectorForm.consulta} maxLength={500} onChange={(event) => setConnectorForm({ ...connectorForm, consulta: event.target.value })} placeholder="Ex.: legislação municipal iluminação" /><small>Use termos e filtros aceitos pela busca SRU do provedor.</small></label><label>Jurisdição<input aria-label="Jurisdição da integração" value={connectorForm.jurisdicao} maxLength={120} onChange={(event) => setConnectorForm({ ...connectorForm, jurisdicao: event.target.value })} placeholder="Ex.: Município de Campinas" /></label><label>Frequência<select aria-label="Frequência de sincronização" value={connectorForm.frequenciaHoras} onChange={(event) => setConnectorForm({ ...connectorForm, frequenciaHoras: Number(event.target.value) })}><option value={6}>A cada 6 horas</option><option value={12}>A cada 12 horas</option><option value={24}>Diariamente</option><option value={48}>A cada 2 dias</option><option value={168}>Semanalmente</option></select></label><button className="primary-button" disabled={saving || connectorForm.nome.trim().length < 3 || connectorForm.consulta.trim().length < 3}><Link2 size={17} /> Conectar LexML</button></form></section>}
+    {view === "connectors" && <section className="normative-connectors-layout">
+      <div className="normative-connectors-list">
+        <header><div><p className="eyebrow">Sincronização automática</p><h2>Fontes conectadas</h2></div></header>
+        {connectors.map((item) => <article key={item.id}>
+          <div className={`connector-icon ${item.ultimoStatus === "FALHOU" ? "error" : ""}`}><Link2 size={19} /></div>
+          <div><strong>{item.nome}</strong><small>{item.provedor} · a cada {item.frequenciaHoras}h</small><p>{item.ultimoStatus === "NUNCA_EXECUTADA" ? "Aguardando primeira sincronização" : item.ultimoStatus === "FALHOU" ? item.ultimoErro : `Última sincronização: ${formatDate(item.ultimaSincronizacaoEm)}`}</p></div>
+          <span className={item.ativa ? "template-status active" : "template-status"}>{item.ativa ? "Ativa" : "Pausada"}</span>
+          <button className="secondary-button" disabled={saving || !item.ativa} onClick={() => syncConnector(item.id)}><RefreshCw size={15} /> Sincronizar</button>
+        </article>)}
+        {!connectors.length && <div className="normative-empty-state"><Link2 size={34} /><h3>Nenhuma fonte conectada</h3><p>Conecte uma fonte oficial para receber atualizações sem cadastro repetitivo.</p></div>}
+      </div>
+      <form className="normative-connector-form" onSubmit={createConnector}>
+        <header><p className="eyebrow">Nova integração</p><h2>Conectar fonte oficial</h2><p>Os resultados entram em revisão e nunca alteram o catálogo automaticamente.</p></header>
+        <label>Provedor<select aria-label="Provedor normativo" value={connectorForm.provedor} onChange={(event) => setConnectorForm({ ...CONNECTOR_PRESETS[event.target.value], frequenciaHoras: connectorForm.frequenciaHoras })}><option value="SENADO">Dados Abertos do Senado</option><option value="LEXML">LexML Brasil (SRU)</option></select></label>
+        <label>Nome da integração<input aria-label="Nome da integração" value={connectorForm.nome} maxLength={160} onChange={(event) => setConnectorForm({ ...connectorForm, nome: event.target.value })} /></label>
+        <label>Consulta de sincronização<input aria-label="Consulta de sincronização" value={connectorForm.consulta} maxLength={500} onChange={(event) => setConnectorForm({ ...connectorForm, consulta: event.target.value })} placeholder={connectorForm.provedor === "SENADO" ? "Ex.: tipo=LEI&ano=2026" : "Ex.: legislação municipal iluminação"} /><small>{connectorForm.provedor === "SENADO" ? "Use filtros oficiais: tipo, número, ano ou data." : "O SRU pode exigir liberação de acesso máquina-a-máquina pelo LexML."}</small></label>
+        <label>Jurisdição<input aria-label="Jurisdição da integração" value={connectorForm.jurisdicao} disabled={connectorForm.provedor === "SENADO"} maxLength={120} onChange={(event) => setConnectorForm({ ...connectorForm, jurisdicao: event.target.value })} placeholder="Ex.: Município de Campinas" /></label>
+        <label>Frequência<select aria-label="Frequência de sincronização" value={connectorForm.frequenciaHoras} onChange={(event) => setConnectorForm({ ...connectorForm, frequenciaHoras: Number(event.target.value) })}><option value={6}>A cada 6 horas</option><option value={12}>A cada 12 horas</option><option value={24}>Diariamente</option><option value={48}>A cada 2 dias</option><option value={168}>Semanalmente</option></select></label>
+        <button className="primary-button" disabled={saving || connectorForm.nome.trim().length < 3 || connectorForm.consulta.trim().length < 3}><Link2 size={17} /> Conectar {connectorForm.provedor === "SENADO" ? "Senado" : "LexML"}</button>
+      </form>
+    </section>}
   </section>;
 }
 

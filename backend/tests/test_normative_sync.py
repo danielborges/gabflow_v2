@@ -1,4 +1,13 @@
-from app.legislative.normative_sync import ExternalNormativeRecord
+from datetime import datetime
+
+import pytest
+
+from app.legislative.normative_sync import (
+    ExternalNormativeRecord,
+    NormativeSyncError,
+    _parse_senado,
+    _senado_query_params,
+)
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
 
@@ -166,3 +175,98 @@ def test_rejected_external_norm_is_tenant_scoped_and_not_published(app, client, 
         "/api/v1/legislativo/fontes-normativas/candidatas?status=PENDENTE"
     ).json["content"] == []
     assert client.get("/api/v1/legislativo/fontes-normativas").json["content"] == []
+
+
+def test_senado_filters_and_payload_are_converted_to_normative_records():
+    assert _senado_query_params("tipo=LEI&ano=2026") == {
+        "tipo": "LEI",
+        "ano": "2026",
+    }
+    with pytest.raises(ValueError, match="filtros não aceitos"):
+        _senado_query_params("consulta=saúde")
+    with pytest.raises(ValueError, match="devem ser numéricos"):
+        _senado_query_params("tipo=LEI&ano=dois-mil")
+
+    records = _parse_senado(
+        {
+            "ListaDocumento": {
+                "documentos": {
+                    "documento": {
+                        "id": "41912067",
+                        "tipo": "LEI-n",
+                        "descricao": "Lei Numerada",
+                        "norma": "LEI-15321-2025-12-31",
+                        "normaNome": "Lei nº 15.321 de 31/12/2025",
+                        "ementa": (
+                            "Dispõe sobre as diretrizes para elaboração e execução "
+                            "da lei orçamentária federal."
+                        ),
+                        "dataassinatura": "31/12/2025",
+                    }
+                }
+            }
+        },
+        limit=50,
+    )
+
+    assert len(records) == 1
+    assert records[0].external_id == "senado:41912067"
+    assert records[0].source_type == "LEI_FEDERAL"
+    assert records[0].jurisdiction == "Federal"
+    assert records[0].version == "2025-12-31"
+    assert records[0].source_url == "https://legis.senado.leg.br/norma/41912067"
+
+
+def test_sync_failure_exposes_reason_and_schedules_exponential_retry(
+    app, client, monkeypatch
+):
+    csrf = _login(client)
+    connector = _post(
+        client,
+        "/api/v1/legislativo/fontes-normativas/integracoes",
+        csrf,
+        {
+            "provedor": "LEXML",
+            "nome": "LexML com desafio web",
+            "consulta": "legislação municipal",
+            "frequenciaHoras": 24,
+        },
+    )
+    message = (
+        "O LexML apresentou uma verificação de segurança incompatível com "
+        "integração automática."
+    )
+
+    def fail(_connector):
+        raise NormativeSyncError(message)
+
+    monkeypatch.setattr("app.legislative.normative_sync._fetch_records", fail)
+    first = _post(
+        client,
+        f"/api/v1/legislativo/fontes-normativas/integracoes/{connector.json['id']}/sincronizar",
+        csrf,
+    )
+    assert first.status_code == 502
+    assert first.json["erro"] == first.json["message"] == message
+
+    listed = client.get(
+        "/api/v1/legislativo/fontes-normativas/integracoes"
+    ).json["content"][0]
+    first_delay = datetime.fromisoformat(listed["proximaSincronizacaoEm"]) - datetime.fromisoformat(
+        listed["ultimaSincronizacaoEm"]
+    )
+    assert 14 * 60 <= first_delay.total_seconds() <= 16 * 60
+
+    second = _post(
+        client,
+        f"/api/v1/legislativo/fontes-normativas/integracoes/{connector.json['id']}/sincronizar",
+        csrf,
+    )
+    assert second.status_code == 502
+    listed = client.get(
+        "/api/v1/legislativo/fontes-normativas/integracoes"
+    ).json["content"][0]
+    second_retry_at = datetime.fromisoformat(listed["proximaSincronizacaoEm"])
+    second_started_at = datetime.fromisoformat(listed["ultimaSincronizacaoEm"])
+    second_delay = second_retry_at - second_started_at
+    assert 29 * 60 <= second_delay.total_seconds() <= 31 * 60
