@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api";
 
-const RAG_QUERY_TIMEOUT_MS = 60000;
+const RAG_QUERY_TIMEOUT_MS = 150000;
 
 export function useRagAssistantQuery() {
   const [question, setQuestion] = useState("");

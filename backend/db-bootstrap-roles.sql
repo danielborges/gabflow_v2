@@ -133,4 +133,37 @@ SELECT format(
 )
 \gexec
 
+SELECT format(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA rag_global '
+    'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
+    :'migrator_role',
+    :'app_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA rag_global '
+    'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
+    :'migrator_role',
+    :'worker_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA rag_global '
+    'GRANT USAGE, SELECT ON SEQUENCES TO %I',
+    :'migrator_role',
+    :'app_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+SELECT format(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA rag_global '
+    'GRANT USAGE, SELECT ON SEQUENCES TO %I',
+    :'migrator_role',
+    :'worker_role'
+)
+WHERE EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'rag_global')
+\gexec
+
 GRANT pg_read_all_data TO :"backup_role";

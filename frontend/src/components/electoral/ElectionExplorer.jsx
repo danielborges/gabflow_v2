@@ -3,6 +3,10 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../../api";
 
 const identityMessages = {
+  manual_confirmed: {
+    title: "Participação eleitoral confirmada",
+    text: "A candidatura foi vinculada pela confirmação manual porque o cadastro oficial não permitiu validar o CPF automaticamente.",
+  },
   verified: {
     title: "Identidade eleitoral verificada",
     text: "As participações encontradas pelo CPF cadastrado foram vinculadas automaticamente.",
@@ -42,7 +46,12 @@ export function ElectionExplorer({ identity, onIdentityChanged, onError }) {
   }, [onError]);
 
   const confirmedIds = new Set((identity?.candidacies || []).map((item) => item.candidacy_id));
-  const identityMessage = identityMessages[identity?.identityStatus] || identityMessages.official_data_unavailable;
+  const hasConfirmedCandidacies = confirmedIds.size > 0;
+  const displayIdentityStatus = identity?.identityStatus === "verified"
+    ? "verified"
+    : hasConfirmedCandidacies ? "manual_confirmed" : identity?.identityStatus;
+  const identityMessage = identityMessages[displayIdentityStatus] || identityMessages.official_data_unavailable;
+  const identityConfirmed = displayIdentityStatus === "verified" || displayIdentityStatus === "manual_confirmed";
 
   function changeElection(nextElectionId) {
     setElectionId(nextElectionId);
@@ -138,8 +147,8 @@ export function ElectionExplorer({ identity, onIdentityChanged, onError }) {
       </div>
     </header>
 
-    <section className={`electoral-identity-status ${identity?.identityStatus === "verified" ? "verified" : "pending"}`} aria-live="polite">
-      {identity?.identityStatus === "verified" ? <ShieldCheck size={21} aria-hidden="true" /> : <TriangleAlert size={21} aria-hidden="true" />}
+    <section className={`electoral-identity-status ${identityConfirmed ? "verified" : "pending"}`} aria-live="polite">
+      {identityConfirmed ? <ShieldCheck size={21} aria-hidden="true" /> : <TriangleAlert size={21} aria-hidden="true" />}
       <span><strong>{identityMessage.title}</strong><small>{identityMessage.text}</small></span>
       {identity?.canManage && identity?.identityStatus !== "verified" && <button type="button" className="secondary-button" onClick={reconcile} disabled={reconciling}>
         <RefreshCw size={16} aria-hidden="true" /> {reconciling ? "Verificando..." : "Verificar novamente"}

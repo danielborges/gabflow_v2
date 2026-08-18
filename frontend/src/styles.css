@@ -465,7 +465,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .directory-folder-tabs { position: relative; z-index: 1; max-width: calc(100% - 72px); margin: 0 36px; padding-bottom: 0; border-bottom: 0; border-radius: 7px 7px 0 0; }
 .directory-folder-tabs button { height: 38px; border-radius: 5px 5px 0 0; }
 .directory-folder-tabs button.active { position: relative; height: 39px; margin-bottom: -1px; border: 1px solid var(--line); border-bottom-color: white; box-shadow: none; }
-.directory-tab-panel { --directory-workspace-height: clamp(480px, calc(100dvh - 250px), 760px); min-width: 0; margin: 0 36px 36px; padding: 10px; border: 1px solid var(--line); border-radius: 0 8px 8px; background: white; box-shadow: 0 1px 4px #061a4208; }
+.directory-tab-panel { --directory-workspace-height: max(480px, calc(100dvh - 250px)); min-width: 0; margin: 0 36px 36px; padding: 10px; border: 1px solid var(--line); border-radius: 0 8px 8px; background: white; box-shadow: 0 1px 4px #061a4208; }
 .directory-tab-panel .directory-list { padding: 0; }
 .directory-list { padding: 0 36px 36px; }
 .entity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
@@ -2113,6 +2113,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .legislative-table .status-badge { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .legislative-table .draft-status-dot { margin-top: 0; }
 .legislative-table th:last-child, .legislative-table td:last-child { width: 56px; padding-right: 10px; padding-left: 10px; text-align: center; }
+.legislative-table .legislative-table-message { height: 240px; display: table-cell; text-align: center; vertical-align: middle; }
 .legislative-detail-section { margin: 0 36px 36px; border: 1px solid var(--line); border-radius: 7px; background: white; }
 .legislative-search { height: 58px; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
 .legislative-search input { flex: 1; min-width: 0; height: 38px; border: 0; outline: 0; background: transparent; }
