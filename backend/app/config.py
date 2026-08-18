@@ -493,6 +493,7 @@ class Config:
     )
     AI_DUPLICATE_PROVIDER = os.getenv("AI_DUPLICATE_PROVIDER", "ollama")
     AI_EMBEDDING_MODEL = os.getenv("AI_EMBEDDING_MODEL", "nomic-embed-text")
+    AI_EMBEDDING_BATCH_SIZE = max(int(os.getenv("AI_EMBEDDING_BATCH_SIZE", "1")), 1)
     AI_DUPLICATE_WINDOW_DAYS = int(os.getenv("AI_DUPLICATE_WINDOW_DAYS", "180"))
     AI_DUPLICATE_SCORE_THRESHOLD = float(os.getenv("AI_DUPLICATE_SCORE_THRESHOLD", "0.72"))
     AI_DUPLICATE_MAX_SUGGESTIONS = int(os.getenv("AI_DUPLICATE_MAX_SUGGESTIONS", "5"))

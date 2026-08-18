@@ -125,6 +125,7 @@ def _precedent_provider():
         current_app.config["OLLAMA_BASE_URL"],
         current_app.config["AI_EMBEDDING_MODEL"],
         current_app.config["AI_LEGISLATIVE_TIMEOUT_SECONDS"],
+        current_app.config["AI_EMBEDDING_BATCH_SIZE"],
     )
 
 

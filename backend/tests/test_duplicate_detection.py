@@ -7,18 +7,29 @@ PASSWORD = "SenhaForte123!"  # noqa: S105
 
 
 def test_ollama_embedding_provider_calculates_cosine_similarity(monkeypatch):
-    provider = OllamaEmbeddingProvider("http://ollama:11434", "nomic-embed-text", 10)
-    monkeypatch.setattr(
-        provider,
-        "_request",
-        lambda _payload: {"embeddings": [[1, 0], [1, 0], [0, 1]]},
+    provider = OllamaEmbeddingProvider(
+        "http://ollama:11434", "nomic-embed-text", 10, batch_size=2
     )
+    payloads = []
+
+    def request(payload):
+        payloads.append(payload)
+        vectors = {"origem": [1, 0], "igual": [1, 0], "diferente": [0, 1]}
+        return {"embeddings": [vectors[text] for text in payload["input"]]}
+
+    monkeypatch.setattr(provider, "_request", request)
 
     assert provider.similarities("origem", ["igual", "diferente"]) == [1, 0]
+    assert [payload["input"] for payload in payloads] == [
+        ["origem", "igual"],
+        ["diferente"],
+    ]
 
 
 def test_ollama_embedding_provider_rejects_incomplete_vectors(monkeypatch):
-    provider = OllamaEmbeddingProvider("http://ollama:11434", "nomic-embed-text", 10)
+    provider = OllamaEmbeddingProvider(
+        "http://ollama:11434", "nomic-embed-text", 10, batch_size=2
+    )
     monkeypatch.setattr(provider, "_request", lambda _payload: {"embeddings": [[1, 0]]})
 
     with pytest.raises(EmbeddingProviderError, match="incompletos"):
