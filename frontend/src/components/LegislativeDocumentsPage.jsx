@@ -354,23 +354,42 @@ function TemplateManagement({ templates, manager, onTemplatesChange }) {
 
 function NormativeSourceManagement() {
   const emptyForm = { tipo: "LEI_MUNICIPAL", titulo: "", referencia: "", trecho: "", jurisdicao: "", url: "", versao: "1", vigenteDesde: "", vigenteAte: "" };
+  const emptyConnector = { provedor: "LEXML", nome: "LexML - legislação municipal", consulta: "legislação municipal", jurisdicao: "", frequenciaHoras: 24, ativa: true };
   const [items, setItems] = useState([]);
+  const [dashboard, setDashboard] = useState({ total: 0, ativas: 0, sincronizadas: 0, vencidas: 0, pendentes: 0, integracoesAtivas: 0 });
+  const [candidates, setCandidates] = useState([]);
+  const [connectors, setConnectors] = useState([]);
+  const [view, setView] = useState("catalog");
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
   const [form, setForm] = useState(emptyForm);
+  const [connectorForm, setConnectorForm] = useState(emptyConnector);
+  const [reviewReason, setReviewReason] = useState("");
+  const [selectedCandidateId, setSelectedCandidateId] = useState("");
   const [creating, setCreating] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const selected = items.find((item) => item.id === selectedId);
+  const selectedCandidate = candidates.find((item) => item.id === selectedCandidateId) || candidates[0];
   const visible = items.filter((item) => `${item.titulo} ${item.referencia} ${item.jurisdicao || ""}`.toLowerCase().includes(query.toLowerCase()));
 
   const loadSources = useCallback(async () => {
     try {
-      const result = await apiRequest("/api/v1/legislativo/fontes-normativas?incluirInativas=true");
-      setItems(result.content);
-      if (!selectedId && result.content.length) setSelectedId(result.content[0].id);
+      const [sourceResult, dashboardResult, candidateResult, connectorResult] = await Promise.all([
+        apiRequest("/api/v1/legislativo/fontes-normativas?incluirInativas=true"),
+        apiRequest("/api/v1/legislativo/fontes-normativas/painel"),
+        apiRequest("/api/v1/legislativo/fontes-normativas/candidatas?status=PENDENTE"),
+        apiRequest("/api/v1/legislativo/fontes-normativas/integracoes"),
+      ]);
+      const loadedSources = sourceResult.content || [];
+      setItems(loadedSources);
+      setDashboard((current) => typeof dashboardResult.total === "number" ? dashboardResult : current);
+      setCandidates(candidateResult.content || []);
+      setConnectors(connectorResult.content || []);
+      setSelectedId((current) => current || loadedSources[0]?.id || "");
+      setSelectedCandidateId((current) => current || candidateResult.content?.[0]?.id || "");
     } catch (requestError) { setError(requestError.message); }
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => { loadSources(); }, [loadSources]);
   useEffect(() => {
@@ -388,6 +407,7 @@ function NormativeSourceManagement() {
     try {
       const updated = await apiRequest(creating ? "/api/v1/legislativo/fontes-normativas" : `/api/v1/legislativo/fontes-normativas/${selectedId}`, { method: creating ? "POST" : "PUT", body: JSON.stringify(form) });
       merge(updated); setCreating(false); setSelectedId(updated.id);
+      setDashboard((current) => ({ ...current, total: creating ? current.total + 1 : current.total, ativas: creating ? current.ativas + 1 : current.ativas }));
     } catch (requestError) { setError(requestError.message); } finally { setSaving(false); }
   }
 
@@ -399,9 +419,55 @@ function NormativeSourceManagement() {
     } catch (requestError) { setError(requestError.message); } finally { setSaving(false); }
   }
 
-  return <section className="normative-management">
-    <aside className="normative-list-pane"><div className="normative-toolbar"><div className="legislative-search"><Search size={17} /><input aria-label="Pesquisar fontes normativas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Título, referência ou jurisdição" /></div><button className="primary-button" onClick={startNew}><Plus size={17} /> Nova fonte</button></div><div className="normative-items">{visible.map((item) => <button key={item.id} className={!creating && selectedId === item.id ? "normative-item active" : "normative-item"} onClick={() => choose(item.id)}><BookMarked size={18} /><span><strong>{item.titulo}</strong><small>{item.referencia} · versão {item.versao}</small></span><span className={item.ativo ? "template-status active" : "template-status"}>{item.ativo ? "Ativa" : "Inativa"}</span></button>)}{!visible.length && <div className="template-empty-list"><BookMarked size={24} /><p>Nenhuma fonte cadastrada.</p></div>}</div></aside>
-    <div className="normative-editor-pane"><form className="normative-editor" onSubmit={save}><header><div><p className="eyebrow">Catálogo versionado</p><h2>{creating ? "Cadastrar fonte normativa" : selected?.titulo}</h2></div>{selected && !creating && <button type="button" className={selected.ativo ? "secondary-button danger" : "secondary-button"} onClick={toggleStatus}>{selected.ativo ? <EyeOff size={17} /> : <Eye size={17} />}{selected.ativo ? "Desativar" : "Reativar"}</button>}</header><div className="normative-form-grid"><label>Tipo<select aria-label="Tipo da fonte" value={form.tipo} onChange={(event) => setForm({ ...form, tipo: event.target.value })}>{NORMATIVE_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Versão<input aria-label="Versão da fonte" value={form.versao} maxLength={80} onChange={(event) => setForm({ ...form, versao: event.target.value })} /></label><label className="full-width">Título<input aria-label="Título da fonte" value={form.titulo} maxLength={240} onChange={(event) => setForm({ ...form, titulo: event.target.value })} /></label><label>Referência<input aria-label="Referência normativa" value={form.referencia} maxLength={240} onChange={(event) => setForm({ ...form, referencia: event.target.value })} placeholder="Ex.: art. 30, inciso V" /></label><label>Jurisdição<input aria-label="Jurisdição" value={form.jurisdicao} maxLength={120} onChange={(event) => setForm({ ...form, jurisdicao: event.target.value })} /></label><label>Vigente desde<input type="date" value={form.vigenteDesde} onChange={(event) => setForm({ ...form, vigenteDesde: event.target.value })} /></label><label>Vigente até<input type="date" value={form.vigenteAte} onChange={(event) => setForm({ ...form, vigenteAte: event.target.value })} /></label><label className="full-width">URL oficial<input aria-label="URL oficial" type="url" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="https://..." /></label><label className="full-width">Trecho normativo<textarea aria-label="Trecho normativo" rows={10} maxLength={20000} value={form.trecho} onChange={(event) => setForm({ ...form, trecho: event.target.value })} /><small>{form.trecho.length.toLocaleString("pt-BR")} de 20.000 caracteres</small></label></div>{error && <p className="form-error">{error}</p>}<div className="normative-editor-actions">{creating && items.length > 0 && <button type="button" className="secondary-button" onClick={() => choose(items[0].id)}>Cancelar</button>}<button className="primary-button" disabled={saving || !form.titulo.trim() || !form.referencia.trim() || form.trecho.trim().length < 20}><Save size={17} /> {saving ? "Salvando..." : creating ? "Cadastrar fonte" : "Salvar alterações"}</button></div></form></div>
+  async function createConnector(event) {
+    event.preventDefault(); setSaving(true); setError("");
+    try {
+      const created = await apiRequest("/api/v1/legislativo/fontes-normativas/integracoes", { method: "POST", body: JSON.stringify(connectorForm) });
+      setConnectors((current) => [created, ...current]); setConnectorForm(emptyConnector);
+      setDashboard((current) => ({ ...current, integracoesAtivas: current.integracoesAtivas + 1 }));
+    } catch (requestError) { setError(requestError.message); } finally { setSaving(false); }
+  }
+
+  async function syncConnector(id) {
+    setSaving(true); setError("");
+    try {
+      const result = await apiRequest(`/api/v1/legislativo/fontes-normativas/integracoes/${id}/sincronizar`, { method: "POST" });
+      await loadSources();
+      if (result.novosCandidatos) setView("review");
+    } catch (requestError) { setError(requestError.message); } finally { setSaving(false); }
+  }
+
+  async function decideCandidate(decisao) {
+    if (!selectedCandidate) return;
+    setSaving(true); setError("");
+    try {
+      await apiRequest(`/api/v1/legislativo/fontes-normativas/candidatas/${selectedCandidate.id}/decisao`, { method: "POST", body: JSON.stringify({ decisao, motivo: reviewReason }) });
+      setReviewReason(""); await loadSources();
+    } catch (requestError) { setError(requestError.message); } finally { setSaving(false); }
+  }
+
+  return <section className="normative-hub">
+    <div className="normative-overview" aria-label="Visão geral da base normativa">
+      <article><BookMarked size={18} /><span><strong>{dashboard.ativas}</strong><small>fontes ativas</small></span></article>
+      <article><RefreshCw size={18} /><span><strong>{dashboard.sincronizadas}</strong><small>sincronizadas</small></span></article>
+      <article className={dashboard.pendentes ? "attention" : ""}><ShieldAlert size={18} /><span><strong>{dashboard.pendentes}</strong><small>aguardando revisão</small></span></article>
+      <article><Link2 size={18} /><span><strong>{dashboard.integracoesAtivas}</strong><small>integrações ativas</small></span></article>
+    </div>
+    <nav className="normative-tabs" aria-label="Áreas da base normativa">
+      <button className={view === "catalog" ? "active" : ""} onClick={() => setView("catalog")}><Library size={17} /> Catálogo</button>
+      <button className={view === "review" ? "active" : ""} onClick={() => setView("review")}><ShieldAlert size={17} /> Revisão {candidates.length > 0 && <span>{candidates.length}</span>}</button>
+      <button className={view === "connectors" ? "active" : ""} onClick={() => setView("connectors")}><RefreshCw size={17} /> Integrações</button>
+    </nav>
+    {error && <p className="form-error normative-global-error">{error}</p>}
+    {view === "catalog" && <section className="normative-management">
+      <aside className="normative-list-pane"><div className="normative-toolbar"><div className="legislative-search"><Search size={17} /><input aria-label="Pesquisar fontes normativas" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Título, referência ou jurisdição" /></div><button className="primary-button" onClick={startNew}><Plus size={17} /> Nova fonte</button></div><div className="normative-items">{visible.map((item) => <button key={item.id} className={!creating && selectedId === item.id ? "normative-item active" : "normative-item"} onClick={() => choose(item.id)}><BookMarked size={18} /><span><strong>{item.titulo}</strong><small>{item.referencia} · versão {item.versao}{item.provedor ? ` · ${item.provedor}` : ""}</small></span><span className={item.ativo ? "template-status active" : "template-status"}>{item.ativo ? "Ativa" : "Inativa"}</span></button>)}{!visible.length && <div className="template-empty-list"><BookMarked size={24} /><p>Nenhuma fonte cadastrada.</p></div>}</div></aside>
+      <div className="normative-editor-pane"><form className="normative-editor" onSubmit={save}><header><div><p className="eyebrow">{selected?.origem === "SINCRONIZADA" ? `Fonte verificada · ${selected.provedor}` : "Catálogo versionado"}</p><h2>{creating ? "Cadastrar fonte normativa" : selected?.titulo}</h2></div>{selected && !creating && <button type="button" className={selected.ativo ? "secondary-button danger" : "secondary-button"} onClick={toggleStatus}>{selected.ativo ? <EyeOff size={17} /> : <Eye size={17} />}{selected.ativo ? "Desativar" : "Reativar"}</button>}</header>{selected?.origem === "SINCRONIZADA" && <div className="normative-provenance"><CheckCircle2 size={18} /><span><strong>Origem oficial preservada</strong><small>Importada em {formatDate(selected.importadaEm)} e aprovada por um gestor.</small></span>{selected.urlOficial && <a href={selected.urlOficial} target="_blank" rel="noreferrer">Ver original <ExternalLink size={14} /></a>}</div>}<div className="normative-form-grid"><label>Tipo<select aria-label="Tipo da fonte" value={form.tipo} onChange={(event) => setForm({ ...form, tipo: event.target.value })}>{NORMATIVE_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Versão<input aria-label="Versão da fonte" value={form.versao} maxLength={80} onChange={(event) => setForm({ ...form, versao: event.target.value })} /></label><label className="full-width">Título<input aria-label="Título da fonte" value={form.titulo} maxLength={240} onChange={(event) => setForm({ ...form, titulo: event.target.value })} /></label><label>Referência<input aria-label="Referência normativa" value={form.referencia} maxLength={240} onChange={(event) => setForm({ ...form, referencia: event.target.value })} placeholder="Ex.: art. 30, inciso V" /></label><label>Jurisdição<input aria-label="Jurisdição" value={form.jurisdicao} maxLength={120} onChange={(event) => setForm({ ...form, jurisdicao: event.target.value })} /></label><label>Vigente desde<input type="date" value={form.vigenteDesde} onChange={(event) => setForm({ ...form, vigenteDesde: event.target.value })} /></label><label>Vigente até<input type="date" value={form.vigenteAte} onChange={(event) => setForm({ ...form, vigenteAte: event.target.value })} /></label><label className="full-width">URL oficial<input aria-label="URL oficial" type="url" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="https://..." /></label><label className="full-width">Trecho normativo<textarea aria-label="Trecho normativo" rows={10} maxLength={20000} value={form.trecho} onChange={(event) => setForm({ ...form, trecho: event.target.value })} /><small>{form.trecho.length.toLocaleString("pt-BR")} de 20.000 caracteres</small></label></div><div className="normative-editor-actions">{creating && items.length > 0 && <button type="button" className="secondary-button" onClick={() => choose(items[0].id)}>Cancelar</button>}<button className="primary-button" disabled={saving || !form.titulo.trim() || !form.referencia.trim() || form.trecho.trim().length < 20}><Save size={17} /> {saving ? "Salvando..." : creating ? "Cadastrar fonte" : "Salvar alterações"}</button></div></form></div>
+    </section>}
+    {view === "review" && <section className="normative-review-layout">
+      <aside className="normative-review-list"><header><div><p className="eyebrow">Governança humana</p><h2>Atualizações encontradas</h2></div><span>{candidates.length}</span></header>{candidates.map((item) => <button key={item.id} className={selectedCandidate?.id === item.id ? "active" : ""} onClick={() => { setSelectedCandidateId(item.id); setReviewReason(""); }}><ShieldAlert size={18} /><span><strong>{item.titulo}</strong><small>{item.integracao} · {item.fonteExistenteId ? "nova versão" : "nova fonte"}</small></span></button>)}{!candidates.length && <div className="normative-empty-state"><CheckCircle2 size={34} /><h3>Tudo revisado</h3><p>Não há atualizações externas aguardando decisão.</p></div>}</aside>
+      <div className="normative-review-detail">{selectedCandidate ? <><header><div><p className="eyebrow">{selectedCandidate.provedor} · {selectedCandidate.integracao}</p><h2>{selectedCandidate.titulo}</h2><p>{selectedCandidate.referencia} · versão {selectedCandidate.versao}</p></div>{selectedCandidate.url && <a className="secondary-button" href={selectedCandidate.url} target="_blank" rel="noreferrer">Fonte oficial <ExternalLink size={15} /></a>}</header><div className="normative-review-meta"><span><strong>{selectedCandidate.fonteExistenteId ? "Atualização" : "Nova fonte"}</strong><small>tipo de mudança</small></span><span><strong>{selectedCandidate.jurisdicao || "Não informada"}</strong><small>jurisdição</small></span><span><strong>{formatDate(selectedCandidate.descobertaEm)}</strong><small>descoberta</small></span></div><section className="normative-text-preview"><h3>Texto recebido da fonte</h3><p>{selectedCandidate.trecho}</p></section><label className="normative-review-reason">Justificativa da decisão<textarea aria-label="Justificativa da revisão" value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="Registre por que esta versão deve ser publicada ou rejeitada." maxLength={500} /></label><div className="normative-review-actions"><button className="secondary-button danger" disabled={saving || reviewReason.trim().length < 5} onClick={() => decideCandidate("REJEITAR")}><XCircle size={17} /> Rejeitar</button><button className="primary-button" disabled={saving || reviewReason.trim().length < 5} onClick={() => decideCandidate("APROVAR")}><CheckCircle2 size={17} /> Aprovar e publicar</button></div></> : <div className="normative-empty-state"><ShieldAlert size={34} /><h3>Selecione uma atualização</h3></div>}</div>
+    </section>}
+    {view === "connectors" && <section className="normative-connectors-layout"><div className="normative-connectors-list"><header><div><p className="eyebrow">Sincronização automática</p><h2>Fontes conectadas</h2></div></header>{connectors.map((item) => <article key={item.id}><div className={`connector-icon ${item.ultimoStatus === "FALHOU" ? "error" : ""}`}><Link2 size={19} /></div><div><strong>{item.nome}</strong><small>{item.provedor} · a cada {item.frequenciaHoras}h</small><p>{item.ultimoStatus === "NUNCA_EXECUTADA" ? "Aguardando primeira sincronização" : item.ultimoStatus === "FALHOU" ? item.ultimoErro : `Última sincronização: ${formatDate(item.ultimaSincronizacaoEm)}`}</p></div><span className={item.ativa ? "template-status active" : "template-status"}>{item.ativa ? "Ativa" : "Pausada"}</span><button className="secondary-button" disabled={saving || !item.ativa} onClick={() => syncConnector(item.id)}><RefreshCw size={15} /> Sincronizar</button></article>)}{!connectors.length && <div className="normative-empty-state"><Link2 size={34} /><h3>Nenhuma fonte conectada</h3><p>Conecte o LexML para receber atualizações sem cadastro repetitivo.</p></div>}</div><form className="normative-connector-form" onSubmit={createConnector}><header><p className="eyebrow">Nova integração</p><h2>Conectar fonte oficial</h2><p>Os resultados entram em revisão e nunca alteram o catálogo automaticamente.</p></header><label>Provedor<select aria-label="Provedor normativo" value={connectorForm.provedor} onChange={(event) => setConnectorForm({ ...connectorForm, provedor: event.target.value })}><option value="LEXML">LexML Brasil</option></select></label><label>Nome da integração<input aria-label="Nome da integração" value={connectorForm.nome} maxLength={160} onChange={(event) => setConnectorForm({ ...connectorForm, nome: event.target.value })} /></label><label>Consulta de sincronização<input aria-label="Consulta de sincronização" value={connectorForm.consulta} maxLength={500} onChange={(event) => setConnectorForm({ ...connectorForm, consulta: event.target.value })} placeholder="Ex.: legislação municipal iluminação" /><small>Use termos e filtros aceitos pela busca SRU do provedor.</small></label><label>Jurisdição<input aria-label="Jurisdição da integração" value={connectorForm.jurisdicao} maxLength={120} onChange={(event) => setConnectorForm({ ...connectorForm, jurisdicao: event.target.value })} placeholder="Ex.: Município de Campinas" /></label><label>Frequência<select aria-label="Frequência de sincronização" value={connectorForm.frequenciaHoras} onChange={(event) => setConnectorForm({ ...connectorForm, frequenciaHoras: Number(event.target.value) })}><option value={6}>A cada 6 horas</option><option value={12}>A cada 12 horas</option><option value={24}>Diariamente</option><option value={48}>A cada 2 dias</option><option value={168}>Semanalmente</option></select></label><button className="primary-button" disabled={saving || connectorForm.nome.trim().length < 3 || connectorForm.consulta.trim().length < 3}><Link2 size={17} /> Conectar LexML</button></form></section>}
   </section>;
 }
 
@@ -819,4 +885,5 @@ function StatusDot({ status }) {
 }
 function typeLabel(value) { return TYPES.find(([type]) => type === value)?.[1] || value; }
 function formatDateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : ""; }
+function formatDate(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(new Date(value)) : "Não realizada"; }
 function toDateTimeLocal(value) { if (!value) return ""; const date = new Date(value); const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return local.toISOString().slice(0, 16); }

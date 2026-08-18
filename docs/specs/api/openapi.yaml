@@ -2040,6 +2040,113 @@ paths:
         "403": { description: Perfil sem permissão de gestão }
         "404": { description: Fonte inexistente no tenant }
         "422": { description: Status inválido }
+  /legislativo/fontes-normativas/painel:
+    get:
+      summary: Resume saúde, proveniência e pendências da base normativa híbrida
+      responses:
+        "200":
+          description: Indicadores tenant-safe do catálogo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PainelBaseNormativa" }
+        "403": { description: Perfil sem permissão de gestão }
+  /legislativo/fontes-normativas/integracoes:
+    get:
+      summary: Lista integrações normativas oficiais do tenant
+      responses:
+        "200":
+          description: Integrações e seu estado operacional
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/IntegracaoNormativa" }
+    post:
+      summary: Configura uma integração normativa oficial
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntegracaoNormativaEntrada" }
+      responses:
+        "201":
+          description: Integração criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntegracaoNormativa" }
+        "409": { description: Nome já utilizado no tenant }
+        "422": { description: Configuração inválida }
+  /legislativo/fontes-normativas/integracoes/{id}:
+    patch:
+      summary: Atualiza ou pausa uma integração normativa
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntegracaoNormativaEntrada" }
+      responses:
+        "200":
+          description: Integração atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntegracaoNormativa" }
+        "404": { description: Integração inexistente no tenant }
+        "422": { description: Configuração inválida }
+  /legislativo/fontes-normativas/integracoes/{id}/sincronizar:
+    post:
+      summary: Executa sincronização oficial sob demanda
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Sincronização concluída
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecucaoSincronizacaoNormativa" }
+        "404": { description: Integração inexistente no tenant }
+        "502": { description: Fonte oficial indisponível ou resposta inválida }
+  /legislativo/fontes-normativas/candidatas:
+    get:
+      summary: Lista atualizações externas para revisão humana
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [PENDENTE, APROVADA, REJEITADA], default: PENDENTE }
+      responses:
+        "200":
+          description: Candidatas tenant-safe
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: "#/components/schemas/CandidataNormativa" }
+  /legislativo/fontes-normativas/candidatas/{id}/decisao:
+    post:
+      summary: Aprova ou rejeita uma atualização normativa externa
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decisao, motivo]
+              properties:
+                decisao: { type: string, enum: [APROVAR, REJEITAR] }
+                motivo: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        "200": { description: Decisão auditada; aprovação publica uma nova versão }
+        "404": { description: Candidata inexistente no tenant }
+        "422": { description: Decisão, motivo ou estado inválido }
   /legislativo/templates:
     get:
       summary: Lista templates legislativos do tenant
@@ -3862,6 +3969,13 @@ components:
             checksum: { type: string }
             colecaoRag: { type: string, enum: [legislacao] }
             ativo: { type: boolean }
+            origem: { type: string, enum: [MANUAL, SINCRONIZADA] }
+            provedor: { type: string, nullable: true }
+            idExterno: { type: string, nullable: true }
+            urlOficial: { type: string, format: uri, nullable: true }
+            importadaEm: { type: string, format: date-time, nullable: true }
+            revisadaEm: { type: string, format: date-time, nullable: true }
+            substituiFonteId: { type: string, format: uuid, nullable: true }
             criadaEm: { type: string, format: date-time }
             atualizadaEm: { type: string, format: date-time }
             pontuacao: { type: number, minimum: 0, maximum: 1 }
@@ -3870,6 +3984,66 @@ components:
             justificativas:
               type: array
               items: { type: string }
+    IntegracaoNormativaEntrada:
+      type: object
+      required: [provedor, nome, consulta, frequenciaHoras]
+      properties:
+        provedor: { type: string, enum: [LEXML] }
+        nome: { type: string, maxLength: 160 }
+        consulta: { type: string, minLength: 3, maxLength: 500 }
+        jurisdicao: { type: string, maxLength: 120, nullable: true }
+        frequenciaHoras: { type: integer, enum: [6, 12, 24, 48, 168] }
+        ativa: { type: boolean, default: true }
+    IntegracaoNormativa:
+      allOf:
+        - $ref: "#/components/schemas/IntegracaoNormativaEntrada"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            proximaSincronizacaoEm: { type: string, format: date-time, nullable: true }
+            ultimaSincronizacaoEm: { type: string, format: date-time, nullable: true }
+            ultimoStatus: { type: string, enum: [NUNCA_EXECUTADA, CONCLUIDA, FALHOU] }
+            ultimoErro: { type: string, nullable: true }
+            pendentes: { type: integer, minimum: 0 }
+    ExecucaoSincronizacaoNormativa:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [PROCESSANDO, CONCLUIDA, FALHOU] }
+        descobertas: { type: integer, minimum: 0 }
+        novosCandidatos: { type: integer, minimum: 0 }
+        semAlteracao: { type: integer, minimum: 0 }
+        erro: { type: string, nullable: true }
+        iniciadaEm: { type: string, format: date-time }
+        concluidaEm: { type: string, format: date-time, nullable: true }
+    CandidataNormativa:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        integracaoId: { type: string, format: uuid }
+        integracao: { type: string }
+        provedor: { type: string, enum: [LEXML] }
+        status: { type: string, enum: [PENDENTE, APROVADA, REJEITADA] }
+        idExterno: { type: string }
+        tipo: { type: string }
+        titulo: { type: string }
+        referencia: { type: string }
+        trecho: { type: string }
+        jurisdicao: { type: string, nullable: true }
+        url: { type: string, format: uri, nullable: true }
+        versao: { type: string }
+        checksum: { type: string }
+        fonteExistenteId: { type: string, format: uuid, nullable: true }
+        descobertaEm: { type: string, format: date-time }
+    PainelBaseNormativa:
+      type: object
+      properties:
+        total: { type: integer, minimum: 0 }
+        ativas: { type: integer, minimum: 0 }
+        sincronizadas: { type: integer, minimum: 0 }
+        vencidas: { type: integer, minimum: 0 }
+        pendentes: { type: integer, minimum: 0 }
+        integracoesAtivas: { type: integer, minimum: 0 }
     ResultadoRecuperacaoFundamentacao:
       type: object
       required: [consulta, colecao, origemRecuperacao, catalogoAutoritativo, revalidacaoCatalogo, modelo, fallbackUtilizado, limiar, totalCandidatos, totalCandidatosIndexados, fontes, grounded, revisaoHumanaObrigatoria, aplicacaoAutomatica, conteudoTratadoComoDado]

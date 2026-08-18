@@ -369,6 +369,13 @@ def normative_source_data(item: NormativeSource) -> dict:
         "vigenteAte": item.valid_until.isoformat() if item.valid_until else None,
         "colecaoRag": item.rag_collection,
         "ativo": item.active,
+        "origem": item.origin,
+        "provedor": item.provider,
+        "idExterno": item.external_id,
+        "urlOficial": item.official_source_url,
+        "importadaEm": item.imported_at.isoformat() if item.imported_at else None,
+        "revisadaEm": item.reviewed_at.isoformat() if item.reviewed_at else None,
+        "substituiFonteId": str(item.supersedes_source_id) if item.supersedes_source_id else None,
         "criadaEm": item.created_at.isoformat(),
         "atualizadaEm": item.updated_at.isoformat(),
     }

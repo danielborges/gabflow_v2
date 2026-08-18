@@ -395,6 +395,12 @@ class LegislativeGenerationStatus(str, enum.Enum):
     FALHOU = "FALHOU"
 
 
+class NormativeCandidateStatus(str, enum.Enum):
+    PENDENTE = "PENDENTE"
+    APROVADA = "APROVADA"
+    REJEITADA = "REJEITADA"
+
+
 class LegislativeTramitationStatus(str, enum.Enum):
     PROTOCOLADA = "PROTOCOLADA"
     DISTRIBUIDA = "DISTRIBUIDA"
@@ -3305,6 +3311,18 @@ class NormativeSource(db.Model):
         String(80), default="legislacao", nullable=False, index=True
     )
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    origin: Mapped[str] = mapped_column(String(20), default="MANUAL", nullable=False, index=True)
+    provider: Mapped[str | None] = mapped_column(String(40), index=True)
+    external_id: Mapped[str | None] = mapped_column(String(500), index=True)
+    official_source_url: Mapped[str | None] = mapped_column(String(1000))
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    supersedes_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("normative_sources.id", ondelete="SET NULL"), index=True
+    )
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -3313,6 +3331,108 @@ class NormativeSource(db.Model):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class NormativeSourceConnector(db.Model):
+    __tablename__ = "normative_source_connectors"
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    search_query: Mapped[str] = mapped_column(String(500), nullable=False)
+    jurisdiction: Mapped[str | None] = mapped_column(String(120))
+    sync_frequency_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    next_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(String(30), default="NUNCA_EXECUTADA", nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(1000))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class NormativeSourceSyncRun(db.Model):
+    __tablename__ = "normative_source_sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("normative_source_connectors.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    discovered_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unchanged_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(String(1000))
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class NormativeSourceCandidate(db.Model):
+    __tablename__ = "normative_source_candidates"
+    __table_args__ = (
+        UniqueConstraint("connector_id", "external_id", "checksum"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("normative_source_connectors.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sync_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("normative_source_sync_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[NormativeCandidateStatus] = mapped_column(
+        Enum(NormativeCandidateStatus, name="normative_candidate_status"),
+        default=NormativeCandidateStatus.PENDENTE,
+        nullable=False,
+        index=True,
+    )
+    external_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    reference: Mapped[str] = mapped_column(String(240), nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    jurisdiction: Mapped[str | None] = mapped_column(String(120))
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    version: Mapped[str] = mapped_column(String(80), nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    existing_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("normative_sources.id", ondelete="SET NULL"), index=True
+    )
+    review_reason: Mapped[str | None] = mapped_column(String(500))
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
 
 

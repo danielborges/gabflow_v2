@@ -2362,7 +2362,19 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .template-preview > span { color: var(--muted); font-size: .68rem; }
 .template-preview pre { min-height: 330px; margin: 18px 0 0; padding: 16px 0 0; border-top: 1px solid #e5ebf1; color: #263e59; font-family: Georgia, "Times New Roman", serif; font-size: .82rem; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .template-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.normative-management { min-height: calc(100vh - 174px); display: grid; grid-template-columns: minmax(310px, 370px) minmax(0, 1fr); border-top: 1px solid var(--line); background: white; }
+.normative-hub { min-height: calc(100vh - 174px); background: #f8fafc; }
+.normative-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 14px 18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: white; }
+.normative-overview article { display: flex; align-items: center; gap: 11px; min-height: 66px; padding: 12px 14px; border: 1px solid #e1e8ef; border-radius: 8px; color: #27738b; background: #fbfdfe; }
+.normative-overview article.attention { border-color: #f2cf92; color: #9a650e; background: #fffaf0; }
+.normative-overview article span { display: grid; }
+.normative-overview article strong { color: var(--ink); font-size: 1.12rem; line-height: 1.1; }
+.normative-overview article small { margin-top: 4px; color: var(--muted); font-size: .67rem; }
+.normative-tabs { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--line); background: white; }
+.normative-tabs button { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 0 13px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: .73rem; font-weight: 750; }
+.normative-tabs button.active { border-bottom-color: var(--cyan-500); color: #1d6278; }
+.normative-tabs button span { min-width: 20px; padding: 2px 6px; border-radius: 999px; color: #8b5808; background: #fff1ce; font-size: .62rem; }
+.normative-global-error { margin: 12px 18px 0; }
+.normative-management { min-height: calc(100vh - 340px); display: grid; grid-template-columns: minmax(310px, 370px) minmax(0, 1fr); background: white; }
 .normative-list-pane { min-width: 0; border-right: 1px solid var(--line); background: #f8fafc; }
 .normative-toolbar { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .normative-toolbar .legislative-search { height: 40px; padding: 0 9px; border: 1px solid #cbd6e2; border-radius: 5px; background: white; }
@@ -2386,6 +2398,54 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .normative-form-grid textarea { min-height: 220px; padding: 11px; resize: vertical; line-height: 1.5; }
 .normative-form-grid small { justify-self: end; color: var(--muted); font-weight: 500; }
 .normative-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.normative-provenance { display: flex; align-items: center; gap: 10px; margin: -4px 0 18px; padding: 11px 12px; border: 1px solid #bfe4d7; border-radius: 7px; color: #24745c; background: #f2fbf7; }
+.normative-provenance span { display: grid; gap: 2px; min-width: 0; }
+.normative-provenance strong { font-size: .72rem; }
+.normative-provenance small { color: #58746b; font-size: .65rem; }
+.normative-provenance a { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: #176d79; font-size: .68rem; font-weight: 750; }
+.normative-review-layout { min-height: 560px; display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); background: white; }
+.normative-review-list { border-right: 1px solid var(--line); background: #f8fafc; }
+.normative-review-list > header { display: flex; align-items: center; justify-content: space-between; padding: 20px 18px 14px; border-bottom: 1px solid var(--line); }
+.normative-review-list h2, .normative-review-detail h2, .normative-connectors-layout h2 { margin: 2px 0 0; font-size: 1rem; }
+.normative-review-list > header > span { min-width: 28px; padding: 5px 8px; border-radius: 999px; color: #8b5808; background: #fff1ce; text-align: center; font-size: .68rem; font-weight: 800; }
+.normative-review-list > button { width: 100%; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; padding: 14px 16px; border: 0; border-bottom: 1px solid #e5ebf1; color: #9a650e; background: transparent; text-align: left; }
+.normative-review-list > button.active { box-shadow: inset 3px 0 #d69c2f; background: white; }
+.normative-review-list > button span { display: grid; gap: 4px; min-width: 0; }
+.normative-review-list > button strong { overflow: hidden; color: #2d4058; font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+.normative-review-list > button small { color: var(--muted); font-size: .64rem; }
+.normative-review-detail { width: min(100%, 980px); padding: 26px 30px 48px; }
+.normative-review-detail > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.normative-review-detail > header p:not(.eyebrow) { margin: 7px 0 0; color: var(--muted); font-size: .7rem; }
+.normative-review-detail > header a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.normative-review-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 22px 0 14px; }
+.normative-review-meta span { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid #e3e9ef; border-radius: 6px; }
+.normative-review-meta strong { font-size: .72rem; }
+.normative-review-meta small { color: var(--muted); font-size: .62rem; }
+.normative-text-preview { padding: 16px; border: 1px solid #dce5ec; border-radius: 7px; background: #fbfcfd; }
+.normative-text-preview h3 { margin: 0 0 10px; font-size: .75rem; }
+.normative-text-preview p { max-height: 270px; overflow: auto; margin: 0; color: #354a63; font-family: Georgia, serif; font-size: .78rem; line-height: 1.65; white-space: pre-wrap; }
+.normative-review-reason { display: grid; gap: 7px; margin-top: 16px; color: #31455f; font-size: .72rem; font-weight: 750; }
+.normative-review-reason textarea { min-height: 90px; padding: 10px; border: 1px solid #cbd6e2; border-radius: 6px; resize: vertical; }
+.normative-review-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.normative-empty-state { display: grid; justify-items: center; gap: 7px; padding: 54px 24px; color: #8aa0b4; text-align: center; }
+.normative-empty-state h3 { margin: 4px 0 0; color: #3a5069; font-size: .85rem; }
+.normative-empty-state p { max-width: 330px; margin: 0; color: var(--muted); font-size: .7rem; line-height: 1.5; }
+.normative-connectors-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(310px, .6fr); gap: 18px; padding: 20px 22px 40px; }
+.normative-connectors-list, .normative-connector-form { border: 1px solid #dfe7ee; border-radius: 8px; background: white; }
+.normative-connectors-list > header, .normative-connector-form > header { padding: 18px 20px; border-bottom: 1px solid #e6ebf0; }
+.normative-connectors-list > article { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 15px 18px; border-bottom: 1px solid #edf1f4; }
+.connector-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 8px; color: #24758d; background: #eaf7fa; }
+.connector-icon.error { color: #a63d3d; background: #fff0f0; }
+.normative-connectors-list article > div:nth-child(2) { display: grid; gap: 3px; }
+.normative-connectors-list article strong { font-size: .76rem; }
+.normative-connectors-list article small, .normative-connectors-list article p { margin: 0; color: var(--muted); font-size: .64rem; }
+.normative-connectors-list article .secondary-button { min-height: 34px; }
+.normative-connector-form { align-self: start; padding-bottom: 18px; }
+.normative-connector-form > header p:not(.eyebrow) { margin: 7px 0 0; color: var(--muted); font-size: .68rem; line-height: 1.45; }
+.normative-connector-form > label { display: grid; gap: 6px; margin: 13px 18px 0; color: #31455f; font-size: .7rem; font-weight: 750; }
+.normative-connector-form input, .normative-connector-form select { width: 100%; height: 40px; padding: 0 9px; border: 1px solid #cbd6e2; border-radius: 5px; background: white; }
+.normative-connector-form label small { color: var(--muted); font-size: .62rem; font-weight: 500; line-height: 1.4; }
+.normative-connector-form > .primary-button { width: calc(100% - 36px); margin: 17px 18px 0; }
 .foundation-recovery { display: grid; gap: 12px; border: 1px solid #b9dbe1; border-left: 3px solid #20aebc; background: #f8fdfe; }
 .foundation-recovery > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 15px; border-bottom: 1px solid #d8eaee; }
 .foundation-recovery > header > div { min-width: 0; display: flex; align-items: flex-start; gap: 9px; color: #148093; }
@@ -2976,6 +3036,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .agenda-record-form label { display: grid; gap: 5px; color: #40556c; font-size: .65rem; font-weight: 800; }.agenda-record-form textarea { padding: 9px; border: 1px solid #ccd6df; border-radius: 6px; resize: vertical; }
 
 @media (max-width: 1100px) {
+  .normative-connectors-layout { grid-template-columns: 1fr; }
   .agenda-google-shell { grid-template-columns: 190px minmax(0, 1fr); margin-right: 20px; margin-left: 20px; }
   .agenda-sidebar { padding-right: 10px; padding-left: 10px; }
   .agenda-create-button { width: 100%; justify-content: center; padding: 0 10px; }
@@ -3129,6 +3190,15 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 }
 
 @media (max-width: 760px) {
+  .normative-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px; }
+  .normative-tabs { overflow-x: auto; padding-left: 10px; }
+  .normative-review-layout { grid-template-columns: 1fr; }
+  .normative-review-list { max-height: 310px; overflow: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .normative-review-detail { padding: 20px; }
+  .normative-connectors-layout { padding: 12px; }
+  .normative-connectors-list > article { grid-template-columns: 38px minmax(0, 1fr) auto; }
+  .normative-connectors-list article > .secondary-button { grid-column: 2 / -1; }
+  .normative-review-meta { grid-template-columns: 1fr; }
   .oversight-content { padding: 0 14px 24px; }
   .oversight-metrics { grid-template-columns: 1fr 1fr; gap: 8px; }
   .oversight-metric { min-height: 72px; padding: 12px; }
