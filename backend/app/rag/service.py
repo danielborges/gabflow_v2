@@ -502,6 +502,7 @@ def rag_embedding_provider():
         current_app.config["OLLAMA_BASE_URL"],
         current_app.config["AI_EMBEDDING_MODEL"],
         current_app.config["RAG_INGESTION_TIMEOUT_SECONDS"],
+        current_app.config["AI_EMBEDDING_BATCH_SIZE"],
     )
 
 

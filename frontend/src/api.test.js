@@ -30,4 +30,16 @@ describe("apiRequest", () => {
     await expect(apiRequest("/api/v1/admin/parlamentar", { method: "PATCH", body: "{}" }))
       .rejects.toThrow("Acesso não autorizado para este perfil.");
   });
+
+  it("preserva o campo erro usado pela sincronização normativa", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      headers: { get: () => "application/json" },
+      json: () => Promise.resolve({ erro: "O provedor oficial exige nova tentativa." }),
+    }));
+
+    await expect(apiRequest("/api/v1/fontes/sincronizar", { method: "POST" }))
+      .rejects.toThrow("O provedor oficial exige nova tentativa.");
+  });
 });

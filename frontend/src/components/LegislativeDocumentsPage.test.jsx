@@ -599,6 +599,58 @@ it("revisa uma atualização oficial antes de publicá-la na base normativa", as
   expect(await screen.findByText("Tudo revisado")).toBeInTheDocument();
 });
 
+it("prioriza a API máquina-a-máquina do Senado ao criar uma integração", async () => {
+  vi.spyOn(global, "fetch").mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.endsWith("/painel")) return { ok: true, json: async () => ({ total: 0, ativas: 0, sincronizadas: 0, vencidas: 0, pendentes: 0, integracoesAtivas: 0 }) };
+    return { ok: true, json: async () => ({ content: [] }) };
+  });
+
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} activeSection="sources" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Integrações" }));
+
+  expect(screen.getByLabelText("Provedor normativo")).toHaveValue("SENADO");
+  expect(screen.getByLabelText("Consulta de sincronização")).toHaveValue(
+    `tipo=LEI&ano=${new Date().getFullYear()}`,
+  );
+  expect(screen.getByLabelText("Jurisdição da integração")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Conectar Senado" })).toBeEnabled();
+});
+
+it("mostra o erro real e atualiza o conector depois de uma sincronização falhar", async () => {
+  let failed = false;
+  const connector = () => ({
+    id: "connector-1",
+    nome: "LexML municipal",
+    provedor: "LEXML",
+    frequenciaHoras: 24,
+    ativa: true,
+    ultimoStatus: failed ? "FALHOU" : "NUNCA_EXECUTADA",
+    ultimoErro: failed ? "O LexML exige liberação máquina-a-máquina." : null,
+  });
+  vi.spyOn(global, "fetch").mockImplementation(async (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith("/connector-1/sincronizar") && options.method === "POST") {
+      failed = true;
+      return {
+        ok: false,
+        status: 502,
+        headers: { get: () => "application/json" },
+        json: async () => ({ erro: "O LexML exige liberação máquina-a-máquina." }),
+      };
+    }
+    if (path.endsWith("/integracoes")) return { ok: true, json: async () => ({ content: [connector()] }) };
+    if (path.endsWith("/painel")) return { ok: true, json: async () => ({ total: 0, ativas: 0, sincronizadas: 0, vencidas: 0, pendentes: 0, integracoesAtivas: 1 }) };
+    return { ok: true, json: async () => ({ content: [] }) };
+  });
+
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} activeSection="sources" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Integrações" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Sincronizar" }));
+
+  expect((await screen.findAllByText("O LexML exige liberação máquina-a-máquina.")).length).toBeGreaterThan(1);
+});
+
 it("aplica fundamentação recuperada somente após seleção e justificativa", async () => {
   const suggestion = {
     id: "source-1",

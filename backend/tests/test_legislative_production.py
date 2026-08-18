@@ -764,3 +764,68 @@ def test_semantic_precedent_search_ranks_filters_and_isolates_tenant(app, client
 
     invalid_filter = client.get("/api/v1/legislativo/precedentes?q=tema&tipo=INVALIDO")
     assert invalid_filter.status_code == 422
+
+
+def test_precedent_fallback_prioritizes_exact_phrase_in_long_draft_title(
+    app, client, monkeypatch
+):
+    _login(client)
+    with app.app_context():
+        tenant = db.session.execute(
+            select(Tenant).where(Tenant.slug == "gabinete-a")
+        ).scalar_one()
+        user = db.session.execute(select(User).where(User.tenant_id == tenant.id)).scalar_one()
+        draft = LegislativeDraft(
+            tenant_id=tenant.id,
+            document_type=LegislativeDocumentType.REQUERIMENTO,
+            status=LegislativeDraftStatus.APROVADA,
+            generation_status=LegislativeGenerationStatus.CONCLUIDA,
+            title="Transparência e atendimento habitacional em Linhares",
+            content=(
+                "Requer informações detalhadas sobre os fluxos administrativos, critérios, "
+                "prazos, equipes responsáveis e mecanismos de transparência. " * 30
+            ),
+            created_by_id=user.id,
+        )
+        db.session.add(draft)
+        db.session.commit()
+        draft_id = str(draft.id)
+
+    semantic_candidates = []
+
+    class UnavailableProvider:
+        model = "unavailable"
+
+        def similarities(self, _source, candidates):
+            from app.ai.duplicates import EmbeddingProviderError
+
+            semantic_candidates.extend(candidates)
+            raise EmbeddingProviderError("Ollama indisponível no teste")
+
+    monkeypatch.setattr(
+        "app.legislative.precedents._precedent_provider", lambda: UnavailableProvider()
+    )
+    app.config.update(
+        AI_PRECEDENT_SCORE_THRESHOLD=0.60,
+        AI_PRECEDENT_FALLBACK_SCORE_THRESHOLD=0.20,
+        AI_PRECEDENT_SEMANTIC_CANDIDATE_LIMIT=1,
+    )
+
+    response = client.get(
+        "/api/v1/legislativo/precedentes?q=Atendimento%20habitacional"
+    )
+
+    assert response.status_code == 200
+    assert response.json["fallbackUtilizado"] is True
+    assert response.json["limiar"] == 0.20
+    assert response.json["candidatosSemanticos"] == 1
+    assert len(semantic_candidates) == 1
+    assert "atendimento habitacional" in semantic_candidates[0].lower()
+    assert response.json["content"][0]["id"] == draft_id
+    assert response.json["content"][0]["similaridade"] == 0.95
+    assert "Expressão exata encontrada no título" in response.json["content"][0][
+        "justificativas"
+    ]
+    assert response.json["content"][0]["justificativas"][0].startswith(
+        "Correspondência lexical"
+    )

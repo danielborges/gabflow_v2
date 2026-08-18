@@ -27,13 +27,20 @@ class EmbeddingProvider(Protocol):
 
 
 class OllamaEmbeddingProvider:
-    def __init__(self, base_url: str, model: str, timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: int,
+        batch_size: int = 1,
+    ) -> None:
         parsed_url = urllib.parse.urlsplit(base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
             raise ValueError("OLLAMA_BASE_URL deve ser uma URL HTTP ou HTTPS válida.")
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.batch_size = max(batch_size, 1)
 
     def similarities(self, source: str, candidates: list[str]) -> list[float]:
         embeddings = self.embeddings([source, *candidates])
@@ -41,11 +48,15 @@ class OllamaEmbeddingProvider:
         return [_cosine(source_vector, vector) for vector in embeddings[1:]]
 
     def embeddings(self, texts: list[str]) -> list[list[float]]:
-        response = self._request({"model": self.model, "input": texts})
-        embeddings = response.get("embeddings")
-        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
-            raise EmbeddingProviderError("O Ollama retornou embeddings incompletos.")
-        return [_numeric_vector(vector) for vector in embeddings]
+        result: list[list[float]] = []
+        for start in range(0, len(texts), self.batch_size):
+            batch = texts[start : start + self.batch_size]
+            response = self._request({"model": self.model, "input": batch})
+            embeddings = response.get("embeddings")
+            if not isinstance(embeddings, list) or len(embeddings) != len(batch):
+                raise EmbeddingProviderError("O Ollama retornou embeddings incompletos.")
+            result.extend(_numeric_vector(vector) for vector in embeddings)
+        return result
 
     def _request(self, payload: dict) -> dict:
         request = urllib.request.Request(  # noqa: S310 - URL validated in __init__
@@ -174,6 +185,7 @@ def _embedding_provider() -> EmbeddingProvider:
         current_app.config["OLLAMA_BASE_URL"],
         current_app.config["AI_EMBEDDING_MODEL"],
         current_app.config["AI_TRIAGE_TIMEOUT_SECONDS"],
+        current_app.config["AI_EMBEDDING_BATCH_SIZE"],
     )
 
 

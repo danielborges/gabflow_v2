@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import urllib.error
 import urllib.parse
@@ -21,7 +22,18 @@ from app.models import (
     NormativeSourceSyncRun,
 )
 
-SUPPORTED_PROVIDERS = {"LEXML"}
+SUPPORTED_PROVIDERS = {"LEXML", "SENADO"}
+SENADO_FILTERS = {
+    "ano",
+    "complemento",
+    "data",
+    "ident",
+    "numero",
+    "reedicao",
+    "seq",
+    "tipo",
+}
+SENADO_NUMERIC_FILTERS = {"ano", "numero", "reedicao", "seq"}
 
 
 class NormativeSyncError(RuntimeError):
@@ -61,6 +73,8 @@ def connector_values(payload: dict) -> dict:
         raise ValueError("Informe um nome válido para a integração.")
     if len(search_query) < 3 or len(search_query) > 500:
         raise ValueError("A consulta deve possuir entre 3 e 500 caracteres.")
+    if provider == "SENADO":
+        _senado_query_params(search_query)
     if jurisdiction and len(jurisdiction) > 120:
         raise ValueError("Jurisdição inválida.")
     if frequency not in {6, 12, 24, 48, 168}:
@@ -132,6 +146,7 @@ def sync_run_data(item: NormativeSourceSyncRun) -> dict:
         "novosCandidatos": item.candidate_count,
         "semAlteracao": item.unchanged_count,
         "erro": item.error,
+        "message": item.error if item.status == "FALHOU" else None,
         "iniciadaEm": item.started_at.isoformat(),
         "concluidaEm": item.completed_at.isoformat() if item.completed_at else None,
     }
@@ -166,7 +181,11 @@ def synchronize_connector(
         connector.last_error = str(error)[:1000]
     run.completed_at = datetime.now(UTC)
     connector.last_sync_at = now
-    connector.next_sync_at = now + timedelta(hours=connector.sync_frequency_hours)
+    connector.next_sync_at = (
+        _next_failure_retry_at(connector, now)
+        if run.status == "FALHOU"
+        else now + timedelta(hours=connector.sync_frequency_hours)
+    )
     if commit:
         db.session.commit()
     else:
@@ -313,8 +332,16 @@ def _stage_record(
 
 
 def _fetch_records(connector: NormativeSourceConnector) -> list[ExternalNormativeRecord]:
-    if connector.provider != "LEXML":
-        raise NormativeSyncError("Provedor normativo não suportado.")
+    if connector.provider == "LEXML":
+        return _fetch_lexml_records(connector)
+    if connector.provider == "SENADO":
+        return _fetch_senado_records(connector)
+    raise NormativeSyncError("Provedor normativo não suportado.")
+
+
+def _fetch_lexml_records(
+    connector: NormativeSourceConnector,
+) -> list[ExternalNormativeRecord]:
     params = urllib.parse.urlencode(
         {
             "operation": "searchRetrieve",
@@ -337,16 +364,176 @@ def _fetch_records(connector: NormativeSourceConnector) -> list[ExternalNormativ
         with urllib.request.urlopen(  # noqa: S310 - URL HTTPS validada acima
             request, timeout=current_app.config["NORMATIVE_SYNC_TIMEOUT_SECONDS"]
         ) as response:
+            content_type = str(response.headers.get("Content-Type", "")).lower()
             payload = response.read(5_000_000)
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         raise NormativeSyncError("A fonte oficial está temporariamente indisponível.") from error
     try:
+        if "text/html" in content_type or _is_senado_security_challenge(payload):
+            raise NormativeSyncError(
+                "O LexML apresentou uma verificação de segurança incompatível com "
+                "integração automática. Use o provedor Dados Abertos do Senado enquanto "
+                "o acesso SRU não estiver liberado para serviço máquina-a-máquina."
+            )
         if b"<!DOCTYPE" in payload.upper() or b"<!ENTITY" in payload.upper():
             raise NormativeSyncError("A fonte oficial retornou XML não permitido.")
         root = ET.fromstring(payload)  # noqa: S314 - DTD e entidades são rejeitados acima
     except ET.ParseError as error:
         raise NormativeSyncError("A fonte oficial retornou um documento inválido.") from error
     return _parse_lexml(root, connector.jurisdiction)
+
+
+def _fetch_senado_records(
+    connector: NormativeSourceConnector,
+) -> list[ExternalNormativeRecord]:
+    params = urllib.parse.urlencode(_senado_query_params(connector.search_query))
+    base_url = current_app.config["NORMATIVE_SENADO_BASE_URL"]
+    parsed_base = urllib.parse.urlsplit(base_url)
+    if parsed_base.scheme != "https" or parsed_base.hostname != "legis.senado.leg.br":
+        raise NormativeSyncError("A URL configurada para os Dados Abertos não é segura.")
+    url = f"{base_url}?{params}"
+    request = urllib.request.Request(  # noqa: S310 - host oficial validado acima
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "GabFlow-NormativeSync/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - host oficial validado acima
+            request, timeout=current_app.config["NORMATIVE_SYNC_TIMEOUT_SECONDS"]
+        ) as response:
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            payload = response.read(5_000_001)
+    except urllib.error.HTTPError as error:
+        if error.code == 429:
+            raise NormativeSyncError(
+                "O Senado limitou temporariamente as requisições. Nova tentativa será agendada."
+            ) from error
+        if error.code == 503:
+            raise NormativeSyncError(
+                "Os Dados Abertos do Senado estão temporariamente indisponíveis."
+            ) from error
+        raise NormativeSyncError(
+            f"Os Dados Abertos do Senado retornaram HTTP {error.code}."
+        ) from error
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise NormativeSyncError(
+            "Os Dados Abertos do Senado estão temporariamente indisponíveis."
+        ) from error
+    if len(payload) > 5_000_000:
+        raise NormativeSyncError("A resposta dos Dados Abertos excedeu o limite seguro.")
+    if "application/json" not in content_type:
+        raise NormativeSyncError("Os Dados Abertos do Senado retornaram formato inesperado.")
+    try:
+        data = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise NormativeSyncError(
+            "Os Dados Abertos do Senado retornaram documento inválido."
+        ) from error
+    return _parse_senado(
+        data,
+        limit=min(current_app.config["NORMATIVE_SYNC_MAX_RECORDS"], 100),
+    )
+
+
+def _senado_query_params(search_query: str) -> dict[str, str]:
+    try:
+        pairs = urllib.parse.parse_qsl(
+            search_query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=10,
+        )
+    except ValueError as error:
+        raise ValueError(
+            "Use filtros do Senado no formato tipo=LEI&ano=2026."
+        ) from error
+    if not pairs or len({key for key, _ in pairs}) != len(pairs):
+        raise ValueError("Informe filtros únicos para a consulta do Senado.")
+    params = {key: value.strip() for key, value in pairs}
+    if not set(params).issubset(SENADO_FILTERS) or any(not value for value in params.values()):
+        raise ValueError(
+            "A consulta contém filtros não aceitos pelos Dados Abertos do Senado."
+        )
+    if any(not params[key].isdigit() for key in set(params) & SENADO_NUMERIC_FILTERS):
+        raise ValueError("Ano, número, sequência e reedição devem ser numéricos.")
+    if not ({"tipo", "numero", "ano", "data"} & set(params)):
+        raise ValueError("Informe ao menos tipo, número, ano ou data na consulta do Senado.")
+    return params
+
+
+def _parse_senado(data: dict, *, limit: int) -> list[ExternalNormativeRecord]:
+    documents = (
+        data.get("ListaDocumento", {}).get("documentos", {}).get("documento", [])
+    )
+    if isinstance(documents, dict):
+        documents = [documents]
+    if not isinstance(documents, list):
+        raise NormativeSyncError("Os Dados Abertos do Senado mudaram o formato da resposta.")
+    records: list[ExternalNormativeRecord] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        identifier = str(document.get("id", "")).strip()
+        title = str(document.get("normaNome", "")).strip()
+        excerpt = " ".join(str(document.get("ementa", "")).split())
+        reference = str(document.get("norma", "")).strip() or title
+        if not identifier or not title or len(excerpt) < 20:
+            continue
+        published = _parse_brazilian_date(str(document.get("dataassinatura", "")))
+        records.append(
+            ExternalNormativeRecord(
+                external_id=f"senado:{identifier}",
+                source_type=_senado_source_type(
+                    str(document.get("tipo", "")),
+                    str(document.get("descricao", "")),
+                    title,
+                ),
+                title=title[:240],
+                reference=reference[:240],
+                excerpt=excerpt[:20000],
+                jurisdiction="Federal",
+                source_url=f"https://legis.senado.leg.br/norma/{identifier}",
+                version=(
+                    published.isoformat()
+                    if published
+                    else hashlib.sha256(excerpt.encode()).hexdigest()[:12]
+                ),
+                valid_from=published,
+            )
+        )
+        if len(records) >= limit:
+            break
+    return records
+
+
+def _is_senado_security_challenge(payload: bytes) -> bool:
+    lowered = payload[:100_000].lower()
+    return b"verifica" in lowered and b"seguran" in lowered and b"senado federal" in lowered
+
+
+def _next_failure_retry_at(
+    connector: NormativeSourceConnector, now: datetime
+) -> datetime:
+    recent_statuses = list(
+        db.session.scalars(
+            select(NormativeSourceSyncRun.status)
+            .where(NormativeSourceSyncRun.connector_id == connector.id)
+            .order_by(NormativeSourceSyncRun.started_at.desc())
+            .limit(10)
+        )
+    )
+    consecutive_failures = 0
+    for status in recent_statuses:
+        if status != "FALHOU":
+            break
+        consecutive_failures += 1
+    base = max(current_app.config["NORMATIVE_SYNC_FAILURE_RETRY_BASE_MINUTES"], 1)
+    maximum = max(current_app.config["NORMATIVE_SYNC_FAILURE_RETRY_MAX_MINUTES"], base)
+    delay = min(base * (2 ** max(consecutive_failures - 1, 0)), maximum)
+    delay = min(delay, connector.sync_frequency_hours * 60)
+    return now + timedelta(minutes=delay)
 
 
 def _parse_lexml(root: ET.Element, jurisdiction: str | None) -> list[ExternalNormativeRecord]:
@@ -433,11 +620,32 @@ def _source_type(type_text: str, title: str) -> str:
     return "OUTRO"
 
 
+def _senado_source_type(type_text: str, description: str, title: str) -> str:
+    value = f"{type_text} {description} {title}".lower()
+    if "constitui" in value:
+        return "CONSTITUICAO"
+    if "decreto" in value:
+        return "DECRETO"
+    if "lei" in value:
+        return "LEI_FEDERAL"
+    return "OUTRO"
+
+
 def _parse_date(value: str) -> date | None:
     match = re.search(r"\d{4}-\d{2}-\d{2}", value)
     if not match:
         return None
     try:
         return date.fromisoformat(match.group(0))
+    except ValueError:
+        return None
+
+
+def _parse_brazilian_date(value: str) -> date | None:
+    match = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", value.strip())
+    if not match:
+        return None
+    try:
+        return date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
     except ValueError:
         return None

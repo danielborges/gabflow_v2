@@ -28,8 +28,10 @@ from app.rag.operational_memory import NORMATIVE_SOURCE_ENTITY
 from app.rag.service import rag_embedding_provider
 
 SOURCE_TYPES = {
+    "CONSTITUICAO",
     "LEI_ORGANICA",
     "REGIMENTO_INTERNO",
+    "LEI_FEDERAL",
     "LEI_MUNICIPAL",
     "DECRETO",
     "PLANO_DIRETOR",
@@ -388,6 +390,7 @@ def _foundation_provider():
         current_app.config["OLLAMA_BASE_URL"],
         current_app.config["AI_EMBEDDING_MODEL"],
         current_app.config["AI_LEGISLATIVE_TIMEOUT_SECONDS"],
+        current_app.config["AI_EMBEDDING_BATCH_SIZE"],
     )
 
 
