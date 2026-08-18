@@ -21,6 +21,7 @@ locals {
     { name = "APP_RELEASE", value = var.image_tag },
     { name = "AWS_REGION", value = var.aws_region },
     { name = "RAG_EMBEDDING_PROVIDER", value = var.rag_embedding_provider },
+    { name = "AI_EMBEDDING_MODEL", value = var.ollama_embedding_model },
     { name = "RAG_PROMPT_INJECTION_CLASSIFIER_PROVIDER", value = var.rag_prompt_injection_classifier_provider },
     { name = "RAG_PROMPT_INJECTION_CLASSIFIER_MODEL", value = var.rag_prompt_injection_classifier_model },
     { name = "DB_ENFORCE_RUNTIME_ROLE", value = "true" },
@@ -99,7 +100,7 @@ locals {
     essential  = false
     entryPoint = ["/bin/sh", "-ec"]
     command = [
-      "ollama serve & server_pid=$!; until ollama list >/dev/null 2>&1; do sleep 2; done; until ollama pull '${var.ollama_model}'; do sleep 30; done; wait $server_pid"
+      "ollama serve & server_pid=$!; until ollama list >/dev/null 2>&1; do sleep 2; done; until ollama pull '${var.ollama_model}'; do sleep 30; done; until ollama pull '${var.ollama_embedding_model}'; do sleep 30; done; wait $server_pid"
     ]
     cpu    = 768
     memory = 1536
@@ -118,7 +119,7 @@ locals {
       { sourceVolume = "ollama-data", containerPath = "/root/.ollama", readOnly = false },
     ]
     healthCheck = {
-      command     = ["CMD-SHELL", "ollama show '${var.ollama_model}' >/dev/null 2>&1 || exit 1"]
+      command     = ["CMD-SHELL", "ollama show '${var.ollama_model}' >/dev/null 2>&1 && ollama show '${var.ollama_embedding_model}' >/dev/null 2>&1 || exit 1"]
       interval    = 30
       timeout     = 10
       retries     = 5

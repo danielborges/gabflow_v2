@@ -35,6 +35,11 @@ variable "ollama_model" {
   description = "Modelo leve carregado pelo sidecar Ollama."
   default     = "qwen2.5:0.5b"
 }
+variable "ollama_embedding_model" {
+  type        = string
+  description = "Modelo de embeddings carregado pelo sidecar Ollama."
+  default     = "nomic-embed-text"
+}
 variable "ollama_image" {
   type        = string
   description = "Imagem Ollama fixada por digest para execução reproduzível."
