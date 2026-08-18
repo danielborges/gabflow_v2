@@ -65,6 +65,19 @@ it("lista minutas em tabela com busca, filtros, ordenação e paginação", asyn
   expect(screen.getByRole("button", { name: /Próxima/ })).toBeEnabled();
 });
 
+it("ocupa todas as colunas da tabela ao apresentar o estado vazio", async () => {
+  vi.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    json: async () => ({ content: [], page: 0, size: 25, totalElements: 0, totalPages: 0 }),
+  });
+
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} />);
+
+  const emptyCell = await screen.findByText("Nenhuma minuta encontrada com os filtros aplicados.");
+  expect(emptyCell).toHaveClass("legislative-table-message");
+  expect(emptyCell).toHaveAttribute("colspan", "6");
+});
+
 it("apresenta minuta, fundamentação pendente e protocolo somente manual", async () => {
   const draft = {
     id: "draft-1",

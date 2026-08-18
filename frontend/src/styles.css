@@ -2113,6 +2113,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .legislative-table .status-badge { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .legislative-table .draft-status-dot { margin-top: 0; }
 .legislative-table th:last-child, .legislative-table td:last-child { width: 56px; padding-right: 10px; padding-left: 10px; text-align: center; }
+.legislative-table .legislative-table-message { height: 240px; display: table-cell; text-align: center; vertical-align: middle; }
 .legislative-detail-section { margin: 0 36px 36px; border: 1px solid var(--line); border-radius: 7px; background: white; }
 .legislative-search { height: 58px; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
 .legislative-search input { flex: 1; min-width: 0; height: 38px; border: 0; outline: 0; background: transparent; }
