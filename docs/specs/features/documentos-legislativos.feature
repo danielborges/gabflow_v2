@@ -81,6 +81,26 @@ Funcionalidade: Geração assistida de documentos legislativos
     E o worker deve criar nova versão, despublicar ou expirar os derivados correspondentes
     E o catálogo relacional deve permanecer como fonte autoritativa de vigência e versão
 
+  Cenário: Sincronizar legislação oficial com governança humana
+    Dado que um gestor configurou uma integração LexML para o tenant
+    Quando a sincronização encontrar uma norma nova ou alterada
+    Então o sistema deve registrar a execução e criar uma candidata pendente
+    E não deve publicar nem projetar a candidata automaticamente no RAG Privado
+    E deve preservar provedor, identificador externo, URL oficial, versão e checksum
+
+  Cenário: Aprovar atualização normativa externa
+    Dado que existe uma candidata normativa pendente do tenant
+    Quando um gestor conferir a fonte oficial, informar um motivo e aprovar
+    Então o sistema deve publicar uma nova versão no catálogo normativo
+    E deve desativar a versão anterior sem apagá-la
+    E deve registrar a decisão e a proveniência na auditoria
+
+  Cenário: Rejeitar atualização normativa externa
+    Dado que existe uma candidata normativa pendente do tenant
+    Quando um gestor informar um motivo e rejeitar
+    Então a candidata não deve integrar o catálogo ativo nem o RAG Privado
+    E a decisão deve permanecer auditável
+
   Cenário: Recuperar proposições semelhantes do mesmo tenant
     Dado que existem proposições legislativas anteriores do gabinete
     Quando a IA concluir uma nova minuta

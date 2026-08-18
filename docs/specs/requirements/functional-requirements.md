@@ -89,6 +89,7 @@
 - **RF-067C** Importar andamentos por webhook ou polling somente quando a capability estiver disponível, deduplicando eventos e preservando a timeline append-only. **Especificado; pendente.**
 - **RF-067D** Exibir diagnóstico, última sincronização, divergências, eventos não mapeados e reconciliação necessária sem revelar credenciais ou payload sensível. **Especificado; pendente.**
 - **RF-068** Pesquisar proposições semelhantes. **Implementado no P2 com embeddings locais, filtros e fallback lexical.**
+- **RF-068A** Sincronizar fontes normativas por conectores oficiais tenant-safe, materializar alterações externas como candidatos, exigir decisão humana antes da publicação e preservar provedor, identificador externo, URL oficial, checksum e cadeia de versões. **Implementado com conector LexML, execução manual e agendada, fila de revisão e catálogo híbrido.**
 - **RF-069** Retificar erro material de protocolo ou andamento por evento compensatório append-only, com motivo obrigatório, vínculo ao registro substituído, recálculo do estado vigente e auditoria. **Implementado.**
 
 ## Fiscalização

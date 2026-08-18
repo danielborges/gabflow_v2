@@ -50,6 +50,9 @@
     Privado e revalida cada resultado no catálogo relacional autoritativo.
 24. Erros materiais de protocolo e tramitação são corrigidos por retificações vinculadas; o registro original nunca é alterado ou apagado.
 25. O estado vigente ignora registros substituídos e considera o evento compensatório mais recente da cadeia efetiva.
+26. Gestores podem conectar consultas do LexML; o worker executa sincronizações periódicas e também permite execução sob demanda.
+27. Conteúdo externo entra em uma fila tenant-safe de revisão e não participa da fundamentação nem do RAG antes da aprovação.
+28. A aprovação publica uma nova versão com proveniência, checksum e vínculo à anterior; a rejeição preserva a decisão sem alterar o catálogo ativo.
 
 ## Segurança e governança
 

@@ -18,6 +18,7 @@ from app.electoral.advanced_features import dispatch_due_report_schedules
 from app.electoral.mandate_intelligence import dispatch_alert_deliveries
 from app.electoral.reports import cleanup_expired_reports
 from app.extensions import db
+from app.legislative.normative_sync import sync_due_connectors
 from app.models import Mandate, Tenant, User
 from app.outbox.service import ProcessingResult, process_batch, worker_identity
 from app.rag.operational_memory import (
@@ -138,9 +139,11 @@ def _run_scheduler_once() -> tuple[int, int, int, int]:
     recurring_report_jobs = 0
     territorial_deadlines = 0
     snapshot_compactions = 0
+    normative_syncs = 0
     tenant_ids = list(db.session.scalars(select(Tenant.id).order_by(Tenant.id)))
     for tenant_id in tenant_ids:
         with tenant_context(tenant_id):
+            normative_syncs += sync_due_connectors(tenant_id)
             territorial_deadlines += generate_deadline_notifications(tenant_id)
             expirations += enqueue_expired_operational_memory(tenant_id)
             snapshot_compactions += compact_operational_histories(tenant_id)
@@ -172,5 +175,10 @@ def _run_scheduler_once() -> tuple[int, int, int, int]:
         current_app.logger.info(
             "Scheduler compacted %s operational memory snapshots",
             snapshot_compactions,
+        )
+    if normative_syncs:
+        current_app.logger.info(
+            "Scheduler synchronized %s normative source connectors",
+            normative_syncs,
         )
     return reminders, expirations, report_expirations, territorial_deadlines

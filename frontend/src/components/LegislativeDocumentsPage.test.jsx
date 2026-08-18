@@ -555,6 +555,50 @@ it("cadastra e versiona fontes na base normativa", async () => {
   expect(screen.getByText("Ativa")).toBeInTheDocument();
 });
 
+it("revisa uma atualização oficial antes de publicá-la na base normativa", async () => {
+  let candidates = [{
+    id: "candidate-1",
+    integracao: "LexML municipal",
+    provedor: "LEXML",
+    status: "PENDENTE",
+    tipo: "LEI_MUNICIPAL",
+    titulo: "Lei Municipal de Iluminação Pública",
+    referencia: "Lei nº 1.234/2026",
+    trecho: "Dispõe sobre a manutenção da iluminação das praças e vias públicas municipais.",
+    versao: "2026-01-10",
+    jurisdicao: "Município de Teste",
+    url: "https://www.lexml.gov.br/urn/lei-1234",
+    descobertaEm: "2026-08-18T12:00:00Z",
+    fonteExistenteId: null,
+  }];
+  vi.spyOn(global, "fetch").mockImplementation(async (url, options = {}) => {
+    const path = String(url);
+    if (path.includes("/candidatas/candidate-1/decisao") && options.method === "POST") {
+      candidates = [];
+      return { ok: true, json: async () => ({ candidata: { status: "APROVADA" }, fonte: { id: "source-1" } }) };
+    }
+    if (path.includes("/candidatas?")) return { ok: true, json: async () => ({ content: candidates }) };
+    if (path.endsWith("/painel")) return { ok: true, json: async () => ({ total: 0, ativas: 0, sincronizadas: 0, vencidas: 0, pendentes: candidates.length, integracoesAtivas: 1 }) };
+    if (path.endsWith("/integracoes")) return { ok: true, json: async () => ({ content: [] }) };
+    if (path.includes("/fontes-normativas")) return { ok: true, json: async () => ({ content: [] }) };
+    return { ok: true, json: async () => ({ content: [] }) };
+  });
+
+  render(<LegislativeDocumentsPage user={{ role: "admin" }} activeSection="sources" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Revisão/ }));
+  expect((await screen.findAllByText("Lei Municipal de Iluminação Pública")).length).toBeGreaterThan(0);
+  expect(screen.getByText("Texto recebido da fonte")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Aprovar e publicar" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Justificativa da revisão"), { target: { value: "Texto oficial e vigência conferidos." } });
+  fireEvent.click(screen.getByRole("button", { name: "Aprovar e publicar" }));
+
+  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+    "/api/v1/legislativo/fontes-normativas/candidatas/candidate-1/decisao",
+    expect.objectContaining({ method: "POST", body: expect.stringContaining('"decisao":"APROVAR"') }),
+  ));
+  expect(await screen.findByText("Tudo revisado")).toBeInTheDocument();
+});
+
 it("aplica fundamentação recuperada somente após seleção e justificativa", async () => {
   const suggestion = {
     id: "source-1",

@@ -18,6 +18,14 @@ from app.legislative.foundation import (
     normative_source_data,
     normative_source_values,
 )
+from app.legislative.normative_sync import (
+    candidate_data,
+    connector_data,
+    connector_values,
+    review_candidate,
+    sync_run_data,
+    synchronize_connector,
+)
 from app.legislative.precedents import semantic_precedent_search
 from app.legislative.service import enqueue_generation, save_version
 from app.models import (
@@ -31,7 +39,10 @@ from app.models import (
     LegislativeTemplate,
     LegislativeTramitation,
     LegislativeTramitationStatus,
+    NormativeCandidateStatus,
     NormativeSource,
+    NormativeSourceCandidate,
+    NormativeSourceConnector,
     RequestHistory,
     ServiceRequest,
     User,
@@ -926,7 +937,14 @@ def create_normative_source():
         values = normative_source_values(request.get_json(silent=True) or {})
     except ValueError as error:
         return jsonify(error="validation_error", message=str(error)), 422
-    item = NormativeSource(tenant_id=tenant_id, created_by_id=user_id, **values)
+    item = NormativeSource(
+        tenant_id=tenant_id,
+        created_by_id=user_id,
+        reviewed_by_id=user_id,
+        reviewed_at=datetime.now(UTC),
+        origin="MANUAL",
+        **values,
+    )
     db.session.add(item)
     try:
         db.session.flush()
@@ -962,6 +980,8 @@ def update_normative_source(source_id: uuid.UUID):
     before = normative_source_data(item)
     for field, value in values.items():
         setattr(item, field, value)
+    item.reviewed_by_id = user_id
+    item.reviewed_at = datetime.now(UTC)
     try:
         db.session.flush()
     except IntegrityError:
@@ -1006,6 +1026,213 @@ def change_normative_source_status(source_id: uuid.UUID):
     )
     db.session.commit()
     return jsonify(normative_source_data(item))
+
+
+@legislative_bp.get("/legislativo/fontes-normativas/painel")
+@roles_required("admin", "manager")
+def normative_source_dashboard():
+    tenant_id, _ = _context()
+    today = date.today()
+    sources = list(
+        db.session.scalars(
+            select(NormativeSource).where(NormativeSource.tenant_id == tenant_id)
+        )
+    )
+    pending = db.session.scalar(
+        select(func.count(NormativeSourceCandidate.id)).where(
+            NormativeSourceCandidate.tenant_id == tenant_id,
+            NormativeSourceCandidate.status == NormativeCandidateStatus.PENDENTE,
+        )
+    )
+    integrations = db.session.scalar(
+        select(func.count(NormativeSourceConnector.id)).where(
+            NormativeSourceConnector.tenant_id == tenant_id,
+            NormativeSourceConnector.enabled.is_(True),
+        )
+    )
+    return jsonify(
+        total=len(sources),
+        ativas=sum(item.active for item in sources),
+        sincronizadas=sum(item.origin == "SINCRONIZADA" for item in sources),
+        vencidas=sum(bool(item.valid_until and item.valid_until < today) for item in sources),
+        pendentes=pending or 0,
+        integracoesAtivas=integrations or 0,
+    )
+
+
+@legislative_bp.get("/legislativo/fontes-normativas/integracoes")
+@roles_required("admin", "manager")
+def list_normative_connectors():
+    tenant_id, _ = _context()
+    items = db.session.scalars(
+        select(NormativeSourceConnector)
+        .where(NormativeSourceConnector.tenant_id == tenant_id)
+        .order_by(NormativeSourceConnector.created_at.desc())
+    )
+    return jsonify(content=[connector_data(item) for item in items])
+
+
+@legislative_bp.post("/legislativo/fontes-normativas/integracoes")
+@roles_required("admin", "manager")
+def create_normative_connector():
+    tenant_id, user_id = _context()
+    try:
+        values = connector_values(request.get_json(silent=True) or {})
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    item = NormativeSourceConnector(
+        tenant_id=tenant_id,
+        created_by_id=user_id,
+        next_sync_at=datetime.now(UTC),
+        **values,
+    )
+    db.session.add(item)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="conflict", message="Já existe uma integração com este nome."), 409
+    data = connector_data(item)
+    add_audit(
+        tenant_id,
+        user_id,
+        "normative_connector.created",
+        "normative_source_connector",
+        item.id,
+        after=data,
+    )
+    db.session.commit()
+    return jsonify(data), 201
+
+
+@legislative_bp.patch("/legislativo/fontes-normativas/integracoes/<uuid:connector_id>")
+@roles_required("admin", "manager")
+def update_normative_connector(connector_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.scalar(
+        select(NormativeSourceConnector).where(
+            NormativeSourceConnector.id == connector_id,
+            NormativeSourceConnector.tenant_id == tenant_id,
+        )
+    )
+    if item is None:
+        return jsonify(error="resource_not_found", message="Integração não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    before = connector_data(item)
+    if set(payload) == {"ativa"} and isinstance(payload["ativa"], bool):
+        item.enabled = payload["ativa"]
+        if item.enabled and item.next_sync_at is None:
+            item.next_sync_at = datetime.now(UTC)
+    else:
+        try:
+            values = connector_values(payload)
+        except ValueError as error:
+            return jsonify(error="validation_error", message=str(error)), 422
+        for field, value in values.items():
+            setattr(item, field, value)
+    after = connector_data(item)
+    add_audit(
+        tenant_id,
+        user_id,
+        "normative_connector.updated",
+        "normative_source_connector",
+        item.id,
+        before=before,
+        after=after,
+    )
+    db.session.commit()
+    return jsonify(after)
+
+
+@legislative_bp.post("/legislativo/fontes-normativas/integracoes/<uuid:connector_id>/sincronizar")
+@roles_required("admin", "manager")
+def synchronize_normative_connector(connector_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.scalar(
+        select(NormativeSourceConnector).where(
+            NormativeSourceConnector.id == connector_id,
+            NormativeSourceConnector.tenant_id == tenant_id,
+        )
+    )
+    if item is None:
+        return jsonify(error="resource_not_found", message="Integração não encontrada."), 404
+    run = synchronize_connector(item, commit=False)
+    data = sync_run_data(run)
+    add_audit(
+        tenant_id,
+        user_id,
+        "normative_connector.synchronized",
+        "normative_source_connector",
+        item.id,
+        after=data,
+    )
+    db.session.commit()
+    return jsonify(data), 200 if run.status == "CONCLUIDA" else 502
+
+
+@legislative_bp.get("/legislativo/fontes-normativas/candidatas")
+@roles_required("admin", "manager")
+def list_normative_candidates():
+    tenant_id, _ = _context()
+    try:
+        status = NormativeCandidateStatus(
+            str(request.args.get("status", "PENDENTE")).upper()
+        )
+    except ValueError:
+        return jsonify(error="validation_error", message="Status de revisão inválido."), 422
+    items = db.session.scalars(
+        select(NormativeSourceCandidate)
+        .where(
+            NormativeSourceCandidate.tenant_id == tenant_id,
+            NormativeSourceCandidate.status == status,
+        )
+        .order_by(NormativeSourceCandidate.created_at.desc())
+        .limit(200)
+    )
+    return jsonify(content=[candidate_data(item) for item in items])
+
+
+@legislative_bp.post("/legislativo/fontes-normativas/candidatas/<uuid:candidate_id>/decisao")
+@roles_required("admin", "manager")
+def decide_normative_candidate(candidate_id: uuid.UUID):
+    tenant_id, user_id = _context()
+    item = db.session.scalar(
+        select(NormativeSourceCandidate).where(
+            NormativeSourceCandidate.id == candidate_id,
+            NormativeSourceCandidate.tenant_id == tenant_id,
+        )
+    )
+    if item is None:
+        return jsonify(error="resource_not_found", message="Atualização não encontrada."), 404
+    payload = request.get_json(silent=True) or {}
+    decision = str(payload.get("decisao", "")).upper()
+    if decision not in {"APROVAR", "REJEITAR"}:
+        return jsonify(error="validation_error", message="Decisão inválida."), 422
+    before = candidate_data(item)
+    try:
+        source = review_candidate(
+            item,
+            user_id,
+            approve=decision == "APROVAR",
+            reason=str(payload.get("motivo", "")),
+        )
+    except ValueError as error:
+        return jsonify(error="validation_error", message=str(error)), 422
+    after = candidate_data(item)
+    add_audit(
+        tenant_id,
+        user_id,
+        "normative_candidate.approved" if source else "normative_candidate.rejected",
+        "normative_source_candidate",
+        item.id,
+        before=before,
+        after=after,
+    )
+    db.session.commit()
+    return jsonify(
+        candidata=after,
+        fonte=normative_source_data(source) if source else None,
+    )
 
 
 @legislative_bp.post("/legislativo/minutas/<uuid:draft_id>/fundamentacao/recuperar")

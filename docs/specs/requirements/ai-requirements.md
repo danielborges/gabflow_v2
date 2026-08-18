@@ -118,6 +118,7 @@ considerados completos no alvo hierárquico:
 - **RIA-100** Renovar o lease de avaliações longas e expor administrativamente etapa, histórico, próxima avaliação e motivo da promoção ou rollback. **Implementado no incremento 4.9.2.**
 - **RIA-101** Executar a validação semântica em provider e modelo NLI independentes do gerador, recusando configuração que reutilize o mesmo modelo quando a separação for obrigatória. **Implementado no incremento 4.9.3.**
 - **RIA-102** Suportar classificador NLI dedicado por contrato fechado de premissa, hipótese, rótulo e confiança. **Implementado no incremento 4.9.3.**
+- **RIA-103** Tratar conteúdo normativo obtido de fonte externa como candidato não confiável, sem publicação nem uso no RAG até aprovação humana, preservando tenant, proveniência, checksum, versão e decisão auditável. **Implementado na base normativa híbrida.**
 - **RIA-103** Reduzir o caminho crítico por reranking adaptativo e limites de fontes, contexto, afirmações e tokens, preservando os gates existentes. **Implementado no incremento 4.9.3.**
 - **RIA-104** Medir latência por etapa e bloquear rollout cuja taxa de estouro do orçamento exceda o limite tenant-scoped. **Implementado no incremento 4.9.3.**
 
