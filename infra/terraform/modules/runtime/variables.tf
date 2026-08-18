@@ -25,6 +25,21 @@ variable "rag_prompt_injection_classifier_model" {
   description = "Identificador do modelo ou conjunto de regras do classificador de prompt injection."
   default     = "qwen2.5:1.5b"
 }
+variable "enable_ollama_sidecar" {
+  type        = bool
+  description = "Executa um Ollama CPU como sidecar da API sem criar uma tarefa adicional."
+  default     = false
+}
+variable "ollama_model" {
+  type        = string
+  description = "Modelo leve carregado pelo sidecar Ollama."
+  default     = "qwen2.5:0.5b"
+}
+variable "ollama_image" {
+  type        = string
+  description = "Imagem Ollama fixada por digest para execução reproduzível."
+  default     = "ollama/ollama:0.11.4@sha256:1514372d3cef7387b6202b253e761d820e00e44b28f268aad5029389d0479e99"
+}
 variable "aws_region" { type = string }
 variable "vpc_id" { type = string }
 variable "public_subnet_ids" { type = list(string) }

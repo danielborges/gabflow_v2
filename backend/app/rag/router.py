@@ -16,6 +16,7 @@ from app.rag.query_understanding import (
     understand_documentary_query,
 )
 from app.rag.retrieval import answer_query
+from app.rag.structured_interpretation import interpret_structured_query
 
 
 class QueryMethod(StrEnum):
@@ -91,6 +92,27 @@ def route_query(
         else learning_artifacts
     )
     intent = classify_query(query, explicit_filters=explicit_filters)
+    if intent.method in {QueryMethod.ESTRUTURADO, QueryMethod.HIBRIDO}:
+        interpretation = interpret_structured_query(query, intent.structured_payload)
+        reasons = list(intent.reasons)
+        if interpretation.applied:
+            reasons.append("INTERPRETACAO_IA_APLICADA")
+        elif interpretation.fallback_error:
+            reasons.append("INTERPRETACAO_IA_FALLBACK_DETERMINISTICO")
+        interpreted_payload = dict(interpretation.payload)
+        if explicit_filters:
+            interpreted_payload.update(
+                {
+                    key: value
+                    for key, value in explicit_filters.items()
+                    if key in _STRUCTURED_FILTER_KEYS and value not in (None, "")
+                }
+            )
+        intent = QueryIntent(
+            intent.method,
+            interpreted_payload,
+            tuple(dict.fromkeys(reasons)),
+        )
     applied_artifacts = []
     routing_artifact = artifacts.get(RagLearningArtifactType.ROUTING_EXAMPLES)
     if routing_artifact is not None:
@@ -213,7 +235,11 @@ def classify_query(
 
 
 def _structured_payload(query: str) -> dict:
-    if re.search(r"\bcidad(?:ao|aos|oes|a|as)\b", query):
+    citizen_registration = re.search(
+        r"\b(?:pessoa|pessoas|morador(?:es)?|municipes?|eleitor(?:es)?)\b",
+        query,
+    ) and re.search(r"\b(?:cadastrad\w*|registrad\w*|com\s+(?:o\s+)?nome)\b", query)
+    if re.search(r"\bcidad(?:ao|aos|oes|a|as)\b", query) or citizen_registration:
         dataset = "CIDADAOS"
     elif re.search(r"\b(tramita|comiss[aã]o|pauta legislativa)\w*", query):
         dataset = "TRAMITACOES"

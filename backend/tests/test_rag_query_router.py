@@ -85,6 +85,49 @@ def test_router_understands_citizen_count_filtered_by_name():
     }
 
 
+def test_router_understands_people_registered_as_citizens():
+    intent = classify_query("Quantas pessoas com o nome Adriana estão cadastradas?")
+
+    assert intent.method == QueryMethod.ESTRUTURADO
+    assert intent.structured_payload == {
+        "dataset": "CIDADAOS",
+        "metrica": "CONTAGEM",
+        "agruparPor": "NENHUM",
+        "nome": "Adriana",
+    }
+
+
+def test_route_applies_ai_interpretation_without_delegating_the_count(app, monkeypatch):
+    from app.rag.structured_interpretation import StructuredInterpretation
+
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        db.session.add(
+            Citizen(
+                tenant_id=tenant.id,
+                name="Adriana Teste",
+                legal_basis="EXECUCAO_POLITICA_PUBLICA",
+            )
+        )
+        db.session.commit()
+        app.config["RAG_STRUCTURED_INTERPRETATION_ENABLED"] = True
+        monkeypatch.setattr(
+            "app.rag.router.interpret_structured_query",
+            lambda query, payload: StructuredInterpretation(
+                {**payload, "dataset": "CIDADAOS", "nome": "Adriana"},
+                True,
+            ),
+        )
+
+        from app.rag.router import route_query
+
+        answer = route_query(tenant.id, "admin", "Quantas pessoas chamadas Adriana existem?")
+
+    assert answer["resultadoEstruturado"]["total"] == 1
+    assert answer["filtrosAplicados"]["nome"] == "Adriana"
+    assert "INTERPRETACAO_IA_APLICADA" in answer["motivosRoteamento"]
+
+
 def test_structured_route_counts_only_active_citizens_with_name_in_tenant(app, client):
     with app.app_context():
         tenant_a = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))

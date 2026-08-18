@@ -67,6 +67,8 @@ module "runtime" {
   rag_embedding_provider                   = "local"
   rag_prompt_injection_classifier_provider = "local"
   rag_prompt_injection_classifier_model    = "gabflow-prompt-injection-rules-v1"
+  enable_ollama_sidecar                    = true
+  ollama_model                             = "qwen2.5:0.5b"
   aws_region                               = var.aws_region
   vpc_id                                   = module.network.vpc_id
   public_subnet_ids                        = module.network.public_subnet_ids

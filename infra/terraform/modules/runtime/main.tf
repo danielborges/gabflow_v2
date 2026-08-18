@@ -48,6 +48,26 @@ locals {
     { name = "OLLAMA_BASE_URL", value = "http://127.0.0.1:9" },
     { name = "LOG_FORMAT", value = "json" },
   ]
+  app_environment = concat(
+    [for item in local.common_environment : item if item.name != "OLLAMA_BASE_URL"],
+    [
+      { name = "OLLAMA_BASE_URL", value = var.enable_ollama_sidecar ? "http://127.0.0.1:11434" : "http://127.0.0.1:9" },
+      { name = "RAG_STRUCTURED_INTERPRETATION_ENABLED", value = tostring(var.enable_ollama_sidecar) },
+      { name = "RAG_STRUCTURED_INTERPRETATION_PROVIDER", value = "ollama" },
+      { name = "RAG_STRUCTURED_INTERPRETATION_MODEL", value = var.ollama_model },
+      { name = "RAG_STRUCTURED_INTERPRETATION_TIMEOUT_SECONDS", value = "45" },
+      { name = "RAG_STRUCTURED_INTERPRETATION_MAX_TOKENS", value = "128" },
+      { name = "RAG_ANSWER_MODEL", value = var.ollama_model },
+      { name = "RAG_ANSWER_TIMEOUT_SECONDS", value = "60" },
+      { name = "RAG_ANSWER_MAX_TOKENS", value = "128" },
+      { name = "RAG_ANSWER_MAX_CLAIMS", value = "3" },
+      { name = "RAG_ANSWER_SOURCE_CHARS", value = "500" },
+      { name = "RAG_NEURAL_RERANK_ENABLED", value = "false" },
+      { name = "RAG_ENTAILMENT_ENABLED", value = "false" },
+      { name = "RAG_NLI_ENABLED", value = "false" },
+      { name = "RAG_QUERY_LATENCY_BUDGET_MS", value = "120000" },
+    ],
+  )
   runtime_secrets = [
     { name = "SECRET_KEY", valueFrom = local.secret_key.secret_key },
     { name = "JWT_SECRET_KEY", valueFrom = local.secret_key.jwt_secret_key },
@@ -72,6 +92,50 @@ locals {
   log_options = {
     awslogs-region        = var.aws_region
     awslogs-stream-prefix = "ecs"
+  }
+  ollama_container = {
+    name       = "ollama"
+    image      = var.ollama_image
+    essential  = false
+    entryPoint = ["/bin/sh", "-ec"]
+    command = [
+      "ollama serve & server_pid=$!; until ollama list >/dev/null 2>&1; do sleep 2; done; until ollama pull '${var.ollama_model}'; do sleep 30; done; wait $server_pid"
+    ]
+    cpu    = 768
+    memory = 1536
+    environment = [
+      { name = "OLLAMA_HOST", value = "127.0.0.1:11434" },
+      { name = "OLLAMA_MODELS", value = "/root/.ollama/models" },
+      { name = "OLLAMA_CONTEXT_LENGTH", value = "2048" },
+      { name = "OLLAMA_NUM_PARALLEL", value = "1" },
+      { name = "OLLAMA_MAX_LOADED_MODELS", value = "1" },
+      { name = "OLLAMA_KEEP_ALIVE", value = "5m" },
+      { name = "OLLAMA_FLASH_ATTENTION", value = "true" },
+      { name = "OLLAMA_KV_CACHE_TYPE", value = "q8_0" },
+      { name = "OLLAMA_NOHISTORY", value = "true" },
+    ]
+    mountPoints = [
+      { sourceVolume = "ollama-data", containerPath = "/root/.ollama", readOnly = false },
+    ]
+    healthCheck = {
+      command     = ["CMD-SHELL", "ollama show '${var.ollama_model}' >/dev/null 2>&1 || exit 1"]
+      interval    = 30
+      timeout     = 10
+      retries     = 5
+      startPeriod = 300
+    }
+    stopTimeout = 120
+    restartPolicy = {
+      enabled              = true
+      ignoredExitCodes     = []
+      restartAttemptPeriod = 60
+    }
+    logConfiguration = {
+      logDriver = "awslogs"
+      options   = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name })
+    }
+    readonlyRootFilesystem = false
+    linuxParameters        = { initProcessEnabled = true }
   }
 }
 
@@ -348,6 +412,10 @@ resource "aws_ecs_task_definition" "app" {
   ephemeral_storage { size_in_gib = 40 }
   volume { name = "parser-socket" }
   dynamic "volume" {
+    for_each = var.enable_ollama_sidecar ? [1] : []
+    content { name = "ollama-data" }
+  }
+  dynamic "volume" {
     for_each = { for item in local.efs_volumes : item.name => item }
     content {
       name = volume.value.name
@@ -361,12 +429,12 @@ resource "aws_ecs_task_definition" "app" {
       }
     }
   }
-  container_definitions = jsonencode([
+  container_definitions = jsonencode(concat([
     { name = "parser", image = local.backend_image, essential = true, entryPoint = ["/app/parser-entrypoint.sh"], cpu = 512, memory = 1024, environment = [{ name = "PARSER_ALLOWED_ROOTS", value = "/app/data/attachments:/app/data/rag" }, { name = "DOCUMENT_PARSER_SOCKET_PATH", value = "/run/gabflow-parser/parser.sock" }], mountPoints = local.parser_mounts, healthCheck = { command = ["CMD-SHELL", "test -S /run/gabflow-parser/parser.sock"], interval = 10, timeout = 5, retries = 5, startPeriod = 30 }, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false, linuxParameters = { initProcessEnabled = true } },
     { name = "clamav", image = "clamav/clamav:1.4", essential = true, cpu = 1024, memory = 2048, healthCheck = { command = ["CMD-SHELL", "clamdscan --ping 1 || exit 1"], interval = 30, timeout = 10, retries = 5, startPeriod = 120 }, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) } },
-    { name = "api", image = local.backend_image, essential = true, cpu = 1536, memory = 3584, portMappings = [{ containerPort = 5000, protocol = "tcp" }], dependsOn = [{ containerName = "parser", condition = "HEALTHY" }, { containerName = "clamav", condition = "HEALTHY" }], environment = concat(local.common_environment, [{ name = "COOKIE_SECURE", value = tostring(local.certificate_arn != null) }, { name = "RUN_MIGRATIONS_ON_START", value = "false" }, { name = "RUN_SEEDS_ON_START", value = "false" }]), secrets = concat(local.runtime_secrets, [{ name = "DATABASE_URL", valueFrom = local.secret_key.api_database }, { name = "METRICS_BEARER_TOKEN", valueFrom = local.secret_key.metrics_token }]), mountPoints = concat(local.data_mounts, [{ sourceVolume = "parser-socket", containerPath = "/run/gabflow-parser", readOnly = false }]), healthCheck = { command = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/v1/ready')\""], interval = 15, timeout = 5, retries = 5, startPeriod = 60 }, stopTimeout = 60, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false, linuxParameters = { initProcessEnabled = true } },
+    { name = "api", image = local.backend_image, essential = true, cpu = 1536, memory = var.enable_ollama_sidecar ? 3072 : 3584, portMappings = [{ containerPort = 5000, protocol = "tcp" }], dependsOn = [{ containerName = "parser", condition = "HEALTHY" }, { containerName = "clamav", condition = "HEALTHY" }], environment = concat(local.app_environment, [{ name = "COOKIE_SECURE", value = tostring(local.certificate_arn != null) }, { name = "RUN_MIGRATIONS_ON_START", value = "false" }, { name = "RUN_SEEDS_ON_START", value = "false" }]), secrets = concat(local.runtime_secrets, [{ name = "DATABASE_URL", valueFrom = local.secret_key.api_database }, { name = "METRICS_BEARER_TOKEN", valueFrom = local.secret_key.metrics_token }]), mountPoints = concat(local.data_mounts, [{ sourceVolume = "parser-socket", containerPath = "/run/gabflow-parser", readOnly = false }]), healthCheck = { command = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/v1/ready')\""], interval = 15, timeout = 5, retries = 5, startPeriod = 60 }, stopTimeout = 60, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false, linuxParameters = { initProcessEnabled = true } },
     { name = "web", image = local.web_image, essential = true, cpu = 256, memory = 512, portMappings = [{ containerPort = 80, protocol = "tcp" }], dependsOn = [{ containerName = "api", condition = "HEALTHY" }], healthCheck = { command = ["CMD-SHELL", "wget -q --spider http://127.0.0.1/api/v1/ready"], interval = 15, timeout = 5, retries = 5, startPeriod = 30 }, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false },
-  ])
+  ], var.enable_ollama_sidecar ? [local.ollama_container] : []))
 }
 
 resource "aws_ecs_task_definition" "worker" {
