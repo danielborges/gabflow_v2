@@ -791,12 +791,15 @@ def test_precedent_fallback_prioritizes_exact_phrase_in_long_draft_title(
         db.session.commit()
         draft_id = str(draft.id)
 
+    semantic_candidates = []
+
     class UnavailableProvider:
         model = "unavailable"
 
-        def similarities(self, _source, _candidates):
+        def similarities(self, _source, candidates):
             from app.ai.duplicates import EmbeddingProviderError
 
+            semantic_candidates.extend(candidates)
             raise EmbeddingProviderError("Ollama indisponível no teste")
 
     monkeypatch.setattr(
@@ -805,6 +808,7 @@ def test_precedent_fallback_prioritizes_exact_phrase_in_long_draft_title(
     app.config.update(
         AI_PRECEDENT_SCORE_THRESHOLD=0.60,
         AI_PRECEDENT_FALLBACK_SCORE_THRESHOLD=0.20,
+        AI_PRECEDENT_SEMANTIC_CANDIDATE_LIMIT=1,
     )
 
     response = client.get(
@@ -814,6 +818,9 @@ def test_precedent_fallback_prioritizes_exact_phrase_in_long_draft_title(
     assert response.status_code == 200
     assert response.json["fallbackUtilizado"] is True
     assert response.json["limiar"] == 0.20
+    assert response.json["candidatosSemanticos"] == 1
+    assert len(semantic_candidates) == 1
+    assert "atendimento habitacional" in semantic_candidates[0].lower()
     assert response.json["content"][0]["id"] == draft_id
     assert response.json["content"][0]["similaridade"] == 0.95
     assert "Expressão exata encontrada no título" in response.json["content"][0][

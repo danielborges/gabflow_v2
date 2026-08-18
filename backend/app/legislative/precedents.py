@@ -48,13 +48,28 @@ def semantic_precedent_search(
         ).scalars()
     )
     candidate_texts = [_draft_text(item) for item in candidates]
+    lexical_scores, exact_title_matches = _lexical_scores(query, candidates, candidate_texts)
+    semantic_candidate_limit = min(
+        current_app.config["AI_PRECEDENT_SEMANTIC_CANDIDATE_LIMIT"],
+        len(candidates),
+    )
+    semantic_indexes = sorted(
+        range(len(candidates)),
+        key=lambda index: (lexical_scores[index], -index),
+        reverse=True,
+    )[:semantic_candidate_limit]
     provider = _precedent_provider()
     used_fallback = False
     fallback_error = None
-    similarities: list[float] = []
+    similarities = [0.0] * len(candidates)
     if candidates:
         try:
-            similarities = provider.similarities(query, candidate_texts)
+            semantic_scores = provider.similarities(
+                query,
+                [candidate_texts[index] for index in semantic_indexes],
+            )
+            for index, score in zip(semantic_indexes, semantic_scores, strict=True):
+                similarities[index] = score
         except EmbeddingProviderError as error:
             if not current_app.config["AI_LEGISLATIVE_FALLBACK_ENABLED"]:
                 raise
@@ -63,11 +78,10 @@ def semantic_precedent_search(
                 error,
             )
             provider = LocalSimilarityProvider()
-            similarities = provider.similarities(query, candidate_texts)
+            similarities = lexical_scores
             used_fallback = True
             fallback_error = str(error)
 
-    lexical_scores, exact_title_matches = _lexical_scores(query, candidates, candidate_texts)
     applied_threshold = fallback_threshold if used_fallback else threshold
     ranked = []
     for candidate, semantic_score, lexical_score, exact_title_match in zip(
@@ -114,6 +128,7 @@ def semantic_precedent_search(
         "erroFallback": fallback_error,
         "limiar": applied_threshold,
         "totalCandidatos": len(candidates),
+        "candidatosSemanticos": len(semantic_indexes),
         "content": ranked[:maximum],
     }
 
