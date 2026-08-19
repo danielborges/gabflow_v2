@@ -7,6 +7,10 @@ on:
         description: Digite DESTROY-STAGING-AND-DATA para confirmar a exclusao permanente
         required: true
         type: string
+      stale_lock_id:
+        description: ID opcional de um lock Terraform deixado por uma execucao cancelada
+        required: false
+        type: string
 
 concurrency:
   group: deploy-staging
@@ -67,6 +71,10 @@ jobs:
           -backend-config="bucket=${{ vars.AWS_STAGING_STATE_BUCKET }}"
           -backend-config="region=$AWS_REGION"
           -backend-config="kms_key_id=${{ vars.AWS_STAGING_STATE_KMS_KEY_ARN }}"
+
+      - name: Release confirmed stale Terraform lock
+        if: ${{ inputs.stale_lock_id != '' }}
+        run: terraform -chdir="$TF_ROOT" force-unlock -force "${{ inputs.stale_lock_id }}"
 
       - name: Disable deletion protection
         run: |
