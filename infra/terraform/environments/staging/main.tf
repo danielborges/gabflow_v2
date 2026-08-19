@@ -1,4 +1,9 @@
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+data "aws_iam_role" "github_apply" {
+  name = "${local.name_prefix}-github-apply"
+}
 
 locals {
   environment              = "staging"
@@ -7,6 +12,27 @@ locals {
   listener_certificate_arn = local.external_certificate_arn != null ? local.external_certificate_arn : (
     var.enable_https ? aws_acm_certificate_validation.staging[0].certificate_arn : null
   )
+}
+
+resource "aws_iam_role_policy" "github_apply_migration_logs" {
+  name = "${local.name_prefix}-migration-log-reader"
+  role = data.aws_iam_role.github_apply.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "ReadMigrationLogs"
+      Effect = "Allow"
+      Action = [
+        "logs:DescribeLogStreams",
+        "logs:GetLogEvents",
+      ]
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${local.name_prefix}/migration",
+        "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${local.name_prefix}/migration:log-stream:*",
+      ]
+    }]
+  })
 }
 
 resource "aws_acm_certificate" "staging" {
