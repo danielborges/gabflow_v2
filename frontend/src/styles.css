@@ -17,7 +17,7 @@
 
 * { box-sizing: border-box; }
 html, body, #root { max-width: 100%; }
-body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; }
+body { margin: 0; min-width: 0; min-height: 100vh; overflow-x: hidden; }
 body:has(.workspace), body:has(.platform-shell) { overflow: hidden; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
@@ -31,8 +31,9 @@ button:disabled { cursor: not-allowed; }
   text-transform: uppercase;
 }
 
-.login-layout { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr); }
+.login-layout { width: 100%; max-width: 100%; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr); }
 .brand-panel {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -70,8 +71,9 @@ button:disabled { cursor: not-allowed; }
 .brand-copy > p:last-child { max-width: 570px; color: #c9d7eb; font-size: 1.1rem; line-height: 1.6; }
 .brand-status { display: flex; align-items: center; gap: 10px; color: #dce8f8; font-size: 0.9rem; }
 .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint-500); box-shadow: 0 0 0 4px #17d3aa26; }
-.login-panel { display: grid; place-items: center; padding: 40px; background: var(--surface); }
-.login-form { width: min(100%, 420px); display: grid; gap: 20px; }
+.login-panel { min-width: 0; display: grid; place-items: center; padding: 40px; background: var(--surface); }
+.login-form { min-width: 0; width: min(100%, 420px); display: grid; gap: 20px; }
+.brand-copy h1, .login-form { overflow-wrap: anywhere; }
 .form-heading { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
 .form-heading h2 { margin: 0; font-size: 1.65rem; }
 .app-mark { display: grid; place-items: center; width: 46px; height: 46px; color: white; background: var(--navy-800); border-radius: 8px; }
@@ -195,7 +197,7 @@ button:disabled { cursor: not-allowed; }
 .pricing-heading { max-width: none; }
 .pricing-heading h2, .pricing-heading p:last-child { white-space: nowrap; }
 .pricing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.pricing-card { position: relative; display: grid; align-content: start; gap: 14px; min-height: 440px; padding: 24px; border: 1px solid #d5e2ee; border-radius: 8px; background: white; box-shadow: 0 14px 42px #061a420c; }
+.pricing-card { position: relative; min-width: 0; display: grid; align-content: start; gap: 14px; min-height: 440px; padding: 24px; border: 1px solid #d5e2ee; border-radius: 8px; background: white; box-shadow: 0 14px 42px #061a420c; }
 .pricing-card.featured { border-color: var(--blue-600); box-shadow: 0 18px 54px #1688ef24; }
 .plan-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
 .plan-ribbon { flex: 0 0 auto; padding: 6px 9px; border-radius: 5px; color: #075446; background: #dffaf3; font-size: .7rem; font-weight: 850; text-transform: uppercase; white-space: nowrap; }
@@ -3037,6 +3039,12 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 
 @media (max-width: 1100px) {
   .normative-connectors-layout { grid-template-columns: 1fr; }
+  .legislative-table-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .legislative-search { grid-column: 1 / -1; }
+  .legislative-table-toolbar .secondary-button { grid-column: 1 / -1; width: 100%; justify-content: center; }
+  .precedent-search-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .precedent-query, .precedent-search-controls > button { grid-column: 1 / -1; }
+  .precedent-search-controls > button { width: 100%; justify-content: center; }
   .agenda-google-shell { grid-template-columns: 190px minmax(0, 1fr); margin-right: 20px; margin-left: 20px; }
   .agenda-sidebar { padding-right: 10px; padding-left: 10px; }
   .agenda-create-button { width: 100%; justify-content: center; padding: 0 10px; }
@@ -3223,7 +3231,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .oversight-editor > footer button { flex: 1 1 auto; }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .agenda-google-shell { min-height: 620px; grid-template-columns: 1fr; }
   .agenda-sidebar { display: none; }
   .agenda-calendar-toolbar { flex-wrap: wrap; padding: 9px 10px; }
@@ -3244,6 +3252,18 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .agenda-form-row:not(.agenda-form-two-columns):not(.agenda-date-row) { grid-template-columns: 20px minmax(0, 1fr); }
   .agenda-record-form { grid-template-columns: 1fr; }
   .agenda-event-dialog > footer, .agenda-event-detail-dialog > footer { flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  .legislative-table-toolbar { grid-template-columns: 1fr; }
+  .legislative-search,
+  .legislative-table-toolbar .secondary-button { grid-column: auto; }
+}
+
+@media (max-width: 480px) {
+  .public-form-shell { padding: 12px; }
+  .public-request-form { padding: 18px; }
+  .public-request-form header { align-items: flex-start; flex-direction: column; }
 }
 .report-preview {
   background: #f8fafc;
@@ -3332,6 +3352,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .landing-actions, .pricing-card > a { align-items: stretch; flex-direction: column; }
   .landing-actions .primary-button, .landing-actions .secondary-button, .pricing-card > a { width: 100%; }
   .product-dashboard section, .lead-form, .landing-login-panel .login-form { padding: 18px; }
+  .pricing-card { padding: 20px 18px; }
+  .scenario-candidate-search { align-items: stretch; flex-direction: column; }
+  .scenario-candidate-search .secondary-button { width: 100%; justify-content: center; }
 }
 .electoral-title-icon {
   flex: 0 0 auto;
@@ -3892,7 +3915,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .portfolio-history { display: grid; gap: .4rem; }
 .portfolio-history li { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem; border-bottom: 1px solid var(--line); }
 
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .electoral-export-form, .electoral-delegation-form { grid-template-columns: 1fr; }
   .electoral-export-purpose, .electoral-delegation-reason, .electoral-delegation-form fieldset { grid-column: auto; }
   .electoral-job-row { align-items: stretch; flex-direction: column; }
@@ -3927,6 +3950,8 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .electoral-explorer-search,
   .electoral-explorer-results article { grid-template-columns: 1fr; }
   .electoral-explorer-results article > div { align-items: stretch; flex-direction: column; }
+  .scenario-candidate-search { align-items: stretch; flex-direction: column; }
+  .scenario-candidate-search .secondary-button { width: 100%; justify-content: center; }
 }
 .channel-page-error {
   margin: 0 0 1rem;
@@ -3960,6 +3985,11 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   grid-template-columns: minmax(240px, 2fr) repeat(4, minmax(120px, 1fr));
   margin-bottom: 1rem;
   padding: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .channel-settings-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .channel-settings-panel .settings-title { grid-column: 1 / -1; }
 }
 
 .channel-review-operation {

@@ -9,6 +9,8 @@ __pycache__/
 htmlcov/
 node_modules/
 frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
 .idea/
 .vscode/
 *.log
