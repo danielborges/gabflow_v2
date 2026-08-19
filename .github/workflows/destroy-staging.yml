@@ -70,10 +70,27 @@ jobs:
 
       - name: Disable deletion protection
         run: |
-          terraform -chdir="$TF_ROOT" apply -auto-approve \
-            -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
-            -var="enable_services=false" \
-            -var="allow_destroy=true"
+          state=$(terraform -chdir="$TF_ROOT" state list)
+          targets=()
+          for address in \
+            'module.runtime.aws_db_instance.this' \
+            'module.runtime.aws_lb.this' \
+            'module.runtime.aws_ecr_repository.this["backend"]' \
+            'module.runtime.aws_ecr_repository.this["web"]'; do
+            if grep -Fxq "$address" <<< "$state"; then
+              targets+=("-target=$address")
+            fi
+          done
+
+          if (( ${#targets[@]} > 0 )); then
+            terraform -chdir="$TF_ROOT" apply -auto-approve \
+              -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
+              -var="enable_services=false" \
+              -var="allow_destroy=true" \
+              "${targets[@]}"
+          else
+            echo "No protected resources remain in Terraform state."
+          fi
 
       - name: Destroy staging infrastructure and data
         run: |
