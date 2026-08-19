@@ -22,11 +22,13 @@ auth_bp = Blueprint("auth", __name__)
 
 def _serialize_user(user: User) -> dict:
     chief_of_staff = _is_chief_of_staff(user)
+    photo_url = _user_photo_url(user)
     return {
         "id": str(user.id),
         "name": user.name,
         "email": user.email,
         "role": user.role.value,
+        "fotoUrl": photo_url,
         "chefeGabinete": chief_of_staff,
         "funcoes": ["chefe_gabinete"] if chief_of_staff else [],
         "tenant": {
@@ -41,6 +43,13 @@ def _serialize_user(user: User) -> dict:
         if user.tenant is not None
         else None,
     }
+
+
+def _user_photo_url(user: User) -> str | None:
+    if user.role != Role.REPRESENTATIVE or user.tenant is None:
+        return None
+    photo_url = str((user.tenant.representative_info or {}).get("fotografiaUrl") or "").strip()
+    return photo_url or None
 
 
 def _is_chief_of_staff(user: User) -> bool:

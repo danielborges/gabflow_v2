@@ -9,6 +9,7 @@ import {
   isValidEmail,
 } from "../contactValidation";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
+import { FeatureHeader } from "./FeatureHeader";
 
 const CITIZEN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
@@ -191,16 +192,11 @@ export function DirectoryPage({ assistedReviewId, onAssistedRegistrationConsumed
 
   return (
     <>
-      <section className="page-heading request-heading">
-        <div>
-          <p className="eyebrow">Relacionamento</p>
-          <h1>Cidadãos e organizações</h1>
-          <p>Cadastros mínimos, contatos, consentimentos e territórios.</p>
-        </div>
+      <FeatureHeader className="request-heading" eyebrow="Relacionamento" title="Cidadãos e organizações" description="Cadastros mínimos, contatos, consentimentos e territórios.">
         <button className="primary-button compact" onClick={createEntity}>
           <Plus size={18} /> {tab === "citizens" ? "Novo cidadão" : "Nova organização"}
         </button>
-      </section>
+      </FeatureHeader>
 
       <nav className="directory-folder-tabs segmented-control" aria-label="Tipo de cadastro" role="tablist">
         <button type="button" role="tab" aria-selected={tab === "citizens"} className={tab === "citizens" ? "active" : ""} onClick={() => changeTab("citizens")}><UserRound size={17} /> Cidadãos</button>

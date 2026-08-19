@@ -29,6 +29,7 @@ import {
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { apiRequest } from "../api";
 import { contactPlaceholderForChannel, formatBrazilianPhone, isValidContactByChannel } from "../contactValidation";
+import { FeatureHeader } from "./FeatureHeader";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 const sources = [
@@ -225,16 +226,11 @@ export function RequestsPage({ user, initialSearch = "", initialFilters, initial
 
   return (
     <>
-      <section className="page-heading request-heading">
-        <div>
-          <p className="eyebrow">Atendimento estruturado</p>
-          <h1>Solicitações</h1>
-          <p>Registre e acompanhe as demandas recebidas pelo gabinete.</p>
-        </div>
+      <FeatureHeader className="request-heading" eyebrow="Atendimento estruturado" title="Solicitações" description="Registre e acompanhe as demandas recebidas pelo gabinete.">
         {!readOnly && <button className="primary-button compact" onClick={() => { setCreateCitizenId(""); setShowCreate(true); }}>
           <Plus size={18} /> Nova solicitação
         </button>}
-      </section>
+      </FeatureHeader>
 
       <section className="request-list" aria-live="polite">
         {Object.keys(territorialFilters).length > 0 && <div className="territorial-request-context">

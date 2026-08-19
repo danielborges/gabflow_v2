@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiDownload, apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 import { TerritorialMap } from "./TerritorialMap";
 
 const statusLabels = {
@@ -143,13 +144,7 @@ export function OperationalDashboard({ user, onOpenRequests, onOpenRequest }) {
 
   return (
     <>
-      <section className="page-heading">
-        <div>
-          <p className="eyebrow">Operação do gabinete</p>
-          <h1>Painel operacional</h1>
-          <p>Prioridades, prazos e distribuição territorial das demandas em um único lugar.</p>
-        </div>
-      </section>
+      <FeatureHeader eyebrow="Operação do gabinete" title="Painel operacional" description="Prioridades, prazos e distribuição territorial das demandas em um único lugar." />
       <nav className="dashboard-tabs segmented-control" aria-label="Seções do painel operacional" role="tablist">
         <button type="button" role="tab" aria-selected={activePanel === "operation"} aria-controls="dashboard-operation-panel" className={activePanel === "operation" ? "active" : ""} onClick={() => setActivePanel("operation")}>
           <ListTodo size={17} /> Operação

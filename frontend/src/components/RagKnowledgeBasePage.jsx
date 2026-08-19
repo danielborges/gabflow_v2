@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 
 const TYPES = [
   ["LEGISLACAO", "Legislação"], ["ATO", "Ato"], ["ATA", "Ata"],
@@ -233,7 +234,7 @@ export function RagKnowledgeBasePage() {
   }
 
   return <>
-    <section className="page-heading rag-heading"><div><p className="eyebrow">Inteligência do gabinete</p><h1>Base de conhecimento</h1><p>Documentos do gabinete e memórias geradas pelo GabFlow, com origem e vigência controladas.</p></div><button className="primary-button" onClick={startNew}><Plus size={18} /> Novo documento</button></section>
+    <FeatureHeader className="rag-heading" eyebrow="Inteligência do gabinete" title="Base de conhecimento" description="Documentos do gabinete e memórias geradas pelo GabFlow, com origem e vigência controladas."><button className="primary-button" onClick={startNew}><Plus size={18} /> Novo documento</button></FeatureHeader>
     {error && <div className="rag-error-banner" role="alert"><AlertTriangle size={18} /><span><strong>Ação não concluída</strong><small>{error}</small></span></div>}
     <section className="rag-workspace">
       <div className={`rag-content ${creating || addingVersion ? "rag-content-form" : ""}`} aria-live="polite">{creating || addingVersion ? <RagUploadForm form={form} setForm={setForm} file={file} setFile={selectFile} busy={busy} addingVersion={addingVersion} document={selected} onCancel={() => { setCreating(false); setAddingVersion(false); }} onSubmit={submit} /> : loadingDetail ? <div className="rag-empty rag-workspace-loading"><RefreshCw className="spin" size={28} /><h2>Carregando documento</h2><p>Buscando revisões e informações de proveniência.</p></div> : selected ? <RagDocumentDetail document={selected} busy={busy} onAddVersion={startVersion} onChangeState={changeState} onReprocess={reprocess} /> : selectedMemory ? <RagMemoryDetail memory={selectedMemory} busy={busy} onReprocess={reprocessMemory} /> : <div className="rag-empty">{catalogType === "documents" ? <Database size={36} /> : <BrainCircuit size={36} />}<h2>{catalogType === "documents" ? "Área de trabalho documental" : "Memória automática do GabFlow"}</h2><p>{catalogType === "documents" ? "Selecione um documento abaixo para consultar revisões, vigência e proveniência." : "Selecione uma memória para consultar sua origem, disponibilidade e prazo de retenção."}</p></div>}</div>

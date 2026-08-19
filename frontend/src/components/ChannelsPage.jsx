@@ -2,6 +2,7 @@ import { AlertTriangle, Bot, CheckCircle2, Clock3, Download, FileAudio, FileText
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api";
 import { contactPlaceholderForChannel, formatBrazilianPhone, isValidContactByChannel } from "../contactValidation";
+import { FeatureHeader } from "./FeatureHeader";
 
 const emptyForm = {
   canal: "WHATSAPP",
@@ -341,14 +342,9 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
 
   return (
     <>
-      <section className="page-heading">
-        <div>
-          <p className="eyebrow">Ecossistema</p>
-          <h1>Canais assistidos</h1>
-          <p>Revise identidades recebidas por WhatsApp e e-mail antes de vinculá-las ao cadastro.</p>
-        </div>
+      <FeatureHeader eyebrow="Ecossistema" title="Canais assistidos" description="Revise identidades recebidas por WhatsApp e e-mail antes de vinculá-las ao cadastro.">
         <button className="secondary-button" onClick={load} disabled={loading}><RotateCw size={16} /> Atualizar</button>
-      </section>
+      </FeatureHeader>
 
       {error && <p className="form-error channel-page-error" role="alert">{error}</p>}
 

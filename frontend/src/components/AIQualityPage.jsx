@@ -1,6 +1,7 @@
 import { Activity, BrainCircuit, CheckCircle2, Clock3, RefreshCw, UserCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 
 export function AIQualityPage() {
   const [days, setDays] = useState("30");
@@ -34,12 +35,7 @@ export function AIQualityPage() {
 
   return (
     <>
-      <section className="page-heading ai-quality-heading">
-        <div>
-          <p className="eyebrow">Governança de IA</p>
-          <h1>Qualidade da triagem</h1>
-          <p>Acompanhe confiança, revisão humana e cobertura das sugestões do tenant.</p>
-        </div>
+      <FeatureHeader className="ai-quality-heading" eyebrow="Governança de IA" title="Qualidade da triagem" description="Acompanhe confiança, revisão humana e cobertura das sugestões do tenant.">
         <div className="quality-controls">
           <label>
             <span>Período</span>
@@ -52,7 +48,7 @@ export function AIQualityPage() {
           </label>
           <button className="icon-button" onClick={load} title="Atualizar métricas" aria-label="Atualizar métricas"><RefreshCw size={19} /></button>
         </div>
-      </section>
+      </FeatureHeader>
 
       {!data.amostraMinimaAtingida && (
         <p className="quality-sample-note">Amostra inicial: as taxas ganham maior estabilidade após 30 revisões humanas.</p>

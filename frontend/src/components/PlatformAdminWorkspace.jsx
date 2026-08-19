@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api";
 import { formatBrazilianCpf, formatBrazilianPhone } from "../contactValidation";
+import { UserAvatar } from "./UserAvatar";
 
 const availableModules = [
   "solicitacoes",
@@ -167,7 +168,7 @@ export function PlatformAdminWorkspace({ user, onLogout }) {
             <h1 className="compact-title">Administração Geral</h1>
           </div>
           <div className="user-summary">
-            <span className="avatar">{user.name.slice(0, 2).toUpperCase()}</span>
+            <UserAvatar user={user} />
             <span><strong>{user.name}</strong><small>Operacao da plataforma</small></span>
           </div>
           <button className="icon-button" onClick={onLogout} aria-label="Sair" title="Sair">
@@ -960,4 +961,3 @@ function ModulePicker({ value, onChange, plan }) {
     </fieldset>
   );
 }
-

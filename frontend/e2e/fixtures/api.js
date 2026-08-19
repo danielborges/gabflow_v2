@@ -1,10 +1,12 @@
 import { expect } from "@playwright/test";
 
+const representativePhoto = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' fill='%23dbeaf4'/%3E%3Ccircle cx='48' cy='38' r='22' fill='%23d69a72'/%3E%3Cpath d='M25 37c1-18 11-27 24-27 14 0 23 10 23 28-7-7-15-11-25-11-8 0-15 3-22 10Z' fill='%2310243f'/%3E%3Cpath d='M14 96c3-27 16-40 34-40s31 13 34 40' fill='%230b6fc2'/%3E%3Ccircle cx='40' cy='39' r='2' fill='%2310243f'/%3E%3Ccircle cx='56' cy='39' r='2' fill='%2310243f'/%3E%3Cpath d='M41 48c4 3 10 3 14 0' fill='none' stroke='%23834f3b' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E";
+
 export const profiles = {
   admin: { role: "admin", name: "Ana Admin", chefeGabinete: false },
   manager: { role: "manager", name: "Gustavo Gerente", chefeGabinete: true },
   staff: { role: "staff", name: "Alice Assessora", chefeGabinete: false },
-  representative: { role: "representative", name: "Paulo Parlamentar", chefeGabinete: false },
+  representative: { role: "representative", name: "Paulo Parlamentar", chefeGabinete: false, fotoUrl: representativePhoto },
 };
 
 const tenant = {
