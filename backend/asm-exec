@@ -65,6 +65,26 @@ def _get_aws_credentials():
             'secret_key': os.environ.get('AWS_SECRET_ACCESS_KEY', ''),
             'token': os.environ.get('AWS_SESSION_TOKEN', ''),
         }
+    # ECS/Fargate exposes short-lived task-role credentials through a relative
+    # path on a link-local endpoint. Keep the host fixed so an injected value
+    # cannot turn this request into an arbitrary SSRF target.
+    relative_uri = os.environ.get('AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', '')
+    if relative_uri.startswith('/'):
+        try:
+            req = urllib.request.Request(
+                f'http://169.254.170.2{relative_uri}', method='GET'
+            )
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                task_creds = json.loads(resp.read())
+            if task_creds.get('AccessKeyId'):
+                return {
+                    'access_key': task_creds['AccessKeyId'],
+                    'secret_key': task_creds.get('SecretAccessKey', ''),
+                    'token': task_creds.get('Token', ''),
+                }
+        except (urllib.error.URLError, OSError, json.JSONDecodeError,
+                KeyError, TypeError):
+            pass
     # AWS CLI v2: export-credentials emits resolved (possibly assumed-role) creds.
     try:
         result = subprocess.run(
@@ -181,7 +201,7 @@ def _mcp_post(payload, session_id=None):
     body = json.dumps(payload).encode()
     service, region = _signing_service_region(MCP_ENDPOINT)
     path = urllib.parse.urlparse(MCP_ENDPOINT).path or '/'
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
 
     sig_headers = _sign_v4('POST', path, body, creds, service, region, now)
     req = urllib.request.Request(MCP_ENDPOINT, data=body, method='POST')
@@ -386,4 +406,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
