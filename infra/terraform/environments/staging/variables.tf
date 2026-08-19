@@ -40,6 +40,12 @@ variable "enable_services" {
   default     = false
 }
 
+variable "allow_destroy" {
+  description = "Desativa protecoes e permite excluir integralmente o staging. Use somente no workflow de teardown."
+  type        = bool
+  default     = false
+}
+
 variable "certificate_arn" {
   description = "ARN opcional de certificado ACM para HTTPS."
   type        = string

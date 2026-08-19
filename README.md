@@ -72,6 +72,11 @@ se torna fonte, prompt ou treinamento automático.
 docker compose up --build
 ```
 
+O desenvolvimento e os testes correntes usam somente este ambiente Docker local.
+O staging na AWS fica desligado para evitar custos recorrentes. A retomada do
+workflow `Deploy staging` exige a confirmacao explicita
+`ENABLE-PAID-AWS-STAGING`.
+
 O aplicativo ficará disponível na porta definida por `WEB_PORT` (por padrão,
 `http://localhost:8080`). O tenant e o usuário iniciais são definidos em `.env`;
 a senha nunca possui valor padrão no código.

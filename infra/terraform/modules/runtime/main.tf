@@ -175,6 +175,7 @@ resource "aws_ecr_repository" "this" {
   for_each             = local.repositories
   name                 = "${var.name_prefix}/${each.key}"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = var.allow_destroy
   encryption_configuration {
     encryption_type = "KMS"
     kms_key         = var.kms_key_arn
@@ -298,7 +299,7 @@ resource "aws_db_instance" "this" {
   backup_window                 = "03:00-04:00"
   maintenance_window            = "sun:04:00-sun:05:00"
   performance_insights_enabled  = true
-  deletion_protection           = true
+  deletion_protection           = !var.allow_destroy
   skip_final_snapshot           = true
   auto_minor_version_upgrade    = true
   copy_tags_to_snapshot         = true
@@ -384,7 +385,7 @@ resource "aws_lb" "this" {
   security_groups            = [aws_security_group.alb.id]
   subnets                    = var.public_subnet_ids
   drop_invalid_header_fields = true
-  enable_deletion_protection = true
+  enable_deletion_protection = !var.allow_destroy
 }
 resource "aws_lb_target_group" "app" {
   name                 = substr("${var.name_prefix}-app", 0, 32)

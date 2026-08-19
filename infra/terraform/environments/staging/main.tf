@@ -114,6 +114,7 @@ module "runtime" {
   whatsapp_secret_prefix                   = module.security.whatsapp_secret_prefix
   image_tag                                = var.image_tag
   enable_services                          = var.enable_services
+  allow_destroy                            = var.allow_destroy
   certificate_arn                          = local.listener_certificate_arn
   db_instance_class                        = var.db_instance_class
 }

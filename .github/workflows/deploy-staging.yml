@@ -3,6 +3,10 @@ name: Deploy staging
 on:
   workflow_dispatch:
     inputs:
+      cost_confirmation:
+        description: Digite ENABLE-PAID-AWS-STAGING para confirmar a retomada dos custos AWS
+        required: true
+        type: string
       activate_services:
         description: Ativar API e workers depois da migration
         required: true
@@ -32,6 +36,14 @@ jobs:
       VITE_GEOAPIFY_MAP_API_KEY: ${{ vars.VITE_GEOAPIFY_MAP_API_KEY }}
 
     steps:
+      - name: Validate paid staging confirmation
+        shell: bash
+        run: |
+          if [[ "${{ inputs.cost_confirmation }}" != "ENABLE-PAID-AWS-STAGING" ]]; then
+            echo "Paid AWS staging remains disabled. Nothing was changed."
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v7
 
