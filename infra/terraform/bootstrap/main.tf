@@ -316,6 +316,7 @@ data "aws_iam_policy_document" "foundation_apply" {
       "ec2:DeleteVpcEndpoints",
       "ec2:Describe*",
       "ec2:DetachInternetGateway",
+      "ec2:DisassociateAddress",
       "ec2:DisassociateRouteTable",
       "ec2:ModifySubnetAttribute",
       "ec2:ModifyVpcAttribute",
@@ -440,6 +441,7 @@ data "aws_iam_policy_document" "foundation_apply" {
       "rds:*",
       "sqs:GetQueueAttributes",
       "sqs:ListQueueTags",
+      "sqs:SetQueueAttributes",
       "wafv2:*",
     ]
     resources = ["*"]

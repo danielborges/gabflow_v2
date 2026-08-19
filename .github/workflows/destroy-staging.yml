@@ -47,6 +47,14 @@ jobs:
           role-to-assume: ${{ vars.AWS_STAGING_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Grant narrowly scoped teardown permissions
+        run: |
+          policy=$(jq -cn '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:["ec2:DisassociateAddress","sqs:SetQueueAttributes"],Resource:"*"}]}')
+          aws iam put-role-policy \
+            --role-name gabflow-staging-github-apply \
+            --policy-name gabflow-staging-teardown-temporary \
+            --policy-document "$policy"
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v4
         with:
@@ -76,3 +84,10 @@ jobs:
 
       - name: Record result
         run: echo "AWS staging infrastructure managed by Terraform was destroyed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary teardown permissions
+        if: ${{ always() }}
+        run: |
+          aws iam delete-role-policy \
+            --role-name gabflow-staging-github-apply \
+            --policy-name gabflow-staging-teardown-temporary
