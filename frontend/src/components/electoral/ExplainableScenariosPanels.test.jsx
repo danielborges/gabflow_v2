@@ -260,6 +260,12 @@ test("identifica conteudo gerado pela GabIA e exibe perguntas de investigacao", 
       facts: [{ text: "Foram registrados 123 votos.", citation_ids: ["dataset-1"] }],
       calculations: [],
       hypotheses: [
+        {
+          text: "A prioridade deve combinar presença territorial e lacunas agregadas do mandato.",
+          status: "EXECUTIVE_SUMMARY",
+          citation_ids: ["mandate-1"],
+          generated_by_ai: true,
+        },
         { text: "Quais eventos publicos merecem investigacao?", status: "INVESTIGATION_QUESTION", generated_by_ai: true },
         {
           title: "Escuta territorial",
@@ -268,12 +274,17 @@ test("identifica conteudo gerado pela GabIA e exibe perguntas de investigacao", 
           status: "STRATEGIC_RECOMMENDATION",
           citation_ids: ["web-1"],
           generated_by_ai: true,
+          category: "AGENDA",
+          priority: "ALTA",
+          time_horizon: "30_DIAS",
+          territory: "Zona Norte",
         },
       ],
       limitations: ["Dados agregados nao demonstram causa."],
       citations: [
         { id: "dataset-1", dataset_version: "dataset-1", source: "https://dadosabertos.tse.jus.br" },
         { id: "web-1", source_type: "WEB_RESEARCH", title: "Notícia sobre atuação territorial", source: "https://example.org/noticia" },
+        { id: "mandate-1", source_type: "MANDATE_AGGREGATE", title: "Indicadores do mandato" },
       ],
       generation: { applied: true, model: "qwen2.5:3b" },
       validation: { valid: true, validatorVersion: "electoral-claim-validator-v1" },
@@ -299,6 +310,11 @@ test("identifica conteudo gerado pela GabIA e exibe perguntas de investigacao", 
   expect(screen.queryByText(/Gerado pela GabIA com qwen2.5:3b/)).not.toBeInTheDocument();
   expect(screen.queryByText("Fontes, números e citações verificados automaticamente.")).not.toBeInTheDocument();
   expect(screen.getByText("Próximas ações sugeridas")).toBeInTheDocument();
+  expect(screen.getByText("Resposta estratégica")).toBeInTheDocument();
+  expect(screen.getByText("Agenda territorial")).toBeInTheDocument();
+  expect(screen.getByText("Prioridade alta")).toBeInTheDocument();
+  expect(screen.getByText("30 dias")).toBeInTheDocument();
+  expect(screen.getByText("Território: Zona Norte")).toBeInTheDocument();
   expect(screen.getByText("Escuta territorial")).toBeInTheDocument();
   expect(screen.getByText("Notícia sobre atuação territorial")).toBeInTheDocument();
   const sourcesSection = screen.getByText("Fontes consultadas").closest("details");
@@ -349,10 +365,11 @@ test("contesta sem executar nova analise e diferencia fallback historico", async
   />);
 
   await screen.findByText("Quantos votos foram registrados?");
-  expect(screen.queryByText(/Esta análise foi concluída anteriormente/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/A GabIA não gerou uma resposta/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: /Histórico/ }));
   fireEvent.click(screen.getByRole("button", { name: /Comparação.*Foram registrados 123 votos/ }));
-  expect(await screen.findByText(/Esta análise foi concluída anteriormente/)).toBeInTheDocument();
+  expect(await screen.findByText(/A GabIA não gerou uma resposta/)).toBeInTheDocument();
+  expect(screen.getByText("IA indisponível")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: /Histórico/ }));
   fireEvent.click(screen.getByRole("button", { name: /Pergunta fundamentada.*Quantos votos foram registrados/ }));
   fireEvent.click(screen.getAllByRole("button", { name: "Contestar" })[0]);

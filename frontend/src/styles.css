@@ -3828,6 +3828,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-insight-card > header, .electoral-insight-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .electoral-insight-card h3 { margin: 1rem 0 .35rem; font-size: .95rem; }
 .electoral-insight-card li small { display: block; color: var(--muted); }
+.electoral-executive-summary { margin-top: 1rem; padding: 14px 16px; border-left: 4px solid var(--primary); border-radius: 8px; background: #f2f7ff; }
+.electoral-executive-summary > span { display: block; margin-bottom: 5px; color: var(--primary); font-size: .76rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.electoral-executive-summary p { margin: 0; font-size: 1rem; line-height: 1.55; }
 .electoral-citation-links { display: flex !important; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .electoral-citation-links a { color: var(--blue-700); font-weight: 750; text-decoration: none; }
 .electoral-citation-links a:hover { text-decoration: underline; }
@@ -3837,6 +3840,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-limitations { margin-top: 18px; padding: 12px 14px; border-radius: 8px; background: #f8fafc; color: #52627a; }
 .electoral-recommendation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .electoral-recommendation-grid > article { padding: 14px; border: 1px solid #c9dced; border-radius: 10px; background: #f6faff; }
+.electoral-recommendation-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.electoral-recommendation-meta span { padding: 3px 7px; border-radius: 999px; background: #e2edf9; color: #29486a; font-size: .68rem; font-weight: 700; }
+.electoral-recommendation-territory { display: block; margin-top: 4px; color: var(--primary) !important; font-weight: 700; }
 .electoral-recommendation-grid p { margin: 7px 0; }
 .electoral-recommendation-grid small { color: var(--muted); line-height: 1.45; }
 .electoral-source-list { margin-top: 18px; padding: 12px 14px; border-radius: 8px; background: #f8fafc; color: #52627a; }

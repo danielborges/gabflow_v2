@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.communications.email import EmailDeliveryError
+from app.communications.whatsapp_queue import QueueProcessingResult
 from app.extensions import db
 from app.models import OutboxEvent, Tenant
 from app.outbox.service import ProcessingResult, process_batch
@@ -96,7 +97,14 @@ def test_workers_claim_only_their_configured_queue(app, monkeypatch):
             aggregate_id="aggregate-rag",
             payload={"value": 1},
         )
-        db.session.add_all([default_event, rag_event])
+        local_ai_event = OutboxEvent(
+            tenant_id=tenant_id,
+            event_type="electoral.insight.requested",
+            aggregate_type="electoral_insight",
+            aggregate_id="aggregate-local-ai",
+            payload={"value": 1},
+        )
+        db.session.add_all([default_event, rag_event, local_ai_event])
         db.session.commit()
         handled = []
         monkeypatch.setattr(
@@ -108,9 +116,20 @@ def test_workers_claim_only_their_configured_queue(app, monkeypatch):
         assert process_batch("rag-worker").succeeded == 1
         assert handled == ["SincronizacaoMemoriaOperacional"]
 
+        app.config["WORKER_QUEUE"] = "local-ai"
+        assert process_batch("local-ai-worker").succeeded == 1
+        assert handled == [
+            "SincronizacaoMemoriaOperacional",
+            "electoral.insight.requested",
+        ]
+
         app.config["WORKER_QUEUE"] = "default"
         assert process_batch("default-worker").succeeded == 1
-        assert handled == ["SincronizacaoMemoriaOperacional", "TesteIntegracao"]
+        assert handled == [
+            "SincronizacaoMemoriaOperacional",
+            "electoral.insight.requested",
+            "TesteIntegracao",
+        ]
 
 
 def test_worker_once_runs_outbox_and_scheduler(app, monkeypatch):
@@ -129,3 +148,22 @@ def test_worker_once_runs_outbox_and_scheduler(app, monkeypatch):
     assert result == ProcessingResult()
     assert calls[0][0] == "outbox"
     assert calls[1] == ("scheduler", None)
+
+
+def test_local_ai_worker_only_processes_its_outbox_queue(app, monkeypatch):
+    calls = []
+    app.config["WORKER_QUEUE"] = "local-ai"
+    app.config["WORKER_RUN_SCHEDULER"] = False
+    monkeypatch.setattr(
+        "app.outbox.worker.process_batch",
+        lambda worker_id: calls.append(("outbox", worker_id)) or ProcessingResult(),
+    )
+    monkeypatch.setattr(
+        "app.outbox.worker._process_whatsapp_queue",
+        lambda: calls.append(("whatsapp", None)) or QueueProcessingResult(),
+    )
+
+    result = run_worker(app, once=True)
+
+    assert result == ProcessingResult()
+    assert [name for name, _value in calls] == ["outbox"]

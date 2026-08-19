@@ -52,7 +52,12 @@ def run_worker(app: Flask, *, once: bool = False) -> ProcessingResult:
         with app.app_context():
             assert_runtime_database_role()
             result = process_batch(worker_id)
-            whatsapp_result = _process_whatsapp_queue()
+            worker_queue = str(app.config.get("WORKER_QUEUE") or "default").strip().lower()
+            whatsapp_result = (
+                _process_whatsapp_queue()
+                if worker_queue in {"all", "default"}
+                else QueueProcessingResult()
+            )
             aggregate = ProcessingResult(
                 claimed=aggregate.claimed + result.claimed,
                 succeeded=aggregate.succeeded + result.succeeded,

@@ -11,10 +11,25 @@ const statusLabels = {
   HIDDEN: "Em revisão",
 };
 
+const recommendationCategoryLabels = {
+  AGENDA: "Agenda territorial",
+  ATUACAO_PARLAMENTAR: "Atuação parlamentar",
+  COMUNICACAO: "Comunicação pública",
+  DADOS: "Aprofundar dados",
+};
+
+const recommendationHorizonLabels = {
+  IMEDIATO: "Imediato",
+  "30_DIAS": "30 dias",
+  "60_DIAS": "60 dias",
+  "90_DIAS": "90 dias",
+};
+
 function sourceTitle(source) {
   if (source.title) return source.title;
   if (source.source_type === "WEB_RESEARCH") return "Fonte pública consultada na internet";
   if (source.source_type === "AUTHORIZED_DOCUMENT") return "Documento autorizado do gabinete";
+  if (source.source_type === "MANDATE_AGGREGATE") return "Indicadores agregados do mandato";
   return "Resultados eleitorais oficiais do TSE";
 }
 
@@ -601,12 +616,19 @@ export function ExplainableInsightsPanel({
       {(activeItem ? [activeItem] : []).map((item) => <article key={item.id} className="electoral-insight-card">
         <header>
           <strong>{analysisTypeLabel(item.analysis_type)}</strong>
-          <span className={`electoral-job-status status-${item.status.toLowerCase()}`}>
-            {statusLabels[item.status] || item.status}
+          <span className={`electoral-job-status status-${item.generation?.fallbackUsed ? "failed" : item.status.toLowerCase()}`}>
+            {item.generation?.fallbackUsed ? "IA indisponível" : statusLabels[item.status] || item.status}
           </span>
         </header>
         {item.status === "COMPLETED" && <>
           {item.request?.question && <p className="electoral-insight-question">{item.request.question}</p>}
+          {item.hypotheses?.some((hypothesis) => hypothesis.status === "EXECUTIVE_SUMMARY") && <section className="electoral-executive-summary">
+            <span>Resposta estratégica</span>
+            {item.hypotheses.filter((hypothesis) => hypothesis.status === "EXECUTIVE_SUMMARY").map((summary, index) => <p key={`${item.id}-summary-${index}`}>
+              {summary.text}
+              <CitationLinks ids={summary.citation_ids} citations={item.citations} insightId={item.id} />
+            </p>)}
+          </section>}
           <h3>O que os dados mostram</h3>
           <ul>{item.facts.map((fact, index) => <li key={`${item.id}-fact-${index}`}>
             {fact.text}
@@ -627,21 +649,27 @@ export function ExplainableInsightsPanel({
           </>}
           {item.hypotheses?.some((hypothesis) => hypothesis.status === "STRATEGIC_RECOMMENDATION") && <><h3>Próximas ações sugeridas</h3>
             <div className="electoral-recommendation-grid">{item.hypotheses.filter((hypothesis) => hypothesis.status === "STRATEGIC_RECOMMENDATION").map((recommendation, index) => <article key={`${item.id}-recommendation-${index}`}>
+              <div className="electoral-recommendation-meta">
+                <span>{recommendationCategoryLabels[recommendation.category] || "Ação estratégica"}</span>
+                <span>Prioridade {String(recommendation.priority || "média").toLocaleLowerCase("pt-BR")}</span>
+                <span>{recommendationHorizonLabels[recommendation.time_horizon] || recommendation.time_horizon || "30 dias"}</span>
+              </div>
               <strong>{recommendation.title}</strong>
+              {recommendation.territory && <small className="electoral-recommendation-territory">Território: {recommendation.territory}</small>}
               <p>{recommendation.text}</p>
               <small>{recommendation.rationale}</small>
               <CitationLinks ids={recommendation.citation_ids} citations={item.citations} insightId={item.id} />
             </article>)}</div>
           </>}
-          {item.hypotheses?.some((hypothesis) => !["CONTEXTUAL_HYPOTHESIS", "STRATEGIC_RECOMMENDATION"].includes(hypothesis.status)) && <><h3>Pontos para aprofundar</h3>
-            <ul>{item.hypotheses.filter((hypothesis) => !["CONTEXTUAL_HYPOTHESIS", "STRATEGIC_RECOMMENDATION"].includes(hypothesis.status)).map((hypothesis, index) => <li key={`${item.id}-hypothesis-${index}`}>{hypothesis.text}</li>)}</ul>
+          {item.hypotheses?.some((hypothesis) => !["EXECUTIVE_SUMMARY", "CONTEXTUAL_HYPOTHESIS", "STRATEGIC_RECOMMENDATION"].includes(hypothesis.status)) && <><h3>Pontos para aprofundar</h3>
+            <ul>{item.hypotheses.filter((hypothesis) => !["EXECUTIVE_SUMMARY", "CONTEXTUAL_HYPOTHESIS", "STRATEGIC_RECOMMENDATION"].includes(hypothesis.status)).map((hypothesis, index) => <li key={`${item.id}-hypothesis-${index}`}>{hypothesis.text}</li>)}</ul>
           </>}
           <details className="electoral-limitations"><summary>Limites e cuidados desta análise</summary>
             <ul>{item.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
           </details>
           {item.generation?.fallbackUsed && <p className="electoral-refusal">
-            Esta análise foi concluída anteriormente somente com a camada determinística.
-            O indicador no topo informa a disponibilidade atual da GabIA.
+            A GabIA não gerou uma resposta para esta solicitação. Os números abaixo são apenas
+            a camada determinística e não devem ser interpretados como recomendação estratégica.
           </p>}
           {item.citations?.length > 0 && <details className="electoral-source-list">
             <summary>Fontes consultadas</summary>
