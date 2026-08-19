@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiDownload, apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 
 const tabs = [
   ["requests", "Direitos do titular"],
@@ -47,9 +48,7 @@ export function PrivacyGovernancePage() {
   useEffect(() => { load(); }, [load]);
 
   return <>
-    <section className="page-heading">
-      <div><p className="eyebrow">LGPD e governança</p><h1>Privacidade</h1><p>Direitos do titular, retenção e rastreabilidade administrativa.</p></div>
-    </section>
+    <FeatureHeader eyebrow="LGPD e governança" title="Privacidade" description="Direitos do titular, retenção e rastreabilidade administrativa." />
     {summary && <section className="privacy-metrics">
       <Metric icon={FileClock} value={summary.solicitacoesAbertas} label="Solicitações abertas" />
       <Metric icon={FileClock} value={summary.solicitacoesVencidas} label="Solicitações vencidas" tone="danger" />

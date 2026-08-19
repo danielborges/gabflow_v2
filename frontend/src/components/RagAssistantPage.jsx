@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 import { useRagAssistantQuery } from "./useRagAssistantQuery";
 
 export function RagAssistantPage() {
@@ -34,13 +35,7 @@ export function RagAssistantPage() {
 
   return (
     <>
-      <section className="page-heading rag-assistant-heading">
-        <div>
-          <p className="eyebrow">Assistente RAG</p>
-          <h1>Consulta institucional</h1>
-          <p>Faça perguntas sobre a base documental vigente e revise as fontes antes de usar.</p>
-        </div>
-      </section>
+      <FeatureHeader className="rag-assistant-heading" eyebrow="Assistente RAG" title="Consulta institucional" description="Faça perguntas sobre a base documental vigente e revise as fontes antes de usar." />
 
       <section className="rag-assistant-workspace">
         <form className="rag-question-panel" onSubmit={submit}>

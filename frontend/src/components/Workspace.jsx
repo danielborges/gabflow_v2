@@ -37,6 +37,7 @@ import { PrivacyGovernancePage } from "./PrivacyGovernancePage";
 import { RagAssistantPage } from "./RagAssistantPage";
 import { RagKnowledgeBasePage } from "./RagKnowledgeBasePage";
 import { RequestsPage } from "./RequestsPage";
+import { UserAvatar } from "./UserAvatar";
 
 const navigation = [
   { id: "overview", label: "Visao geral", icon: LayoutDashboard, enabled: true },
@@ -338,7 +339,7 @@ export function Workspace({ user, onLogout }) {
           </button>
           <GlobalSearch onOpen={openSearchResult} />
           <div className="user-summary">
-            <span className="avatar">{user.name.slice(0, 2).toUpperCase()}</span>
+            <UserAvatar user={user} />
             <span><strong>{user.name}</strong><small>{user.chefeGabinete ? `${user.tenant.name} · Chefe de Gabinete` : user.tenant.name}</small></span>
           </div>
           {isModuleEnabled("rag") && (

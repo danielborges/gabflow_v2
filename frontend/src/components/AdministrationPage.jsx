@@ -33,6 +33,7 @@ import {
   normalizeWebsiteUrl,
 } from "../contactValidation";
 import brazilLocations from "../data/brazilLocations.json";
+import { FeatureHeader } from "./FeatureHeader";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 import { TerritoryMapEditor } from "./TerritoryMapEditor";
 
@@ -556,7 +557,7 @@ export function AdministrationPage({ user = null }) {
   const wideLayout = ["audit", "office", "parliamentarian", "rag-quality", "integrations"].includes(active);
 
   return <>
-    <section className="page-heading"><div><p className="eyebrow">Administrador do Gabinete</p><h1>Configuração administrativa</h1><p>Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna.</p></div></section>
+    <FeatureHeader eyebrow="Administrador do Gabinete" title="Configuração administrativa" description="Gerencie identidade institucional, equipe, usuários, parâmetros, canais, documentos, privacidade e auditoria interna." />
     <section className="admin-tabs segmented-control">
       {sections.map(([id, label]) => <button key={id} className={active === id ? "active" : ""} onClick={() => { setActive(id); clearError(id); clearSuccess(id); }}>{label}</button>)}
     </section>

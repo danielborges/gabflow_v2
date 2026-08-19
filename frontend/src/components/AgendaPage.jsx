@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiDownload, apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 const VIEW_OPTIONS = [
@@ -188,13 +189,7 @@ export function AgendaPage() {
   }
 
   return <>
-    <section className="page-heading agenda-page-heading">
-      <div>
-        <p className="eyebrow">Agenda institucional</p>
-        <h1>Agenda</h1>
-        <p>Organize a rotina do gabinete e identifique rapidamente os compromissos com presença parlamentar.</p>
-      </div>
-    </section>
+    <FeatureHeader className="agenda-page-heading" eyebrow="Agenda institucional" title="Agenda" description="Organize a rotina do gabinete e identifique rapidamente os compromissos com presença parlamentar." />
 
     <section className="agenda-google-shell">
       <aside className="agenda-sidebar">

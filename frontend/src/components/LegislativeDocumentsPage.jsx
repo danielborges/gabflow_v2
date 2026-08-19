@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiDownload, apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 import { RequestSearchSelect } from "./RequestsPage";
 
 const TYPES = [
@@ -201,7 +202,7 @@ export function LegislativeDocumentsPage({ user, activeSection = "drafts", onSec
   const lastItem = Math.min((page + 1) * pageSize, totalElements);
 
   return <>
-    <section className="page-heading legislative-heading"><div><p className="eyebrow">Produção legislativa</p><h1>{sectionTitle}</h1><p>{sectionDescription}</p></div>{activeSection === "drafts" && user.role !== "representative" && <button className="primary-button" onClick={() => setCreating(true)}><FilePlus2 size={18} /> Nova minuta</button>}</section>
+    <FeatureHeader className="legislative-heading" eyebrow="Produção legislativa" title={sectionTitle} description={sectionDescription}>{activeSection === "drafts" && user.role !== "representative" && <button className="primary-button" onClick={() => setCreating(true)}><FilePlus2 size={18} /> Nova minuta</button>}</FeatureHeader>
     {error && <p className="form-error">{error}</p>}
     {activeSection === "drafts" && creating && <DraftCreationForm templates={templates} busy={busy} onCancel={() => setCreating(false)} onSubmit={createDraft} />}
     {activeSection === "drafts" && <>

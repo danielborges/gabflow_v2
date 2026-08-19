@@ -93,6 +93,17 @@ test("navegação e modal de formulário permanecem utilizáveis", async ({ page
   await assertResponsivePage(page);
 });
 
+test("fotografia do usuário substitui as iniciais no topo", async ({ page }) => {
+  await mockApi(page, "representative");
+  await page.goto("/?tela=agenda");
+  await page.waitForLoadState("networkidle");
+
+  const avatarPhoto = page.locator(".user-summary .avatar img");
+  await expect(avatarPhoto).toBeVisible();
+  await expect(avatarPhoto).toHaveAttribute("src", /^data:image\/svg\+xml/);
+  await assertResponsivePage(page);
+});
+
 const visualSurfaces = [
   ["landing", "/landing", "admin"],
   ["login", "/login", "admin"],
@@ -103,6 +114,7 @@ const visualSurfaces = [
   ["agenda-representative", "/?tela=agenda", "representative"],
   ["documents-drafts", "/?tela=documents&secao=drafts", "admin"],
   ["documents-templates", "/?tela=documents&secao=templates", "manager"],
+  ["electoral-overview", "/?tela=electoral&secao=overview", "representative"],
   ["electoral-results", "/?tela=electoral&secao=results", "representative"],
   ["electoral-mandate", "/?tela=electoral&secao=mandate", "admin"],
   ["administration", "/?tela=admin", "admin"],

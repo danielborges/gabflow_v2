@@ -1,6 +1,7 @@
 import { Database, Landmark, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../api";
+import { FeatureHeader } from "../FeatureHeader";
 import { CandidateComparison } from "./CandidateComparison";
 import { CandidateHistory } from "./CandidateHistory";
 import { CandidateMap } from "./CandidateMap";
@@ -389,13 +390,14 @@ export function ElectoralIntelligencePage({
 
   return (
     <section className="page-section electoral-foundation-page">
-      <header className="page-header electoral-page-header">
-        <div>
-          <p className="eyebrow">Módulo de insights eleitorais</p>
-          <h1><Landmark className="electoral-title-icon" size={30} aria-hidden="true" />Inteligência Eleitoral</h1>
-          <p>Dados eleitorais e gestão territorial organizados por área de trabalho.</p>
-        </div>
-      </header>
+      <FeatureHeader
+        className="electoral-page-header"
+        contained
+        eyebrow="Módulo de insights eleitorais"
+        title="Inteligência Eleitoral"
+        description="Dados eleitorais e gestão territorial organizados por área de trabalho."
+        icon={Landmark}
+      />
       {error && <p className="form-error" role="alert">{error}</p>}
       {!data && !error && <p aria-live="polite">Carregando catálogo eleitoral...</p>}
 

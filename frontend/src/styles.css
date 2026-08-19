@@ -129,10 +129,18 @@ button:disabled { cursor: not-allowed; }
 .user-summary > span:last-child { display: grid; }
 .user-summary strong { font-size: 0.85rem; }
 .user-summary small { color: var(--muted); font-size: 0.72rem; }
-.avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--navy-800); font-size: 0.75rem; font-weight: 800; }
-.page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 34px 36px 25px; }
-.page-heading h1 { margin: 0 0 8px; font-size: 1.9rem; }
-.page-heading > div > p:last-child { margin: 0; color: var(--muted); }
+.avatar { width: 36px; height: 36px; display: grid; flex: 0 0 36px; place-items: center; overflow: hidden; border-radius: 50%; color: white; background: var(--navy-800); font-size: 0.75rem; font-weight: 800; }
+.avatar-with-photo { border: 1px solid #d4dee9; background: #eef3f8; }
+.avatar img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: center; }
+.feature-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 36px 16px; border-bottom: 1px solid var(--line); }
+.feature-header-copy { min-width: 0; display: grid; gap: 4px; }
+.feature-header .eyebrow { margin: 0; line-height: 1.2; letter-spacing: .035em; }
+.feature-header-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.feature-header-title h1 { min-width: 0; display: flex; align-items: center; gap: 8px; margin: 0; color: var(--navy-950); font-size: clamp(1.45rem, 2vw, 1.75rem); line-height: 1.15; letter-spacing: -.015em; overflow-wrap: anywhere; }
+.feature-header-icon { flex: 0 0 auto; color: #315c4d; }
+.feature-header-description { max-width: 76ch; margin: 0; color: var(--muted); font-size: .88rem; line-height: 1.4; }
+.feature-header > :not(.feature-header-copy) { flex: 0 0 auto; }
+.feature-header-contained { padding: 0 0 14px; }
 .role-badge { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid #b9e4d8; border-radius: 5px; color: #08735e; background: #ecfbf6; font-size: 0.78rem; font-weight: 750; text-transform: uppercase; }
 .checkbox-line { display: flex; align-items: center; gap: 10px; font-weight: 700; color: #17345e; }
 .checkbox-line input { width: 16px; height: 16px; }
@@ -2773,8 +2781,9 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .floating-rag-panel { top: 70px; right: 0; bottom: 0; width: min(480px, 100vw); border-right: 0; border-bottom: 0; border-radius: 10px 0 0; }
   .search-box { display: none; }
   .user-summary > span:last-child { display: none; }
-  .page-heading { padding: 25px 20px 20px; }
-  .page-heading { flex-direction: column; }
+  .feature-header { align-items: stretch; flex-direction: column; gap: 12px; padding: 14px 20px 12px; }
+  .feature-header-title h1 { font-size: 1.4rem; }
+  .feature-header-contained { padding: 0 0 12px; }
   .dashboard-tabs { display: flex; }
   .dashboard-tabs button { flex: 1 1 0; justify-content: center; min-width: 0; }
   .territorial-map.expanded svg, .territorial-map.expanded .territorial-map-canvas { height: 300px; }
@@ -2905,7 +2914,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .button-row { display: flex; flex-wrap: wrap; gap: 10px; }
 
 /* Agenda estilo calendário */
-.agenda-page-heading { padding-bottom: 18px; }
+.agenda-page-heading { padding-bottom: 14px; }
 .agenda-google-shell { min-width: 0; min-height: 690px; display: grid; grid-template-columns: 230px minmax(0, 1fr); margin: 0 36px 36px; overflow: hidden; border: 1px solid #d8e0e8; border-radius: 14px; background: #fff; box-shadow: 0 10px 32px #10213f0b; }
 .agenda-sidebar { min-width: 0; padding: 20px 15px; border-right: 1px solid #e3e8ee; background: #fbfcfe; }
 .agenda-create-button { min-height: 42px; display: inline-flex; align-items: center; gap: 8px; padding: 0 17px; border: 0; border-radius: 6px; color: #fff; background: var(--blue-600); font-weight: 750; white-space: nowrap; cursor: pointer; transition: background 150ms ease, transform 150ms ease; }
@@ -3054,7 +3063,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 
 /* Fiscalização: fluxo Agenda -> relatório -> evidências */
 .oversight-page { min-height: 100%; background: #f4f7fa; }
-.oversight-heading { align-items: center; padding-bottom: 20px; }
+.oversight-heading { align-items: center; }
 .oversight-heading .primary-button { white-space: nowrap; }
 .oversight-content { display: grid; gap: 18px; padding: 0 36px 36px; }
 .oversight-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -3356,11 +3365,6 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   .scenario-candidate-search { align-items: stretch; flex-direction: column; }
   .scenario-candidate-search .secondary-button { width: 100%; justify-content: center; }
 }
-.electoral-title-icon {
-  flex: 0 0 auto;
-  color: var(--primary, #315c4d);
-}
-
 .electoral-foundation-card {
   align-items: flex-start;
   background: linear-gradient(135deg, #f3f8f5, #fff);
@@ -3377,6 +3381,11 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
   flex: 0 0 auto;
 }
 
+.electoral-foundation-card > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .electoral-foundation-card h2, .electoral-foundation-card h3 {
   margin: 0 0 .4rem;
 }
@@ -3384,8 +3393,8 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-foundation-card dl {
   display: grid;
   gap: .75rem;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  margin: 1.25rem 0 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(112px, 100%), 1fr));
+  margin: 1rem 0 0;
 }
 
 .electoral-foundation-card dl div {
@@ -3412,8 +3421,7 @@ td:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space:
 .electoral-coverage-status ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .electoral-coverage-status li { display: inline-grid; grid-template-columns: auto auto; gap: 2px 7px; padding: 7px 10px; border: 1px solid #ead7ae; border-radius: 8px; background: #fff; }
 .electoral-coverage-status li small { grid-column: 1 / -1; color: #875b08; }
-.electoral-page-header { margin-bottom: 18px; }
-.electoral-page-header h1 { display: flex; align-items: center; gap: 10px; }
+.electoral-foundation-page { padding-top: 16px; }
 .electoral-workspace-shell { display: block; }
 .electoral-workspace-content { min-width: 0; }
 .electoral-section-heading { padding: 4px 2px 16px; border-bottom: 1px solid var(--line); }

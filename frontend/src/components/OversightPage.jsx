@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../api";
+import { FeatureHeader } from "./FeatureHeader";
 import { GooglePlaceAutocompleteInput } from "./GooglePlaceAutocompleteInput";
 
 const emptyForm = () => ({
@@ -127,10 +128,9 @@ export function OversightPage() {
   const withEvidence = items.filter((item) => item.evidencias?.length).length;
 
   return <div className="oversight-page">
-    <section className="page-heading oversight-heading">
-      <div><p className="eyebrow">Fiscalização</p><h1>Fiscalizações do gabinete</h1><p>Da vistoria em campo ao relatório final, com evidências e vínculo às demandas dos cidadãos.</p></div>
+    <FeatureHeader className="oversight-heading" eyebrow="Fiscalização" title="Fiscalizações do gabinete" description="Da vistoria em campo ao relatório final, com evidências e vínculo às demandas dos cidadãos.">
       <button className="primary-button compact" onClick={openNew}><Plus size={18} /> Fiscalização</button>
-    </section>
+    </FeatureHeader>
 
     <section className="oversight-content">
       <div className="oversight-metrics">

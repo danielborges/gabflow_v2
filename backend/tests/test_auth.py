@@ -32,6 +32,33 @@ def test_login_resolves_tenant_from_user_email(client):
     assert response.json["user"]["tenant"]["slug"] == "gabinete-b"
 
 
+def test_representative_login_includes_official_photo(app, client):
+    photo_url = "https://camara.test/fotos/parlamentar.jpg"
+    with app.app_context():
+        admin = db.session.execute(
+            select(User).where(User.email == "admin@teste.local")
+        ).scalar_one()
+        admin.tenant.representative_info = {"fotografiaUrl": photo_url}
+        db.session.add(
+            User(
+                tenant_id=admin.tenant_id,
+                name="Parlamentar com Foto",
+                email="parlamentar-foto@teste.local",
+                password_hash=hash_password("SenhaForte123!"),
+                role=Role.REPRESENTATIVE,
+            )
+        )
+        db.session.commit()
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "parlamentar-foto@teste.local", "password": "SenhaForte123!"},
+    )
+
+    assert response.status_code == 200
+    assert response.json["user"]["fotoUrl"] == photo_url
+
+
 def test_login_creates_audit_record(app, client):
     client.post(
         "/api/v1/auth/login",
