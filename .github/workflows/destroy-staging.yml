@@ -53,7 +53,7 @@ jobs:
 
       - name: Grant narrowly scoped teardown permissions
         run: |
-          policy=$(jq -cn '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:["ec2:DisassociateAddress","sqs:SetQueueAttributes"],Resource:"*"}]}')
+          policy=$(jq -cn '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:["ec2:DisassociateAddress","sqs:DeleteQueue","sqs:SetQueueAttributes"],Resource:"*"}]}')
           aws iam put-role-policy \
             --role-name gabflow-staging-github-apply \
             --policy-name gabflow-staging-teardown-temporary \

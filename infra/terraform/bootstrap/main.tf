@@ -441,6 +441,7 @@ data "aws_iam_policy_document" "foundation_apply" {
       "rds:*",
       "sqs:GetQueueAttributes",
       "sqs:ListQueueTags",
+      "sqs:DeleteQueue",
       "sqs:SetQueueAttributes",
       "wafv2:*",
     ]
