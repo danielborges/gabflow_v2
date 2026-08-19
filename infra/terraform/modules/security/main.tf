@@ -52,6 +52,26 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Ensure execution role can write to CloudWatch Logs for ECS tasks (explicitly grant log permissions)
+resource "aws_iam_role_policy" "ecs_execution_logs" {
+  name = "${var.name_prefix}-ecs-execution-logs"
+  role = aws_iam_role.ecs_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ],
+        Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/*:*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "api_task" {
   name               = "${var.name_prefix}-api-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
