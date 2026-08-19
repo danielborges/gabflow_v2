@@ -55,12 +55,12 @@ export default function App() {
     return <Login onLogin={enterWorkspace} />;
   }
 
-  if (!user) {
-    return <LandingPage />;
-  }
-
   if (sharedScenarioMatch) {
     return <SharedScenarioPage token={decodeURIComponent(sharedScenarioMatch[1])} />;
+  }
+
+  if (!user) {
+    return <LandingPage />;
   }
 
   return user.role === "platform_admin" ? (
