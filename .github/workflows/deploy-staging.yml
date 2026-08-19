@@ -30,13 +30,15 @@ jobs:
       EXPECTED_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
       TF_VAR_certificate_arn: ${{ vars.AWS_STAGING_CERTIFICATE_ARN }}
       VITE_GEOAPIFY_MAP_API_KEY: ${{ vars.VITE_GEOAPIFY_MAP_API_KEY }}
+      VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY }}
+      IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Configure AWS credentials with OIDC
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_STAGING_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -58,7 +60,7 @@ jobs:
         run: |
           terraform -chdir="$TF_ROOT" apply -auto-approve \
             -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
-            -var="image_tag=${GITHUB_SHA}" \
+            -var="image_tag=${IMAGE_TAG}" \
             -var="enable_services=false"
 
       - name: Log in to Amazon ECR
@@ -72,25 +74,27 @@ jobs:
 
       - name: Build and publish backend
         run: |
-          docker build -t "${{ steps.repositories.outputs.backend }}:${GITHUB_SHA}" backend
-          docker push "${{ steps.repositories.outputs.backend }}:${GITHUB_SHA}"
+          docker build -t "${{ steps.repositories.outputs.backend }}:${IMAGE_TAG}" backend
+          docker push "${{ steps.repositories.outputs.backend }}:${IMAGE_TAG}"
 
       - name: Build and publish web
         run: |
           test -n "$VITE_GEOAPIFY_MAP_API_KEY"
+          test -n "$VITE_GOOGLE_MAPS_API_KEY"
           docker build --build-arg API_UPSTREAM=127.0.0.1:5000 \
             --build-arg VITE_APP_ENV=staging \
             --build-arg VITE_TERRITORIAL_MAP_ENABLED=true \
             --build-arg VITE_GEOAPIFY_MAP_API_KEY="$VITE_GEOAPIFY_MAP_API_KEY" \
+            --build-arg VITE_GOOGLE_MAPS_API_KEY="$VITE_GOOGLE_MAPS_API_KEY" \
             -f frontend/Dockerfile \
-            -t "${{ steps.repositories.outputs.web }}:${GITHUB_SHA}" .
-          docker push "${{ steps.repositories.outputs.web }}:${GITHUB_SHA}"
+            -t "${{ steps.repositories.outputs.web }}:${IMAGE_TAG}" .
+          docker push "${{ steps.repositories.outputs.web }}:${IMAGE_TAG}"
 
       - name: Register release task definitions
         run: |
           terraform -chdir="$TF_ROOT" apply -auto-approve \
             -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
-            -var="image_tag=${GITHUB_SHA}" \
+            -var="image_tag=${IMAGE_TAG}" \
             -var="enable_services=false"
 
       - name: Run database migration as one-shot task
@@ -118,7 +122,7 @@ jobs:
         run: |
           terraform -chdir="$TF_ROOT" apply -auto-approve \
             -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
-            -var="image_tag=${GITHUB_SHA}" \
+            -var="image_tag=${IMAGE_TAG}" \
             -var="enable_services=true"
 
       - name: Publish staging URL
