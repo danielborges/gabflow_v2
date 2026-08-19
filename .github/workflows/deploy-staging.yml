@@ -139,6 +139,26 @@ jobs:
             log_stream_prefix=$(echo "$describe_json" | jq -r '.tasks[0].containers[] | select(.name=="migration") | .logConfiguration.options."awslogs-stream-prefix" // empty')
             if [ -n "$log_group" ]; then
               echo "Attempting to fetch CloudWatch logs (may require additional permissions): group=$log_group, prefix=$log_stream_prefix"
+            else
+              # Best-effort: derive log group from task definition family (e.g. gabflow-staging-migration)
+              family=$(echo "$task_definition" | awk -F'/' '{print $2}' | awk -F':' '{print $1}')
+              name_prefix=$(echo "$family" | sed 's/-migration$//')
+              log_group="/ecs/${name_prefix}/migration"
+              echo "Derived log_group: $log_group (family: $family, name_prefix: $name_prefix)"
+            fi
+
+            # Attempt to fetch the latest log stream and print recent events (best-effort)
+            if aws logs describe-log-streams --log-group-name "$log_group" --order-by LastEventTime --descending --max-items 1 >/tmp/streams.json 2>/tmp/streams.err; then
+              stream_name=$(jq -r '.logStreams[0].logStreamName' /tmp/streams.json)
+              if [ -n "$stream_name" ]; then
+                echo "Fetching last 200 log events from $log_group / $stream_name"
+                aws logs get-log-events --log-group-name "$log_group" --log-stream-name "$stream_name" --limit 200 --start-from-head false || true
+              else
+                echo "No log streams found in $log_group"
+              fi
+            else
+              echo "Failed to describe log streams for $log_group; see /tmp/streams.err"
+              cat /tmp/streams.err || true
             fi
             exit "$exit_code"
           fi
