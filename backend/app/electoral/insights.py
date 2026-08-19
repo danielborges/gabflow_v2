@@ -13,6 +13,7 @@ from app.electoral.ai_generation import (
     generate_electoral_content,
 )
 from app.electoral.analytics import candidate_results, compare_candidates
+from app.electoral.mandate_intelligence import latest_snapshot
 from app.electoral.web_research import research_electoral_context
 from app.extensions import db
 from app.models import ElectoralInsight, ElectoralInsightFeedback, OutboxEvent
@@ -441,6 +442,7 @@ def _question_output(insight: ElectoralInsight, analysis: dict, output: dict) ->
 
 
 def _ai_output(insight: ElectoralInsight, output: dict) -> dict:
+    _attach_mandate_context(insight, output)
     evidence_map = output.get("_validation_evidence", {})
     citation_map = {str(item.get("id")): item for item in output.get("citations", [])}
     maximum = max(1000, int(current_app.config["ELECTORAL_AI_MAX_EVIDENCE_CHARS"]))
@@ -468,7 +470,14 @@ def _ai_output(insight: ElectoralInsight, output: dict) -> dict:
             f"{question}\nContexto de comparacao: a candidatura de referencia do usuario e "
             f"{candidate_context.get('reference_name')}. As candidaturas analisadas sao "
             f"{', '.join(candidate_context.get('names') or [])}. O recorte territorial e "
-            f"{output['input_snapshot'].get('filters', {}).get('level')}."
+            f"{output['input_snapshot'].get('filters', {}).get('level')}.\n"
+            "Entregue uma resposta executiva direta e um plano pratico. Quando as evidencias "
+            "permitirem, identifique territorios prioritarios e explique o criterio. Proponha "
+            "acoes distribuídas entre agenda territorial, atuacao parlamentar, comunicacao "
+            "publica e aprofundamento de dados, com prioridade e horizonte. Diferencie "
+            "claramente atividade institucional de estrategia politico-eleitoral. Se o recorte "
+            "nao permitir comparar territorios, nao improvise um ranking: explique a lacuna e "
+            "indique qual granularidade ou snapshot precisa ser produzido."
         )
     generated, generation = generate_electoral_content(task, evidence)
     output["input_snapshot"] = {
@@ -486,6 +495,15 @@ def _ai_output(insight: ElectoralInsight, output: dict) -> dict:
             insight.prompt_version = PROMPT_VERSION
         return output
 
+    if generated.executive_summary is not None:
+        output["hypotheses"].append(
+            {
+                "text": generated.executive_summary.text,
+                "status": "EXECUTIVE_SUMMARY",
+                "citation_ids": list(generated.executive_summary.citation_ids),
+                "generated_by_ai": True,
+            }
+        )
     for claim in generated.claims:
         output["facts"].append(
             {
@@ -511,6 +529,10 @@ def _ai_output(insight: ElectoralInsight, output: dict) -> dict:
             "status": "STRATEGIC_RECOMMENDATION",
             "citation_ids": list(item.citation_ids),
             "generated_by_ai": True,
+            "category": item.category,
+            "priority": item.priority,
+            "time_horizon": item.time_horizon,
+            "territory": item.territory,
         }
         for item in generated.recommendations
     )
@@ -523,6 +545,79 @@ def _ai_output(insight: ElectoralInsight, output: dict) -> dict:
     insight.model_name = generation["model"]
     insight.prompt_version = generation["promptVersion"]
     return output
+
+
+def _attach_mandate_context(insight: ElectoralInsight, output: dict) -> None:
+    snapshot = latest_snapshot(insight.tenant_id, insight.mandate_id)
+    if snapshot is None:
+        output["input_snapshot"] = {
+            **output["input_snapshot"],
+            "mandate_context": {"available": False},
+        }
+        return
+
+    territories = []
+    for row in snapshot.payload.get("territories", []):
+        if row.get("scope") != "territory":
+            continue
+        territories.append(
+            {
+                "territory_name": row.get("territory_name"),
+                "suppressed": bool(row.get("suppressed")),
+                "demand_count": row.get("demand_count"),
+                "metrics": row.get("metrics"),
+                "ict": row.get("ict"),
+                "alerts": row.get("alerts") or [],
+                "public_commitments": row.get("public_commitments"),
+                "electoral_overlay": row.get("electoral_overlay"),
+            }
+        )
+    mandate_summary = next(
+        (
+            row
+            for row in snapshot.payload.get("territories", [])
+            if row.get("scope") == "mandate"
+        ),
+        None,
+    )
+    evidence_payload = {
+        "period_start": snapshot.period_start.isoformat(),
+        "period_end": snapshot.period_end.isoformat(),
+        "source_cutoff_at": snapshot.source_cutoff_at.isoformat(),
+        "privacy_threshold": snapshot.privacy_threshold,
+        "mandate_summary": mandate_summary,
+        "territories": territories,
+    }
+    citation_id = f"mandate-snapshot-{snapshot.id}"
+    output["citations"].append(
+        {
+            "id": citation_id,
+            "source_type": "MANDATE_AGGREGATE",
+            "title": (
+                "Indicadores agregados do mandato de "
+                f"{snapshot.period_start.isoformat()} a {snapshot.period_end.isoformat()}"
+            ),
+            "source": None,
+            "snapshot_id": str(snapshot.id),
+            "source_hash": snapshot.config_hash,
+            "scope": "AGGREGATED_MANDATE",
+        }
+    )
+    output["_validation_evidence"] = {
+        **output.get("_validation_evidence", {}),
+        citation_id: json.dumps(evidence_payload, ensure_ascii=False, sort_keys=True),
+    }
+    output["input_snapshot"] = {
+        **output["input_snapshot"],
+        "mandate_context": {
+            "available": True,
+            "snapshot_id": str(snapshot.id),
+            "period_start": snapshot.period_start.isoformat(),
+            "period_end": snapshot.period_end.isoformat(),
+            "territory_count": len(territories),
+            "privacy_threshold": snapshot.privacy_threshold,
+        },
+    }
 
 
 def _citation_title(citation: dict) -> str:

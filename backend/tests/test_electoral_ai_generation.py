@@ -1,4 +1,7 @@
 import json
+import uuid
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +12,7 @@ from app.electoral.ai_generation import (
     OllamaElectoralAIProvider,
     generate_electoral_content,
 )
+from app.electoral.insights import _attach_mandate_context
 
 
 def _provider():
@@ -34,6 +38,13 @@ def test_ollama_electoral_provider_uses_schema_and_restricts_citations(monkeypat
             "message": {
                 "content": json.dumps(
                     {
+                        "resumoExecutivo": {
+                            "texto": (
+                                "A resposta deve combinar o resultado oficial com a presenca "
+                                "territorial agregada do mandato."
+                            ),
+                            "citacaoIds": ["dataset-1"],
+                        },
                         "afirmacoes": [
                             {
                                 "texto": "A candidatura recebeu 123 votos no recorte oficial.",
@@ -61,6 +72,10 @@ def test_ollama_electoral_provider_uses_schema_and_restricts_citations(monkeypat
                                     "no territorio."
                                 ),
                                 "citacaoIds": ["dataset-1"],
+                                "categoria": "AGENDA",
+                                "prioridade": "ALTA",
+                                "horizonte": "30_DIAS",
+                                "territorio": "Zona Norte",
                             }
                         ],
                         "perguntasInvestigacao": [
@@ -79,8 +94,12 @@ def test_ollama_electoral_provider_uses_schema_and_restricts_citations(monkeypat
     )
 
     assert result.claims[0].citation_ids == ("dataset-1",)
+    assert result.executive_summary.citation_ids == ("dataset-1",)
     assert result.interpretations[0].citation_ids == ("dataset-1",)
     assert result.recommendations[0].title == "Escuta territorial"
+    assert result.recommendations[0].category == "AGENDA"
+    assert result.recommendations[0].priority == "ALTA"
+    assert result.recommendations[0].territory == "Zona Norte"
     assert result.hypotheses[0].endswith("?")
     assert captured["format"]["properties"]["afirmacoes"]["maxItems"] == 4
     assert captured["format"]["properties"]["recomendacoes"]["maxItems"] == 4
@@ -146,3 +165,49 @@ def test_electoral_generation_falls_back_explicitly_when_provider_is_unavailable
     assert metadata["applied"] is False
     assert metadata["fallbackUsed"] is True
     assert metadata["fallbackReason"] == "ElectoralAIUnavailable"
+
+
+def test_electoral_generation_receives_latest_aggregated_mandate_context(monkeypatch):
+    snapshot_id = uuid.uuid4()
+    snapshot = SimpleNamespace(
+        id=snapshot_id,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 6, 30),
+        source_cutoff_at=datetime(2026, 7, 1, tzinfo=UTC),
+        privacy_threshold=10,
+        config_hash="a" * 64,
+        payload={
+            "territories": [
+                {
+                    "scope": "territory",
+                    "territory_name": "Zona Norte",
+                    "suppressed": False,
+                    "demand_count": 24,
+                    "metrics": {"agenda_realized": 0, "overdue": 4},
+                    "ict": {"score": 42.5},
+                    "alerts": ["Nenhuma agenda territorial realizada no período."],
+                    "public_commitments": {"total": 2, "overdue": 1},
+                    "electoral_overlay": {"votes": 321},
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        "app.electoral.insights.latest_snapshot",
+        lambda _tenant_id, _mandate_id: snapshot,
+    )
+    output = {
+        "input_snapshot": {},
+        "citations": [],
+        "_validation_evidence": {},
+    }
+
+    _attach_mandate_context(
+        SimpleNamespace(tenant_id=uuid.uuid4(), mandate_id=uuid.uuid4()),
+        output,
+    )
+
+    citation_id = f"mandate-snapshot-{snapshot_id}"
+    assert output["input_snapshot"]["mandate_context"]["territory_count"] == 1
+    assert output["citations"][0]["source_type"] == "MANDATE_AGGREGATE"
+    assert '"territory_name": "Zona Norte"' in output["_validation_evidence"][citation_id]

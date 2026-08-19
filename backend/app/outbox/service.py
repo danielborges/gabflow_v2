@@ -23,7 +23,8 @@ RAG_QUEUE_EVENT_TYPES = {
     "RevarreduraSegurancaRag",
     "AuditoriaAutomatizadaRls",
 }
-WORKER_QUEUES = {"all", "default", "rag"}
+LOCAL_AI_QUEUE_EVENT_TYPES = {"electoral.insight.requested"}
+WORKER_QUEUES = {"all", "default", "rag", "local-ai"}
 
 
 @dataclass(frozen=True)
@@ -66,8 +67,14 @@ def claim_events(worker_id: str) -> list[uuid.UUID]:
         raise ValueError(f"Fila de worker inválida: {queue}.")
     if queue == "rag":
         statement = statement.where(OutboxEvent.event_type.in_(RAG_QUEUE_EVENT_TYPES))
+    elif queue == "local-ai":
+        statement = statement.where(OutboxEvent.event_type.in_(LOCAL_AI_QUEUE_EVENT_TYPES))
     elif queue == "default":
-        statement = statement.where(OutboxEvent.event_type.not_in(RAG_QUEUE_EVENT_TYPES))
+        statement = statement.where(
+            OutboxEvent.event_type.not_in(
+                RAG_QUEUE_EVENT_TYPES | LOCAL_AI_QUEUE_EVENT_TYPES
+            )
+        )
     statement = (
         statement.order_by(OutboxEvent.occurred_at, OutboxEvent.id)
         .limit(current_app.config["WORKER_BATCH_SIZE"])

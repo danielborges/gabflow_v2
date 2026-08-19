@@ -102,7 +102,7 @@ class Config:
         "ELECTORAL_AI_MODEL", "qwen2.5:7b"
     )
     ELECTORAL_AI_PROMPT_VERSION = os.getenv(
-        "ELECTORAL_AI_PROMPT_VERSION", "electoral-grounded-generation-v1"
+        "ELECTORAL_AI_PROMPT_VERSION", "electoral-strategic-advisor-v2"
     )
     ELECTORAL_AI_TIMEOUT_SECONDS = int(os.getenv("ELECTORAL_AI_TIMEOUT_SECONDS", "240"))
     ELECTORAL_AI_MAX_EVIDENCE_CHARS = int(

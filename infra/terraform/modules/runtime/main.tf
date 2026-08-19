@@ -53,6 +53,12 @@ locals {
     [for item in local.common_environment : item if item.name != "OLLAMA_BASE_URL"],
     [
       { name = "OLLAMA_BASE_URL", value = var.enable_ollama_sidecar ? "http://127.0.0.1:11434" : "http://127.0.0.1:9" },
+      { name = "ELECTORAL_AI_ENABLED", value = tostring(var.enable_ollama_sidecar) },
+      { name = "ELECTORAL_AI_PROVIDER", value = "ollama" },
+      { name = "ELECTORAL_AI_MODEL", value = var.ollama_model },
+      { name = "ELECTORAL_AI_PROMPT_VERSION", value = "electoral-strategic-advisor-v2" },
+      { name = "ELECTORAL_AI_MAX_TOKENS", value = "1536" },
+      { name = "ELECTORAL_AI_MAX_EVIDENCE_CHARS", value = "16000" },
       { name = "RAG_STRUCTURED_INTERPRETATION_ENABLED", value = tostring(var.enable_ollama_sidecar) },
       { name = "RAG_STRUCTURED_INTERPRETATION_PROVIDER", value = "ollama" },
       { name = "RAG_STRUCTURED_INTERPRETATION_MODEL", value = var.ollama_model },
@@ -107,7 +113,7 @@ locals {
     environment = [
       { name = "OLLAMA_HOST", value = "127.0.0.1:11434" },
       { name = "OLLAMA_MODELS", value = "/root/.ollama/models" },
-      { name = "OLLAMA_CONTEXT_LENGTH", value = "2048" },
+      { name = "OLLAMA_CONTEXT_LENGTH", value = "8192" },
       { name = "OLLAMA_NUM_PARALLEL", value = "1" },
       { name = "OLLAMA_MAX_LOADED_MODELS", value = "1" },
       { name = "OLLAMA_KEEP_ALIVE", value = "5m" },
@@ -137,6 +143,31 @@ locals {
     }
     readonlyRootFilesystem = false
     linuxParameters        = { initProcessEnabled = true }
+  }
+  local_ai_worker_container = {
+    name       = "local-ai-worker"
+    image      = local.backend_image
+    essential  = true
+    entryPoint = ["/app/worker-entrypoint.sh"]
+    cpu        = 512
+    memory     = 512
+    dependsOn = [
+      { containerName = "ollama", condition = "HEALTHY" },
+    ]
+    environment = concat(local.app_environment, [
+      { name = "WORKER_QUEUE", value = "local-ai" },
+      { name = "WORKER_RUN_SCHEDULER", value = "false" },
+    ])
+    secrets = concat(local.runtime_secrets, [
+      { name = "DATABASE_URL", valueFrom = local.secret_key.worker_database },
+    ])
+    mountPoints = local.data_mounts
+    stopTimeout = 120
+    logConfiguration = {
+      logDriver = "awslogs"
+      options   = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name })
+    }
+    linuxParameters = { initProcessEnabled = true }
   }
 }
 
@@ -443,9 +474,12 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode(concat([
     { name = "parser", image = local.backend_image, essential = true, entryPoint = ["/app/parser-entrypoint.sh"], cpu = 512, memory = 1024, environment = [{ name = "PARSER_ALLOWED_ROOTS", value = "/app/data/attachments:/app/data/rag" }, { name = "DOCUMENT_PARSER_SOCKET_PATH", value = "/run/gabflow-parser/parser.sock" }], mountPoints = local.parser_mounts, healthCheck = { command = ["CMD-SHELL", "test -S /run/gabflow-parser/parser.sock"], interval = 10, timeout = 5, retries = 5, startPeriod = 30 }, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false, linuxParameters = { initProcessEnabled = true } },
     { name = "clamav", image = "clamav/clamav:1.4", essential = true, cpu = 1024, memory = 2048, healthCheck = { command = ["CMD-SHELL", "clamdscan --ping 1 || exit 1"], interval = 30, timeout = 10, retries = 5, startPeriod = 120 }, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) } },
-    { name = "api", image = local.backend_image, essential = true, cpu = 1536, memory = var.enable_ollama_sidecar ? 3072 : 3584, portMappings = [{ containerPort = 5000, protocol = "tcp" }], dependsOn = [{ containerName = "parser", condition = "HEALTHY" }, { containerName = "clamav", condition = "HEALTHY" }], environment = concat(local.app_environment, [{ name = "COOKIE_SECURE", value = tostring(local.certificate_arn != null) }, { name = "RUN_MIGRATIONS_ON_START", value = "false" }, { name = "RUN_SEEDS_ON_START", value = "false" }]), secrets = concat(local.runtime_secrets, [{ name = "DATABASE_URL", valueFrom = local.secret_key.api_database }, { name = "METRICS_BEARER_TOKEN", valueFrom = local.secret_key.metrics_token }]), mountPoints = concat(local.data_mounts, [{ sourceVolume = "parser-socket", containerPath = "/run/gabflow-parser", readOnly = false }]), healthCheck = { command = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/v1/ready')\""], interval = 15, timeout = 5, retries = 5, startPeriod = 60 }, stopTimeout = 60, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false, linuxParameters = { initProcessEnabled = true } },
+    { name = "api", image = local.backend_image, essential = true, cpu = var.enable_ollama_sidecar ? 1024 : 1536, memory = var.enable_ollama_sidecar ? 2560 : 3584, portMappings = [{ containerPort = 5000, protocol = "tcp" }], dependsOn = [{ containerName = "parser", condition = "HEALTHY" }, { containerName = "clamav", condition = "HEALTHY" }], environment = concat(local.app_environment, [{ name = "COOKIE_SECURE", value = tostring(local.certificate_arn != null) }, { name = "RUN_MIGRATIONS_ON_START", value = "false" }, { name = "RUN_SEEDS_ON_START", value = "false" }]), secrets = concat(local.runtime_secrets, [{ name = "DATABASE_URL", valueFrom = local.secret_key.api_database }, { name = "METRICS_BEARER_TOKEN", valueFrom = local.secret_key.metrics_token }]), mountPoints = concat(local.data_mounts, [{ sourceVolume = "parser-socket", containerPath = "/run/gabflow-parser", readOnly = false }]), healthCheck = { command = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/v1/ready')\""], interval = 15, timeout = 5, retries = 5, startPeriod = 60 }, stopTimeout = 60, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false, linuxParameters = { initProcessEnabled = true } },
     { name = "web", image = local.web_image, essential = true, cpu = 256, memory = 512, portMappings = [{ containerPort = 80, protocol = "tcp" }], dependsOn = [{ containerName = "api", condition = "HEALTHY" }], healthCheck = { command = ["CMD-SHELL", "wget -q --spider http://127.0.0.1/api/v1/ready"], interval = 15, timeout = 5, retries = 5, startPeriod = 30 }, logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["app"].name }) }, readonlyRootFilesystem = false },
-  ], var.enable_ollama_sidecar ? [local.ollama_container] : []))
+    ], [
+    for container in [local.ollama_container, local.local_ai_worker_container] : container
+    if var.enable_ollama_sidecar
+  ]))
 }
 
 resource "aws_ecs_task_definition" "worker" {
