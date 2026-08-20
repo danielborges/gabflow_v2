@@ -1,0 +1,99 @@
+name: Destroy AWS staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Digite DESTROY-STAGING-AND-DATA para confirmar a exclusao permanente
+        required: true
+        type: string
+      stale_lock_id:
+        description: ID opcional de um lock Terraform deixado por uma execucao cancelada
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  destroy:
+    name: Destroy staging and its data
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      TF_ROOT: infra/terraform/environments/staging
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      AWS_REGION: ${{ vars.AWS_STAGING_REGION }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
+      TF_VAR_certificate_arn: ${{ vars.AWS_STAGING_CERTIFICATE_ARN }}
+      STAGING_NAME_PREFIX: gabflow-staging
+
+    steps:
+      - name: Validate destructive confirmation
+        shell: bash
+        run: |
+          if [[ "${{ inputs.confirmation }}" != "DESTROY-STAGING-AND-DATA" ]]; then
+            echo "Confirmation text does not match. Nothing was changed."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Grant narrowly scoped teardown permissions
+        id: grant_teardown_permissions
+        run: |
+          policy=$(jq -cn '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:["ec2:DisassociateAddress","sqs:DeleteQueue","sqs:SetQueueAttributes"],Resource:"*"}]}')
+          aws iam put-role-policy \
+            --role-name gabflow-staging-github-apply \
+            --policy-name gabflow-staging-teardown-temporary \
+            --policy-document "$policy"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Initialize Terraform
+        run: >-
+          terraform -chdir="$TF_ROOT" init
+          -backend-config="bucket=${{ vars.AWS_STAGING_STATE_BUCKET }}"
+          -backend-config="region=$AWS_REGION"
+          -backend-config="kms_key_id=${{ vars.AWS_STAGING_STATE_KMS_KEY_ARN }}"
+
+      - name: Release confirmed stale Terraform lock
+        if: ${{ inputs.stale_lock_id != '' }}
+        run: terraform -chdir="$TF_ROOT" force-unlock -force "${{ inputs.stale_lock_id }}"
+
+      - name: Prepare protected resources for teardown
+        run: bash .github/scripts/prepare-staging-teardown.sh
+
+      - name: Destroy staging infrastructure and data
+        run: |
+          terraform -chdir="$TF_ROOT" destroy -auto-approve \
+            -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
+            -var="enable_services=false" \
+            -var="allow_destroy=true"
+
+      - name: Record result
+        run: echo "AWS staging infrastructure managed by Terraform was destroyed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary teardown permissions
+        if: ${{ always() && steps.grant_teardown_permissions.outcome == 'success' }}
+        run: |
+          aws iam delete-role-policy \
+            --role-name gabflow-staging-github-apply \
+            --policy-name gabflow-staging-teardown-temporary
