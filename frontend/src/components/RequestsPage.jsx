@@ -443,15 +443,66 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
   const inputId = useId();
   const listboxId = useId();
   const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(() => citizens.find((item) => item.id === value) || null);
+  const [citizenOptions, setCitizenOptions] = useState(() => citizens.slice(0, 12));
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
-  const selected = citizens.find((item) => item.id === value);
-  const filteredCitizens = citizens
-    .filter((citizen) => citizenMatchesQuery(citizen, query))
-    .slice(0, 12);
-  const options = [{ id: "", nome: "Não informado", empty: true }, ...filteredCitizens];
+  const options = [{ id: "", nome: "Não informado", empty: true }, ...citizenOptions];
+
+  useEffect(() => {
+    if (!value) {
+      setSelected(null);
+      return undefined;
+    }
+    const knownCitizen = citizens.find((item) => item.id === value);
+    if (knownCitizen) {
+      setSelected(knownCitizen);
+      return undefined;
+    }
+    let active = true;
+    apiRequest(`/api/v1/cidadaos/${value}`)
+      .then((data) => {
+        if (active) setSelected(data?.content?.[0] || data);
+      })
+      .catch(() => {
+        if (active) setSelected(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [citizens, value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let active = true;
+    setLoading(true);
+    setSearchError("");
+    const timer = setTimeout(async () => {
+      const params = new URLSearchParams({ limite: "12" });
+      if (query.trim()) params.set("q", query.trim());
+      try {
+        const data = await apiRequest(`/api/v1/cidadaos?${params}`);
+        if (!active) return;
+        setCitizenOptions(data.content || []);
+        setActiveIndex(-1);
+      } catch (requestError) {
+        if (!active) return;
+        setCitizenOptions([]);
+        setSearchError(requestError.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [open, query]);
 
   function selectCitizen(citizen) {
+    setSelected(citizen.empty ? null : citizen);
     onChange(citizen.id);
     setQuery("");
     setOpen(false);
@@ -459,7 +510,10 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
   }
 
   function changeQuery(event) {
-    if (selected) onChange("");
+    if (selected) {
+      setSelected(null);
+      onChange("");
+    }
     setQuery(event.target.value);
     setOpen(true);
     setActiveIndex(-1);
@@ -482,7 +536,7 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
     }
   }
 
-  const displayValue = selected ? selected.nome : query;
+  const displayValue = selected ? selected.nomeSocial || selected.nome || "" : query;
 
   return (
     <div
@@ -525,7 +579,11 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
       </div>
       {open && (
         <div className="search-select-menu citizen-search-menu" id={listboxId} role="listbox">
-          {options.length === 1 ? (
+          {loading ? (
+            <p>Buscando cidadãos...</p>
+          ) : searchError ? (
+            <p className="search-select-error">{searchError}</p>
+          ) : options.length === 1 ? (
             <p>Nenhum cidadão encontrado.</p>
           ) : options.map((option, index) => (
             <div
@@ -538,7 +596,7 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => selectCitizen(option)}
             >
-              <strong>{option.empty ? "Sem cidadão" : option.nome}</strong>
+              <strong>{option.empty ? "Sem cidadão" : option.nomeSocial || option.nome}</strong>
               <span>{option.empty ? "Registrar sem vincular pessoa" : citizenContactSummary(option)}</span>
               <small>{option.empty ? "" : option.canalPreferencial || "Contato"}</small>
             </div>
@@ -2187,29 +2245,6 @@ function slaLabel(value) {
 
 function removeEmpty(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== ""));
-}
-
-function normalizeSearchValue(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function citizenSearchHaystack(citizen) {
-  return normalizeSearchValue([
-    citizen.nome,
-    citizen.nomeSocial,
-    citizen.cpf,
-    citizen.canalPreferencial,
-    ...(citizen.contatos || []).flatMap((contact) => [contact.tipo, contact.valor]),
-  ].filter(Boolean).join(" "));
-}
-
-function citizenMatchesQuery(citizen, query) {
-  const normalizedQuery = normalizeSearchValue(query.trim());
-  if (!normalizedQuery) return true;
-  return citizenSearchHaystack(citizen).includes(normalizedQuery);
 }
 
 function citizenContactSummary(citizen) {

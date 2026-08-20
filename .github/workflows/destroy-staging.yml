@@ -32,6 +32,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_STAGING_REGION }}
       EXPECTED_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
       TF_VAR_certificate_arn: ${{ vars.AWS_STAGING_CERTIFICATE_ARN }}
+      STAGING_NAME_PREFIX: gabflow-staging
 
     steps:
       - name: Validate destructive confirmation
@@ -52,6 +53,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Grant narrowly scoped teardown permissions
+        id: grant_teardown_permissions
         run: |
           policy=$(jq -cn '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:["ec2:DisassociateAddress","sqs:DeleteQueue","sqs:SetQueueAttributes"],Resource:"*"}]}')
           aws iam put-role-policy \
@@ -76,29 +78,8 @@ jobs:
         if: ${{ inputs.stale_lock_id != '' }}
         run: terraform -chdir="$TF_ROOT" force-unlock -force "${{ inputs.stale_lock_id }}"
 
-      - name: Disable deletion protection
-        run: |
-          state=$(terraform -chdir="$TF_ROOT" state list)
-          targets=()
-          for address in \
-            'module.runtime.aws_db_instance.this' \
-            'module.runtime.aws_lb.this' \
-            'module.runtime.aws_ecr_repository.this["backend"]' \
-            'module.runtime.aws_ecr_repository.this["web"]'; do
-            if grep -Fxq "$address" <<< "$state"; then
-              targets+=("-target=$address")
-            fi
-          done
-
-          if (( ${#targets[@]} > 0 )); then
-            terraform -chdir="$TF_ROOT" apply -auto-approve \
-              -var="expected_account_id=$EXPECTED_ACCOUNT_ID" \
-              -var="enable_services=false" \
-              -var="allow_destroy=true" \
-              "${targets[@]}"
-          else
-            echo "No protected resources remain in Terraform state."
-          fi
+      - name: Prepare protected resources for teardown
+        run: bash .github/scripts/prepare-staging-teardown.sh
 
       - name: Destroy staging infrastructure and data
         run: |
@@ -111,7 +92,7 @@ jobs:
         run: echo "AWS staging infrastructure managed by Terraform was destroyed." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove temporary teardown permissions
-        if: ${{ always() }}
+        if: ${{ always() && steps.grant_teardown_permissions.outcome == 'success' }}
         run: |
           aws iam delete-role-policy \
             --role-name gabflow-staging-github-apply \
