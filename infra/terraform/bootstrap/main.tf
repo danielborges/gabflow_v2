@@ -316,6 +316,7 @@ data "aws_iam_policy_document" "foundation_apply" {
       "ec2:DeleteVpcEndpoints",
       "ec2:Describe*",
       "ec2:DetachInternetGateway",
+      "ec2:DisassociateAddress",
       "ec2:DisassociateRouteTable",
       "ec2:ModifySubnetAttribute",
       "ec2:ModifyVpcAttribute",
@@ -353,6 +354,8 @@ data "aws_iam_policy_document" "foundation_apply" {
       "logs:CreateLogGroup",
       "logs:DeleteLogGroup",
       "logs:DescribeLogGroups",
+      "logs:DescribeLogStreams",
+      "logs:GetLogEvents",
       "logs:ListTagsForResource",
       "logs:PutRetentionPolicy",
       "logs:TagResource",
@@ -438,6 +441,8 @@ data "aws_iam_policy_document" "foundation_apply" {
       "rds:*",
       "sqs:GetQueueAttributes",
       "sqs:ListQueueTags",
+      "sqs:DeleteQueue",
+      "sqs:SetQueueAttributes",
       "wafv2:*",
     ]
     resources = ["*"]

@@ -3,6 +3,10 @@ name: Deploy staging
 on:
   workflow_dispatch:
     inputs:
+      cost_confirmation:
+        description: Digite ENABLE-PAID-AWS-STAGING para confirmar a retomada dos custos AWS
+        required: true
+        type: string
       activate_services:
         description: Ativar API e workers depois da migration
         required: true
@@ -34,6 +38,14 @@ jobs:
       IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
+      - name: Validate paid staging confirmation
+        shell: bash
+        run: |
+          if [[ "${{ inputs.cost_confirmation }}" != "ENABLE-PAID-AWS-STAGING" ]]; then
+            echo "Paid AWS staging remains disabled. Nothing was changed."
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v7
 
@@ -100,10 +112,17 @@ jobs:
       - name: Run database migration as one-shot task
         id: migration
         run: |
+          set -o pipefail
           cluster=$(terraform -chdir="$TF_ROOT" output -raw ecs_cluster_name)
           task_definition=$(terraform -chdir="$TF_ROOT" output -raw migration_task_definition_arn)
           security_group=$(terraform -chdir="$TF_ROOT" output -raw task_security_group_id)
           subnets=$(terraform -chdir="$TF_ROOT" output -json runtime_private_subnet_ids | jq -r 'join(",")')
+          task_definition_json=$(aws ecs describe-task-definition \
+            --task-definition "$task_definition" \
+            --query 'taskDefinition.containerDefinitions[?name==`migration`] | [0]' \
+            --output json)
+          log_group=$(jq -r '.logConfiguration.options."awslogs-group"' <<< "$task_definition_json")
+          log_stream_prefix=$(jq -r '.logConfiguration.options."awslogs-stream-prefix"' <<< "$task_definition_json")
           task_arn=$(aws ecs run-task \
             --cluster "$cluster" \
             --task-definition "$task_definition" \
@@ -111,11 +130,27 @@ jobs:
             --platform-version 1.4.0 \
             --network-configuration "awsvpcConfiguration={subnets=[$subnets],securityGroups=[$security_group],assignPublicIp=DISABLED}" \
             --query 'tasks[0].taskArn' --output text)
-          test "$task_arn" != "None"
+          if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+            echo "The migration task could not be started."
+            exit 1
+          fi
           aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task_arn"
-          exit_code=$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" \
-            --query 'tasks[0].containers[?name==`migration`].exitCode | [0]' --output text)
-          test "$exit_code" = "0"
+          task_json=$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" --output json)
+          exit_code=$(jq -r '.tasks[0].containers[] | select(.name == "migration") | .exitCode // empty' <<< "$task_json")
+          if [ "$exit_code" != "0" ]; then
+            task_id=${task_arn##*/}
+            log_stream="${log_stream_prefix}/migration/${task_id}"
+            echo "Migration failed with exit code ${exit_code:-unknown}."
+            jq '.tasks[0] | {stopCode, stoppedReason, containers: [.containers[] | {name, exitCode, reason}]}' <<< "$task_json"
+            echo "CloudWatch logs from $log_group / $log_stream:"
+            aws logs get-log-events \
+              --log-group-name "$log_group" \
+              --log-stream-name "$log_stream" \
+              --limit 200 \
+              --query 'events[].message' \
+              --output text || true
+            exit 1
+          fi
 
       - name: Activate application services
         if: ${{ inputs.activate_services }}

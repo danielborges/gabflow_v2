@@ -71,6 +71,11 @@ variable "enable_services" {
   description = "Ativa os services somente depois que a tag existe no ECR e o secret foi preenchido."
   default     = false
 }
+variable "allow_destroy" {
+  type        = bool
+  description = "Permite remover recursos com dados e protecao de exclusao durante o teardown controlado."
+  default     = false
+}
 variable "certificate_arn" {
   type        = string
   description = "Certificado ACM regional. Sem ele o staging sobe apenas em HTTP e nao pode receber a Meta."

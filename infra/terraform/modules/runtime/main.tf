@@ -175,6 +175,7 @@ resource "aws_ecr_repository" "this" {
   for_each             = local.repositories
   name                 = "${var.name_prefix}/${each.key}"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = var.allow_destroy
   encryption_configuration {
     encryption_type = "KMS"
     kms_key         = var.kms_key_arn
@@ -298,7 +299,7 @@ resource "aws_db_instance" "this" {
   backup_window                 = "03:00-04:00"
   maintenance_window            = "sun:04:00-sun:05:00"
   performance_insights_enabled  = true
-  deletion_protection           = true
+  deletion_protection           = !var.allow_destroy
   skip_final_snapshot           = true
   auto_minor_version_upgrade    = true
   copy_tags_to_snapshot         = true
@@ -347,6 +348,16 @@ resource "aws_iam_role_policy" "execution_secrets" {
     { Effect = "Allow", Action = ["kms:Decrypt"], Resource = [var.kms_key_arn] },
   ] })
 }
+
+resource "aws_iam_role_policy" "migration_master_secret" {
+  name = "${var.name_prefix}-migration-master-secret"
+  role = var.migration_task_role_name
+  policy = jsonencode({ Version = "2012-10-17", Statement = [
+    { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [aws_db_instance.this.master_user_secret[0].secret_arn] },
+    { Effect = "Allow", Action = ["kms:Decrypt"], Resource = [var.kms_key_arn] },
+  ] })
+}
+
 resource "aws_iam_role_policy" "efs" {
   for_each = { api = var.api_task_role_name, worker = var.worker_task_role_name }
   name     = "${var.name_prefix}-${each.key}-efs"
@@ -374,7 +385,7 @@ resource "aws_lb" "this" {
   security_groups            = [aws_security_group.alb.id]
   subnets                    = var.public_subnet_ids
   drop_invalid_header_fields = true
-  enable_deletion_protection = true
+  enable_deletion_protection = !var.allow_destroy
 }
 resource "aws_lb_target_group" "app" {
   name                 = substr("${var.name_prefix}-app", 0, 32)
@@ -516,7 +527,24 @@ resource "aws_ecs_task_definition" "migration" {
   memory                   = 2048
   execution_role_arn       = var.ecs_execution_role_arn
   task_role_arn            = var.migration_task_role_arn
-  container_definitions    = jsonencode([{ name = "migration", image = local.backend_image, essential = true, command = ["true"], environment = concat(local.common_environment, [{ name = "RUN_MIGRATIONS_ON_START", value = "true" }, { name = "RUN_SEEDS_ON_START", value = "false" }]), secrets = concat(local.runtime_secrets, [{ name = "DATABASE_URL", valueFrom = local.secret_key.migration_database }]), logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["migration"].name }) } }])
+  container_definitions = jsonencode([{
+    name       = "migration"
+    image      = local.backend_image
+    essential  = true
+    entryPoint = ["/usr/local/bin/asm-exec", "--", "/app/migration-entrypoint.sh"]
+    command    = ["true"]
+    environment = concat(local.common_environment, [
+      { name = "RUN_MIGRATIONS_ON_START", value = "true" },
+      { name = "RUN_SEEDS_ON_START", value = "false" },
+      { name = "RDS_DATABASE_HOST", value = aws_db_instance.this.address },
+      { name = "RDS_DATABASE_PORT", value = tostring(aws_db_instance.this.port) },
+      { name = "RDS_DATABASE_NAME", value = aws_db_instance.this.db_name },
+      { name = "RDS_MASTER_USERNAME", value = "{{resolve:secretsmanager:${aws_db_instance.this.master_user_secret[0].secret_arn}:SecretString:username}}" },
+      { name = "RDS_MASTER_PASSWORD", value = "{{resolve:secretsmanager:${aws_db_instance.this.master_user_secret[0].secret_arn}:SecretString:password}}" },
+    ])
+    secrets          = local.runtime_secrets
+    logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-group = aws_cloudwatch_log_group.this["migration"].name }) }
+  }])
 }
 
 resource "aws_ecs_task_definition" "database_bootstrap" {
