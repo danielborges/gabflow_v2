@@ -1,6 +1,6 @@
 import importlib.util
-from importlib.machinery import SourceFileLoader
 import json
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from unittest.mock import patch
 
