@@ -178,3 +178,22 @@ def test_non_citizen_interpretation_removes_name_filter():
         "metrica": "CONTAGEM",
         "agruparPor": "TEMA",
     }
+
+
+def test_territory_interpretation_normalizes_percentage_confidence_and_group():
+    result = _validated_merge(
+        {"dataset": None, "metrica": "CONTAGEM", "agruparPor": "NENHUM"},
+        {
+            "dataset": "TERRITORIOS",
+            "metrica": "CONTAGEM",
+            "agruparPor": "TERRITORIO",
+            "nome": "Territórios cadastrados",
+            "confianca": 100,
+        },
+    )
+
+    assert result == {
+        "dataset": "TERRITORIOS",
+        "metrica": "CONTAGEM",
+        "agruparPor": "NENHUM",
+    }

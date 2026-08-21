@@ -404,6 +404,18 @@ function RequestForm({ references, initialCitizenId = "", canDistribute = false,
         <header><div><p className="eyebrow">Novo atendimento</p><h2 id="new-request-title">Registrar solicitação</h2></div><CloseButton onClick={onClose} /></header>
         <form className="request-form" onSubmit={submit}>
           <div className="form-grid">
+            <CitizenSearchSelect
+              citizens={references.citizens}
+              value={form.cidadaoId}
+              disabled={Boolean(initialCitizenId)}
+              onChange={(cidadaoId) => setForm((current) => ({ ...current, cidadaoId }))}
+            />
+            <label>Organização<select name="organizacaoId" value={form.organizacaoId} onChange={change}><option value="">Não informada</option>{references.organizations.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
+          </div>
+          <label>Título<input name="titulo" maxLength="180" value={form.titulo} onChange={change} placeholder="Resumo objetivo da demanda" /></label>
+          <label>Descrição<textarea name="descricao" minLength="3" required rows="5" value={form.descricao} onChange={change} placeholder="Descreva o relato recebido e os fatos relevantes." /></label>
+          <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={(endereco) => setForm((current) => ({ ...current, endereco }))} placeholder="Logradouro, número e referência" territoryBounds={references.jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
+          <div className="form-grid">
             <label>Origem<select name="origem" value={form.origem} onChange={change}>{sources.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Categoria<select name="categoriaId" value={form.categoriaId} onChange={change}><option value="">Sem categoria</option>{references.categories.filter((item) => item.ativa).map((item) => <option key={item.id} value={item.id}>{item.nome} ({item.slaHoras}h)</option>)}</select></label>
           </div>
@@ -419,18 +431,7 @@ function RequestForm({ references, initialCitizenId = "", canDistribute = false,
             <label>Impacto<select name="impacto" value={form.impacto} onChange={change}><LevelOptions /></select></label>
             <label>Urgência<select name="urgencia" value={form.urgencia} onChange={change}><LevelOptions /></select></label>
           </div>
-          <div className="form-grid">
-            <CitizenSearchSelect
-              citizens={references.citizens}
-              value={form.cidadaoId}
-              onChange={(cidadaoId) => setForm((current) => ({ ...current, cidadaoId }))}
-            />
-            <label>Organização<select name="organizacaoId" value={form.organizacaoId} onChange={change}><option value="">Não informada</option>{references.organizations.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
-          </div>
           {canDistribute && <label>Responsável<select name="responsavelId" value={form.responsavelId} onChange={change}><option value="">Fila geral</option>{references.users.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>}
-          <label>Título<input name="titulo" maxLength="180" value={form.titulo} onChange={change} placeholder="Resumo objetivo da demanda" /></label>
-          <label>Descrição<textarea name="descricao" minLength="3" required rows="5" value={form.descricao} onChange={change} placeholder="Descreva o relato recebido e os fatos relevantes." /></label>
-          <label>Endereço<GooglePlaceAutocompleteInput value={form.endereco} onChange={(endereco) => setForm((current) => ({ ...current, endereco }))} placeholder="Logradouro, número e referência" territoryBounds={references.jurisdiction?.limites} inputProps={{ name: "endereco", "aria-label": "Endereço" }} /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <footer><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button compact" disabled={saving}><Plus size={18} />{saving ? "Salvando..." : "Registrar"}</button></footer>
         </form>
@@ -439,7 +440,7 @@ function RequestForm({ references, initialCitizenId = "", canDistribute = false,
   );
 }
 
-function CitizenSearchSelect({ citizens = [], value, onChange }) {
+function CitizenSearchSelect({ citizens = [], value, disabled = false, onChange }) {
   const inputId = useId();
   const listboxId = useId();
   const [query, setQuery] = useState("");
@@ -540,7 +541,8 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
 
   return (
     <div
-      className="request-search-select citizen-search-select"
+      className={`request-search-select citizen-search-select ${disabled ? "is-disabled" : ""}`}
+      aria-disabled={disabled}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false);
@@ -559,6 +561,7 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
           aria-expanded={open}
           aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
           autoComplete="off"
+          disabled={disabled}
           placeholder="Busque por nome, CPF ou contato"
           value={displayValue}
           onChange={changeQuery}
@@ -570,6 +573,7 @@ function CitizenSearchSelect({ citizens = [], value, onChange }) {
         />
         <button
           type="button"
+          disabled={disabled}
           className="search-select-toggle"
           aria-label={open ? "Fechar opções" : "Abrir opções"}
           onClick={() => setOpen((current) => !current)}

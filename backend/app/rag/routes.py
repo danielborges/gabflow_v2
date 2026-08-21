@@ -720,6 +720,29 @@ def download_version(document_id: uuid.UUID, version_id: uuid.UUID):
 def create_assistant_query():
     tenant_id, user_id = _context()
     payload = request.get_json(silent=True) or {}
+    conversation_value = payload.get("conversaId")
+    if conversation_value:
+        try:
+            conversation_id = uuid.UUID(str(conversation_value))
+        except ValueError:
+            return jsonify(error="validation_error", message="Conversa inválida."), 422
+        previous_queries = list(
+            db.session.scalars(
+                select(RagAssistantQuery)
+                .where(
+                    RagAssistantQuery.tenant_id == tenant_id,
+                    RagAssistantQuery.user_id == user_id,
+                    RagAssistantQuery.conversation_id == conversation_id,
+                )
+                .order_by(RagAssistantQuery.turn_index)
+            )
+        )
+        if not previous_queries:
+            return jsonify(error="resource_not_found", message="Conversa não encontrada."), 404
+    else:
+        conversation_id = uuid.uuid4()
+        previous_queries = []
+    context_queries = previous_queries[-6:]
     started = time.perf_counter()
     try:
         answer = route_query(
@@ -729,6 +752,15 @@ def create_assistant_query():
             limit=payload.get("limite"),
             explicit_filters=payload.get("filtros"),
             canary_key=str(user_id),
+            conversation_context=[
+                {
+                    "consulta": item.query_text,
+                    "resposta": item.response,
+                    "metodo": item.method,
+                    "resultadoEstruturado": item.structured_result,
+                }
+                for item in context_queries
+            ],
         )
     except (TypeError, ValueError) as error:
         return jsonify(error="validation_error", message=str(error)), 422
@@ -740,6 +772,9 @@ def create_assistant_query():
     query = RagAssistantQuery(
         tenant_id=tenant_id,
         user_id=user_id,
+        conversation_id=conversation_id,
+        turn_index=len(previous_queries) + 1,
+        context_query_ids=[str(item.id) for item in context_queries],
         query_text=answer["consulta"],
         query_hash=hashlib.sha256(answer["consulta"].encode("utf-8")).hexdigest(),
         response=answer["resposta"],
@@ -771,6 +806,8 @@ def create_assistant_query():
         answer=answer,
     )
     answer["id"] = str(query.id)
+    answer["conversaId"] = str(query.conversation_id)
+    answer["turno"] = query.turn_index
     answer["avaliacao"] = None
     add_audit(
         tenant_id,

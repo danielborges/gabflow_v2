@@ -99,6 +99,75 @@ it("apresenta uma descrição amigável para respostas baseadas em dados estrutu
   expect(screen.queryByText(/limiar 0,00/)).not.toBeInTheDocument();
 });
 
+it("reexecuta perguntas alteradas e mantém os turnos na mesma conversa", async () => {
+  const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (_url, options = {}) => {
+    const body = JSON.parse(options.body);
+    if (body.consulta === "Qual é o território recordista?") {
+      return {
+        ok: true,
+        json: async () => ({
+          id: "query-turn-1",
+          conversaId: "conversation-1",
+          turno: 1,
+          consulta: body.consulta,
+          resposta: "Centro é o território recordista.",
+          fundamentada: true,
+          recusaConclusiva: false,
+          limiarEvidencia: 0,
+          modeloEmbedding: "NAO_APLICAVEL",
+          metodo: "ESTRUTURADO",
+          seguranca: { promptInjectionDetectado: false, fontesComRisco: [] },
+          fontes: [],
+        }),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        id: "query-turn-2",
+        conversaId: "conversation-1",
+        turno: 2,
+        consulta: body.consulta,
+        resposta: "Zona Norte está em segundo lugar.",
+        fundamentada: true,
+        recusaConclusiva: false,
+        limiarEvidencia: 0,
+        modeloEmbedding: "NAO_APLICAVEL",
+        metodo: "ESTRUTURADO",
+        seguranca: { promptInjectionDetectado: false, fontesComRisco: [] },
+        fontes: [],
+      }),
+    };
+  });
+
+  render(<RagAssistantPage />);
+  const input = screen.getByLabelText("Pergunta");
+  fireEvent.change(input, { target: { value: "Qual é o território recordista?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Consultar" }));
+
+  expect(await screen.findByText("Centro é o território recordista.")).toBeInTheDocument();
+  expect(input).toHaveValue("");
+
+  fireEvent.change(input, { target: { value: "E qual ficou em segundo lugar?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Consultar" }));
+
+  expect(await screen.findByText("Zona Norte está em segundo lugar.")).toBeInTheDocument();
+  expect(screen.getByText("Qual é o território recordista?")).toBeInTheDocument();
+  expect(screen.getByText("E qual ficou em segundo lugar?")).toBeInTheDocument();
+  expect(screen.getByText("Centro é o território recordista.")).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenLastCalledWith(
+    "/api/v1/assistente/consultas",
+    expect.objectContaining({
+      body: JSON.stringify({
+        consulta: "E qual ficou em segundo lugar?",
+        limite: 5,
+        conversaId: "conversation-1",
+      }),
+    }),
+  );
+});
+
 it("registra avaliação positiva, negativa e corrigida da resposta RAG", async () => {
   const baseAnswer = {
     id: "query-feedback",
@@ -344,6 +413,8 @@ it("permite cancelar uma consulta pendente no painel flutuante", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Consultar" }));
 
   expect(await within(dialog).findByRole("status")).toHaveTextContent("Consultando a inteligência do gabinete");
+  expect(within(dialog).getByRole("progressbar", { name: "Consulta em andamento" })).toBeInTheDocument();
+  expect(within(dialog).getByText(/segundos decorridos/)).toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar consulta" }));
 
   expect(await within(dialog).findByText("Consulta cancelada.")).toBeInTheDocument();

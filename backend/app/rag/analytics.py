@@ -29,6 +29,7 @@ DATASETS = {
     "TRAMITACOES": (LegislativeTramitation, LegislativeTramitation.occurred_at),
     "AGENDA": (AgendaEvent, AgendaEvent.starts_at),
     "FISCALIZACOES": (OversightAction, OversightAction.created_at),
+    "TERRITORIOS": (Territory, Territory.created_at),
 }
 METRICS = {"CONTAGEM", "PRAZOS_VENCIDOS", "TEMPO_MEDIO_RESOLUCAO_HORAS"}
 GROUPS = {
@@ -174,6 +175,8 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
     statement = select(model).where(model.tenant_id == tenant_id)
     if dataset == "CIDADAOS":
         statement = statement.where(Citizen.anonymized_at.is_(None))
+    if dataset == "TERRITORIOS":
+        statement = statement.where(Territory.active.is_(True))
     if period_start:
         statement = statement.where(
             timestamp >= datetime.combine(period_start, time.min, tzinfo=UTC)
@@ -251,6 +254,14 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
     for label, group_items in sorted(grouped.items()):
         value = _metric_value(metric, group_items)
         results.append({"grupo": label, "valor": value})
+    ranking = str(payload.get("ranking", "")).strip().upper() or None
+    if ranking == "MAIOR":
+        results.sort(
+            key=lambda item: (
+                -(item["valor"] if item["valor"] is not None else float("-inf")),
+                item["grupo"].casefold(),
+            )
+        )
     total = _metric_value(metric, items)
     applied_filters = {
         "status": status or None,
@@ -266,6 +277,8 @@ def structured_query(tenant_id: uuid.UUID, payload: dict) -> dict:
         "dataset": dataset,
         "metrica": metric,
         "agruparPor": group_by,
+        "ranking": ranking,
+        "rankingPosicao": int(payload.get("rankingPosicao") or 1) if ranking else None,
         "filtros": applied_filters,
         "periodo": {
             "inicio": period_start.isoformat() if period_start else None,

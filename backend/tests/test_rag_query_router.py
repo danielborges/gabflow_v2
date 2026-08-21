@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models import Citizen, RagAssistantQuery, RequestStatus, ServiceRequest, Tenant
+from app.models import Citizen, RagAssistantQuery, RequestStatus, ServiceRequest, Tenant, Territory
 from app.rag.router import QueryMethod, classify_query
 
 PASSWORD = "SenhaForte123!"  # noqa: S105
@@ -20,15 +20,18 @@ def _login(client, tenant, email, password):
     return client.get_cookie("csrf_access_token").value
 
 
-def _create_request(client, csrf, title, theme):
+def _create_request(client, csrf, title, theme, territory_id=None):
+    payload = {
+        "origem": "PRESENCIAL",
+        "titulo": title,
+        "descricao": "Demanda usada para validar o roteamento automático.",
+        "tema": theme,
+    }
+    if territory_id:
+        payload["territorioId"] = territory_id
     response = client.post(
         "/api/v1/solicitacoes",
-        json={
-            "origem": "PRESENCIAL",
-            "titulo": title,
-            "descricao": "Demanda usada para validar o roteamento automático.",
-            "tema": theme,
-        },
+        json=payload,
         headers={"X-CSRF-TOKEN": csrf},
     )
     assert response.status_code == 201
@@ -55,6 +58,194 @@ def test_router_classifies_documental_structured_and_hybrid_intents():
     assert overdue.structured_payload["dataset"] == "ENCAMINHAMENTOS"
     assert overdue.structured_payload["metrica"] == "PRAZOS_VENCIDOS"
     assert overdue.structured_payload["agruparPor"] == "ORGAO"
+
+
+def test_router_understands_request_leader_by_territory():
+    intent = classify_query("Qual é o território recordista de solicitações?")
+
+    assert intent.method == QueryMethod.ESTRUTURADO
+    assert intent.structured_payload == {
+        "dataset": "SOLICITACOES",
+        "metrica": "CONTAGEM",
+        "agruparPor": "TERRITORIO",
+        "ranking": "MAIOR",
+    }
+
+
+def test_router_understands_registered_territory_count_without_using_requests():
+    intent = classify_query("Quantos territórios estão cadastrados no sistema?")
+
+    assert intent.method == QueryMethod.ESTRUTURADO
+    assert intent.structured_payload == {
+        "dataset": "TERRITORIOS",
+        "metrica": "CONTAGEM",
+        "agruparPor": "NENHUM",
+    }
+
+
+def test_structured_route_counts_only_active_territories_in_tenant(app, client):
+    with app.app_context():
+        tenant_a = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        tenant_b = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-b"))
+        db.session.add_all(
+            [
+                Territory(tenant_id=tenant_a.id, name="Centro"),
+                Territory(tenant_id=tenant_a.id, name="Zona Norte"),
+                Territory(tenant_id=tenant_a.id, name="Inativo", active=False),
+                Territory(tenant_id=tenant_b.id, name="Outro gabinete"),
+            ]
+        )
+        db.session.commit()
+
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Quantos territórios estão cadastrados no sistema?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["resultadoEstruturado"]["dataset"] == "TERRITORIOS"
+    assert response.json["resultadoEstruturado"]["total"] == 2
+    assert response.json["resposta"] == "Existem 2 territórios cadastrados no sistema."
+
+
+def test_unknown_quantitative_subject_does_not_default_to_requests(app, client):
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Quantos cadastros especiais existem?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["metodo"] == "DOCUMENTAL"
+    assert response.json["resultadoEstruturado"] is None
+    assert "PLANO_QUANTITATIVO_NAO_RESOLVIDO_SEM_RESPOSTA_PADRAO" in response.json[
+        "motivosRoteamento"
+    ]
+
+
+def test_structured_route_answers_request_leader_by_territory(app, client):
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        centro = Territory(tenant_id=tenant.id, name="Centro")
+        norte = Territory(tenant_id=tenant.id, name="Zona Norte")
+        db.session.add_all([centro, norte])
+        db.session.commit()
+        centro_id = str(centro.id)
+        norte_id = str(norte.id)
+
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    _create_request(client, csrf, "Demanda central 1", "Mobilidade", centro_id)
+    _create_request(client, csrf, "Demanda central 2", "Saúde", centro_id)
+    _create_request(client, csrf, "Demanda norte", "Educação", norte_id)
+
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Qual é o território recordista de solicitações?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["metodo"] == "ESTRUTURADO"
+    assert response.json["resultadoEstruturado"]["ranking"] == "MAIOR"
+    assert response.json["resultadoEstruturado"]["itens"][0] == {
+        "grupo": "Centro",
+        "valor": 2,
+    }
+    assert response.json["resposta"].startswith(
+        "Centro é o território recordista, com 2 solicitações."
+    )
+
+
+def test_structured_route_reports_tied_territory_leaders(app, client):
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        centro = Territory(tenant_id=tenant.id, name="Centro")
+        norte = Territory(tenant_id=tenant.id, name="Zona Norte")
+        db.session.add_all([centro, norte])
+        db.session.commit()
+        centro_id = str(centro.id)
+        norte_id = str(norte.id)
+
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    _create_request(client, csrf, "Demanda central", "Mobilidade", centro_id)
+    _create_request(client, csrf, "Demanda norte", "Educação", norte_id)
+
+    response = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Qual é o território recordista de solicitações?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json["resposta"].startswith(
+        "Há empate na 1ª posição entre 2 territórios, com 1 solicitação cada: Centro, Zona Norte."
+    )
+
+
+def test_assistant_keeps_conversation_and_resolves_structured_follow_up(app, client):
+    with app.app_context():
+        tenant = db.session.scalar(select(Tenant).where(Tenant.slug == "gabinete-a"))
+        territories = [
+            Territory(tenant_id=tenant.id, name="Centro"),
+            Territory(tenant_id=tenant.id, name="Zona Norte"),
+            Territory(tenant_id=tenant.id, name="Zona Sul"),
+        ]
+        db.session.add_all(territories)
+        db.session.commit()
+        territory_ids = [str(item.id) for item in territories]
+
+    csrf = _login(client, "gabinete-a", "admin@teste.local", PASSWORD)
+    for index, territory_id in enumerate(territory_ids):
+        for item in range(3 - index):
+            _create_request(
+                client,
+                csrf,
+                f"Demanda {index}-{item}",
+                "Atendimento",
+                territory_id,
+            )
+
+    first = client.post(
+        "/api/v1/assistente/consultas",
+        json={"consulta": "Qual é o território recordista de solicitações?"},
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+    second = client.post(
+        "/api/v1/assistente/consultas",
+        json={
+            "consulta": "E qual ficou em segundo lugar?",
+            "conversaId": first.json["conversaId"],
+        },
+        headers={"X-CSRF-TOKEN": csrf},
+    )
+
+    assert first.status_code == 200
+    assert first.json["turno"] == 1
+    assert second.status_code == 200
+    assert second.json["conversaId"] == first.json["conversaId"]
+    assert second.json["turno"] == 2
+    assert second.json["metodo"] == "ESTRUTURADO"
+    assert "CONTEXTO_CONVERSACIONAL_APLICADO" in second.json["motivosRoteamento"]
+    assert second.json["resposta"].startswith(
+        "Na 2ª posição está Zona Norte, com 2 solicitações."
+    )
+
+    with app.app_context():
+        queries = list(
+            db.session.scalars(
+                select(RagAssistantQuery)
+                .where(
+                    RagAssistantQuery.conversation_id
+                    == uuid.UUID(first.json["conversaId"])
+                )
+                .order_by(RagAssistantQuery.turn_index)
+            )
+        )
+        assert [item.turn_index for item in queries] == [1, 2]
+        assert queries[1].context_query_ids == [str(queries[0].id)]
 
 
 def test_router_understands_quantity_closed_requests_in_named_month():

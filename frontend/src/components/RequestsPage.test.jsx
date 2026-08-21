@@ -77,6 +77,13 @@ describe("RequestsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Nova solicitação" }));
     expect(screen.getByRole("dialog", { name: "Registrar solicitação" })).toBeInTheDocument();
     expect(screen.getByLabelText("Descrição")).toBeRequired();
+    const fields = ["Cidadão", "Organização", "Título", "Descrição", "Endereço"]
+      .map((label) => screen.getByLabelText(label));
+    fields.slice(1).forEach((field, index) => {
+      expect(fields[index].compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING)
+        .toBeTruthy();
+    });
+    expect(fields[0]).toBeEnabled();
   });
 
   it("permite pesquisar e selecionar o cidadão na nova solicitação", async () => {
@@ -126,7 +133,9 @@ describe("RequestsPage", () => {
     render(<RequestsPage initialCitizenId="cid-1" onInitialContextConsumed={vi.fn()} />);
 
     expect(await screen.findByRole("dialog", { name: "Registrar solicitação" })).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Cidadão" })).toHaveValue("Bruno Silva");
+    const citizenField = await screen.findByRole("combobox", { name: "Cidadão" });
+    expect(citizenField).toHaveValue("Bruno Silva");
+    expect(citizenField).toBeDisabled();
   });
 
   it("exibe o responsável na grid apenas para usuários que distribuem solicitações", async () => {
