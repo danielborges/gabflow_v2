@@ -1,20 +1,11 @@
-import { AlertTriangle, Bot, CheckCircle2, Clock3, Download, FileAudio, FileText, Image, Inbox, Link2, MessageCircle, MessageSquare, Plus, RotateCw, Search, Send, Settings2, ShieldCheck, Sparkles, UserCheck, UserPlus, X } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Clock3, Download, FileAudio, FileText, Image, Inbox, Link2, MessageCircle, MessageSquare, RotateCw, Search, Send, Settings2, ShieldCheck, Sparkles, UserCheck, UserPlus, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api";
-import { contactPlaceholderForChannel, formatBrazilianPhone, isValidContactByChannel } from "../contactValidation";
 import { FeatureHeader } from "./FeatureHeader";
-
-const emptyForm = {
-  canal: "WHATSAPP",
-  remetenteNome: "",
-  remetenteContato: "",
-  assunto: "",
-  conteudo: "",
-};
 
 export function ChannelsPage({ user, onStartAssistedRegistration }) {
   const tenantId = user?.tenant?.id;
-  const [messages, setMessages] = useState([]);
+  const [activeSection, setActiveSection] = useState(tenantId ? "CONVERSAS" : "REVISOES");
   const [conversations, setConversations] = useState([]);
   const [conversationSummary, setConversationSummary] = useState({});
   const [conversationResponsibles, setConversationResponsibles] = useState([]);
@@ -28,7 +19,6 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
   const confirmationKey = useRef(null);
   const [conversationFilters, setConversationFilters] = useState({ q: "", modo: "", naoLidas: false });
   const [reviews, setReviews] = useState([]);
-  const [form, setForm] = useState(emptyForm);
   const [selectedCandidates, setSelectedCandidates] = useState({});
   const [reviewStatus, setReviewStatus] = useState("PENDENTE");
   const [assigneeFilter, setAssigneeFilter] = useState("");
@@ -46,13 +36,11 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
       if (conversationFilters.q.trim()) conversationQuery.set("q", conversationFilters.q.trim());
       if (conversationFilters.modo) conversationQuery.set("modo", conversationFilters.modo);
       if (conversationFilters.naoLidas) conversationQuery.set("naoLidas", "true");
-      const [messageData, reviewData, settingsData, conversationData] = await Promise.all([
-        apiRequest("/api/v1/canais/mensagens"),
+      const [reviewData, settingsData, conversationData] = await Promise.all([
         apiRequest(`/api/v1/canais/revisoes-identidade?status=${reviewStatus}${assigneeFilter ? `&responsavelId=${assigneeFilter}` : ""}`),
         apiRequest("/api/v1/canais/configuracao-cadastro-assistido"),
         tenantId ? apiRequest(`/api/v1/tenants/${tenantId}/conversations?${conversationQuery}`) : Promise.resolve({ content: [], resumo: {}, responsaveis: [] }),
       ]);
-      setMessages(messageData.content);
       setReviews(reviewData.content);
       setSummary(reviewData.resumo || {});
       setResponsibles(reviewData.responsaveis || []);
@@ -68,25 +56,6 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
   }, [reviewStatus, assigneeFilter, tenantId, conversationFilters.q, conversationFilters.modo, conversationFilters.naoLidas]);
 
   useEffect(() => { load(); }, [load]);
-
-  async function submit(event) {
-    event.preventDefault();
-    setError("");
-    if (form.remetenteContato && !isValidContactByChannel(form.canal, form.remetenteContato)) {
-      setError("Informe um contato válido para o canal selecionado.");
-      return;
-    }
-    try {
-      await apiRequest("/api/v1/canais/mensagens", {
-        method: "POST",
-        body: JSON.stringify(form),
-      });
-      setForm(emptyForm);
-      await load();
-    } catch (requestError) {
-      setError(requestError.message);
-    }
-  }
 
   async function decideReview(review, decisao) {
     setError("");
@@ -160,22 +129,6 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
     try {
       const result = await apiRequest("/api/v1/canais/revisoes-identidade/retencao/executar", { method: "POST" });
       setError(`Retenção executada: ${result.processadas} mensagem(ns) minimizada(s).`);
-      await load();
-    } catch (requestError) {
-      setError(requestError.message);
-    }
-  }
-
-  async function convertMessage(item) {
-    setError("");
-    try {
-      await apiRequest(`/api/v1/canais/mensagens/${item.id}/solicitacao`, {
-        method: "POST",
-        body: JSON.stringify({
-          titulo: item.assunto || `Mensagem via ${channelLabel(item.canal)}`,
-          descricao: item.conteudo,
-        }),
-      });
       await load();
     } catch (requestError) {
       setError(requestError.message);
@@ -314,8 +267,8 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
       method: "POST",
     }).then(async (result) => {
       setFlowLaunchNotice(result.modo === "FLOW"
-        ? "Envio do Flow solicitado. A resposta serÃ¡ validada e aplicada automaticamente."
-        : "Flow indisponÃ­vel neste ambiente. A coleta guiada foi iniciada e o formulÃ¡rio manual permanece disponÃ­vel.");
+        ? "Coleta pelo WhatsApp iniciada. As respostas serão apresentadas para revisão."
+        : "A coleta guiada foi iniciada. O formulário permanece disponível para preenchimento pela equipe.");
       await openConversation({ id: selectedConversation.id });
       await load();
     }).catch((requestError) => setError(requestError.message)).finally(() => setFlowBusy(false));
@@ -342,16 +295,22 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
 
   return (
     <>
-      <FeatureHeader eyebrow="Ecossistema" title="Canais assistidos" description="Revise identidades recebidas por WhatsApp e e-mail antes de vinculá-las ao cadastro.">
+      <FeatureHeader eyebrow="Atendimento" title="Canais" description="Centralize conversas, identifique cidadãos e acompanhe solicitações recebidas pelo gabinete.">
         <button className="secondary-button" onClick={load} disabled={loading}><RotateCw size={16} /> Atualizar</button>
       </FeatureHeader>
 
       {error && <p className="form-error channel-page-error" role="alert">{error}</p>}
 
-      {tenantId && <section className="inbox-v2-shell" aria-label="Caixa de entrada WhatsApp">
+      <nav className="channel-page-tabs" aria-label="Áreas de Canais">
+        {tenantId && <button type="button" className={activeSection === "CONVERSAS" ? "active" : ""} onClick={() => setActiveSection("CONVERSAS")}><MessageCircle size={17} /> Conversas{conversationSummary.naoLidas > 0 && <b>{conversationSummary.naoLidas}</b>}</button>}
+        <button type="button" className={activeSection === "REVISOES" ? "active" : ""} onClick={() => setActiveSection("REVISOES")}><ShieldCheck size={17} /> Revisões{summary.pendentes > 0 && <b>{summary.pendentes}</b>}</button>
+        {["admin", "manager"].includes(user?.role) && <button type="button" className={activeSection === "CONFIGURACOES" ? "active" : ""} onClick={() => setActiveSection("CONFIGURACOES")}><Settings2 size={17} /> Configurações</button>}
+      </nav>
+
+      {activeSection === "CONVERSAS" && tenantId && <section className="inbox-v2-shell" aria-label="Conversas do gabinete">
         <header className="inbox-v2-header">
-          <div><span className="inbox-v2-kicker"><MessageCircle size={15} /> Caixa de entrada 2.0</span><h2>Conversas do gabinete</h2><p>Atendimento contínuo, organizado por cidadão e com handoff seguro.</p></div>
-          <div className="inbox-v2-metrics"><span><strong>{conversationSummary.total || 0}</strong> conversas</span><span><strong>{conversationSummary.naoLidas || 0}</strong> não lidas</span><span><strong>{conversationSummary.humanas || 0}</strong> humanas</span></div>
+          <div><span className="inbox-v2-kicker"><Inbox size={15} /> Caixa de entrada</span><h2>Conversas do gabinete</h2><p>Acompanhe mensagens e continue o atendimento pelo mesmo canal.</p></div>
+          <div className="inbox-v2-metrics"><span><strong>{conversationSummary.total || 0}</strong> conversas</span><span><strong>{conversationSummary.naoLidas || 0}</strong> não lidas</span><span><strong>{conversationSummary.humanas || 0}</strong> com a equipe</span></div>
         </header>
         <div className="inbox-v2-grid">
           <aside className="inbox-v2-list-panel">
@@ -364,7 +323,7 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
               {conversations.map((conversation) => <button type="button" key={conversation.id} className={`inbox-v2-conversation ${selectedConversation?.id === conversation.id ? "active" : ""}`} onClick={() => openConversation(conversation)}>
                 <span className="inbox-v2-avatar">{initials(conversation.contato.nome)}</span>
                 <span className="inbox-v2-conversation-copy"><strong>{conversation.contato.nome}</strong><small>{conversation.ultimaMensagem?.conteudo || "Conversa iniciada"}</small><em>{conversation.responsavel?.nome || "Sem responsável"} · {formatDate(conversation.ultimaMensagemEm)}</em></span>
-                <span className="inbox-v2-conversation-state"><i className={`mode-${conversation.modo.toLowerCase()}`}>{conversation.modo === "HUMAN" ? "Humano" : "Bot"}</i>{conversation.naoLidas > 0 && <b>{conversation.naoLidas}</b>}</span>
+                <span className="inbox-v2-conversation-state"><i className={`mode-${conversation.modo.toLowerCase()}`}>{conversation.modo === "HUMAN" ? "Equipe" : "Automático"}</i>{conversation.naoLidas > 0 && <b>{conversation.naoLidas}</b>}</span>
               </button>)}
               {!loading && conversations.length === 0 && <p className="inbox-v2-empty">Nenhuma conversa corresponde aos filtros.</p>}
             </div>
@@ -375,48 +334,56 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
               <header className="inbox-v2-contact-header"><span className="inbox-v2-avatar large">{initials(selectedConversation.contato.nome)}</span><div><h3>{selectedConversation.contato.nome}</h3><p>{selectedConversation.contato.whatsappMascarado} · {stateLabel(selectedConversation.estado)}</p></div><span className={`inbox-v2-window ${selectedConversation.janelaAberta ? "open" : "closed"}`}><Clock3 size={14} /> {selectedConversation.janelaAberta ? `Janela até ${formatDate(selectedConversation.janelaExpiraEm)}` : "Janela encerrada"}</span></header>
               <div className="inbox-v2-toolbar"><label>Responsável<select value={selectedConversation.responsavel?.id || ""} onChange={(event) => changeConversationAssignment(event.target.value)}><option value="">Sem responsável</option>{conversationResponsibles.map((person) => <option key={person.id} value={person.id}>{person.nome}</option>)}</select></label>{selectedConversation.modo === "BOT" ? <button className="primary-button compact" type="button" onClick={startConversationHandoff}><UserCheck size={16} /> Assumir atendimento</button> : ["admin", "manager"].includes(user?.role) && <button className="secondary-button compact" type="button" onClick={resumeConversationBot}><Bot size={16} /> Retomar automação</button>}</div>
               {selectedConversation.modo === "HUMAN" && <p className="inbox-v2-human-lock"><ShieldCheck size={16} /> Automação pausada. Somente a equipe atende esta conversa.</p>}
-              {selectedConversation.jornada && <ConversationServiceFlow
-                conversation={selectedConversation}
-                citizenName={citizenName}
-                setCitizenName={setCitizenName}
-                requestDraft={requestDraft}
-                setRequestDraft={setRequestDraft}
-                requestConfirmed={requestConfirmed}
-                setRequestConfirmed={setRequestConfirmed}
-                protocolAccess={protocolAccess}
-                launchNotice={flowLaunchNotice}
-                busy={flowBusy}
-                onAcknowledgePrivacy={acknowledgeConversationPrivacy}
-                onIdentifyCitizen={identifyConversationCitizen}
-                onSaveDraft={saveConversationRequestDraft}
-                onConfirmRequest={confirmConversationRequest}
-                onLaunchFlow={launchConversationFlow}
-              />}
-              {selectedConversation.midias?.length > 0 && <ConversationMediaPanel assets={selectedConversation.midias} busy={flowBusy} onReview={reviewConversationMedia} onRetry={retryConversationMedia} />}
-              <div className="inbox-v2-thread">{selectedConversation.mensagens.map((message) => <div key={message.id} className={`inbox-v2-bubble ${message.direcao.toLowerCase()}`}><p>{message.conteudo || `[${message.tipo}]`}</p><small>{formatDate(message.ocorridaEm)} · {message.status}</small></div>)}</div>
-              <ConversationComposer conversation={selectedConversation} busy={flowBusy} onSend={sendConversationMessage} />
+              <div className="inbox-v2-detail-content">
+                <div className="inbox-v2-chat-column">
+                  <div className="inbox-v2-thread">{selectedConversation.mensagens.map((message) => <div key={message.id} className={`inbox-v2-bubble ${message.direcao.toLowerCase()}`}><p>{message.conteudo || `[${message.tipo}]`}</p><small>{formatDate(message.ocorridaEm)} · {messageStatusLabel(message.status)}</small></div>)}</div>
+                  <ConversationComposer conversation={selectedConversation} busy={flowBusy} onSend={sendConversationMessage} />
+                </div>
+                <aside className="inbox-v2-context-panel" aria-label="Contexto do atendimento">
+                  <header><strong>Contexto do atendimento</strong><small>Próxima ação e informações de apoio</small></header>
+                  {selectedConversation.jornada && <ConversationServiceFlow
+                    conversation={selectedConversation}
+                    citizenName={citizenName}
+                    setCitizenName={setCitizenName}
+                    requestDraft={requestDraft}
+                    setRequestDraft={setRequestDraft}
+                    requestConfirmed={requestConfirmed}
+                    setRequestConfirmed={setRequestConfirmed}
+                    protocolAccess={protocolAccess}
+                    launchNotice={flowLaunchNotice}
+                    busy={flowBusy}
+                    onAcknowledgePrivacy={acknowledgeConversationPrivacy}
+                    onIdentifyCitizen={identifyConversationCitizen}
+                    onSaveDraft={saveConversationRequestDraft}
+                    onConfirmRequest={confirmConversationRequest}
+                    onLaunchFlow={launchConversationFlow}
+                  />}
+                  {selectedConversation.midias?.length > 0 && <ConversationMediaPanel assets={selectedConversation.midias} busy={flowBusy} onReview={reviewConversationMedia} onRetry={retryConversationMedia} />}
+                  {!selectedConversation.jornada && !selectedConversation.midias?.length && <p className="inbox-v2-context-empty">Nenhuma ação complementar pendente.</p>}
+                </aside>
+              </div>
             </>}
           </article>
         </div>
       </section>}
 
-      <section className="channel-operations-summary" aria-label="Resumo da fila">
+      {activeSection === "REVISOES" && <section className="channel-operations-summary" aria-label="Resumo da fila de revisões">
         <article><strong>{summary.pendentes || 0}</strong><span>Pendentes</span></article>
         <article><strong>{summary.vencidas || 0}</strong><span>Vencidas</span></article>
         <article><strong>{summary.vinculadas || 0}</strong><span>Vinculadas</span></article>
         <article><strong>{summary.descartadas || 0}</strong><span>Descartadas</span></article>
-      </section>
+      </section>}
 
-      {["admin", "manager"].includes(user?.role) && <form className="channel-settings-panel" onSubmit={saveSettings}>
-        <div className="settings-title"><Settings2 size={20} /><div><strong>Operação do cadastro assistido</strong><small>Configuração aplicada somente a este gabinete.</small></div></div>
+      {activeSection === "CONFIGURACOES" && ["admin", "manager"].includes(user?.role) && <form className="channel-settings-panel" onSubmit={saveSettings}>
+        <div className="settings-title"><Settings2 size={20} /><div><strong>Configurações dos canais</strong><small>Regras aplicadas às revisões e aos dados deste gabinete.</small></div></div>
         <label>Base legal padrão<select value={settings.baseLegalPadrao || ""} onChange={(event) => setSettings((current) => ({ ...current, baseLegalPadrao: event.target.value }))} required><option value="">Selecione</option><option value="EXECUCAO_POLITICA_PUBLICA">Execução de política pública</option><option value="CONSENTIMENTO">Consentimento</option><option value="LEGITIMO_INTERESSE">Legítimo interesse</option></select></label>
         <label>SLA (horas)<input type="number" min="1" max="720" value={settings.slaHoras} onChange={(event) => setSettings((current) => ({ ...current, slaHoras: Number(event.target.value) }))} /></label>
         <label>Retenção (dias)<input type="number" min="30" max="3650" value={settings.retencaoDias} onChange={(event) => setSettings((current) => ({ ...current, retencaoDias: Number(event.target.value) }))} /></label>
-        <button className="primary-button compact" type="submit">Salvar operação</button>
-        <button className="secondary-button compact" type="button" onClick={executeRetention}>Executar retenção</button>
+        <button className="primary-button compact" type="submit">Salvar configurações</button>
+        <button className="secondary-button compact" type="button" onClick={executeRetention}>Aplicar política de retenção</button>
       </form>}
 
-      <section className="channel-review-section">
+      {activeSection === "REVISOES" && <section className="channel-review-section">
         <header className="channel-review-header">
           <div className="settings-title"><ShieldCheck size={21} /><div><strong>Fila de revisão humana</strong><small>Nenhum cidadão é criado ou mesclado automaticamente.</small></div></div>
           <label>Status<select aria-label="Filtrar revisões por status" value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value)}>
@@ -466,38 +433,7 @@ export function ChannelsPage({ user, onStartAssistedRegistration }) {
             </article>
           ))}
         </div>
-      </section>
-
-      <section className="admin-layout agenda-layout channel-inbox-layout">
-        <form className="settings-form" onSubmit={submit}>
-          <div className="settings-title"><MessageSquare size={21} /><div><strong>Registrar mensagem</strong><small>Entrada manual para testes e atendimento assistido.</small></div></div>
-          <div className="form-grid">
-            <label>Canal<select value={form.canal} onChange={(event) => setForm((current) => ({ ...current, canal: event.target.value }))}>
-              <option value="WHATSAPP">WhatsApp</option>
-              <option value="EMAIL">E-mail</option>
-              <option value="REDE_SOCIAL">Rede social</option>
-            </select></label>
-            <label>Contato<input type={form.canal === "EMAIL" ? "email" : "text"} inputMode={form.canal === "EMAIL" ? "email" : form.canal === "WHATSAPP" ? "numeric" : "text"} placeholder={contactPlaceholderForChannel(form.canal)} maxLength={form.canal === "WHATSAPP" ? 15 : undefined} value={form.remetenteContato} onChange={(event) => setForm((current) => ({ ...current, remetenteContato: form.canal === "WHATSAPP" ? formatBrazilianPhone(event.target.value) : event.target.value }))} /></label>
-          </div>
-          <label>Nome<input value={form.remetenteNome} onChange={(event) => setForm((current) => ({ ...current, remetenteNome: event.target.value }))} /></label>
-          <label>Assunto<input value={form.assunto} onChange={(event) => setForm((current) => ({ ...current, assunto: event.target.value }))} /></label>
-          <label>Mensagem<textarea required rows="5" value={form.conteudo} onChange={(event) => setForm((current) => ({ ...current, conteudo: event.target.value }))} /></label>
-          <button className="primary-button compact"><Plus size={18} /> Registrar</button>
-        </form>
-        <div className="category-list agenda-list">
-          {messages.map((item) => (
-            <article key={item.id}>
-              <span className="entity-icon"><Inbox size={19} /></span>
-              <div>
-                <strong>{item.assunto || item.remetenteNome || channelLabel(item.canal)}</strong>
-                <small>{channelLabel(item.canal)} · {item.status} · {formatDate(item.recebidaEm)}</small>
-                <p className="muted-copy">{item.conteudo}</p>
-              </div>
-              <button className="secondary-button compact" disabled={item.status !== "RECEBIDA"} onClick={() => convertMessage(item)}>Converter em solicitação</button>
-            </article>
-          ))}
-        </div>
-      </section>
+      </section>}
     </>
   );
 }
@@ -520,11 +456,11 @@ function ConversationComposer({ conversation, busy, onSend }) {
   }
 
   return <form className="inbox-v2-composer" onSubmit={submit}>
-    <div className="inbox-v2-composer-policy"><ShieldCheck size={15} /><span>{optedOut ? "Contato com opt-out: novas saídas estão bloqueadas." : requiresTemplate ? "Janela encerrada: somente template transacional aprovado." : "Janela aberta: mensagem livre ou template aprovado."}</span></div>
+    <div className="inbox-v2-composer-policy"><ShieldCheck size={15} /><span>{optedOut ? "O cidadão optou por não receber novas mensagens." : requiresTemplate ? "Fora da janela de atendimento, selecione um modelo aprovado." : "Conversa disponível para resposta."}</span></div>
     {!optedOut && <>
-      <label>Modelo de envio<select aria-label="Template de saída WhatsApp" value={templateId} onChange={(event) => { const id = event.target.value; const item = templates.find((template) => template.id === id); setTemplateId(id); setParameters((item?.variaveis || []).map(() => "")); }}><option value="">{requiresTemplate ? "Selecione um template aprovado" : "Mensagem livre"}</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.nome} · {item.idioma}</option>)}</select></label>
-      {selected ? <div className="inbox-v2-template-compose"><p>{selected.conteudo}</p>{selected.variaveis.map((variable, index) => <label key={`${selected.id}-${variable}-${index}`}>{variable}<input required value={parameters[index] || ""} onChange={(event) => setParameters((current) => current.map((value, position) => position === index ? event.target.value : value))} /></label>)}</div> : <textarea aria-label="Mensagem WhatsApp" rows="3" required={!requiresTemplate} disabled={requiresTemplate} value={text} maxLength={4096} onChange={(event) => setText(event.target.value)} placeholder={requiresTemplate ? "Selecione um template acima" : "Escreva uma resposta para o cidadão"} />}
-      <button className="primary-button compact" disabled={busy || (requiresTemplate && !selected)}><Send size={16} /> Enviar pelo WhatsApp</button>
+      <label>Forma de envio<select aria-label="Modelo de mensagem do WhatsApp" value={templateId} onChange={(event) => { const id = event.target.value; const item = templates.find((template) => template.id === id); setTemplateId(id); setParameters((item?.variaveis || []).map(() => "")); }}><option value="">{requiresTemplate ? "Selecione um modelo aprovado" : "Mensagem livre"}</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.nome} · {item.idioma}</option>)}</select></label>
+      {selected ? <div className="inbox-v2-template-compose"><p>{selected.conteudo}</p>{selected.variaveis.map((variable, index) => <label key={`${selected.id}-${variable}-${index}`}>{variable}<input required value={parameters[index] || ""} onChange={(event) => setParameters((current) => current.map((value, position) => position === index ? event.target.value : value))} /></label>)}</div> : <textarea aria-label="Mensagem WhatsApp" rows="3" required={!requiresTemplate} disabled={requiresTemplate} value={text} maxLength={4096} onChange={(event) => setText(event.target.value)} placeholder={requiresTemplate ? "Selecione um modelo acima" : "Escreva uma resposta para o cidadão"} />}
+      <button className="primary-button compact" disabled={busy || (requiresTemplate && !selected)}><Send size={16} /> Enviar mensagem</button>
     </>}
   </form>;
 }
@@ -617,7 +553,7 @@ function ConversationServiceFlow({
         <UserPlus size={19} />
         <div><strong>Identificação assistida</strong><small>CPF não é necessário. Todo vínculo ou cadastro exige confirmação humana.</small></div>
       </div>
-      <button className="conversation-meta-flow-button" type="button" disabled={busy || Boolean(activeSession)} onClick={() => onLaunchFlow("citizen_registration")}><MessageCircle size={16} /> Coletar cadastro pelo WhatsApp Flow</button>
+      <button className="conversation-meta-flow-button" type="button" disabled={busy || Boolean(activeSession)} onClick={() => onLaunchFlow("citizen_registration")}><MessageCircle size={16} /> Coletar cadastro pelo WhatsApp</button>
       {flow.sugestoesCidadao?.length > 0 && <div className="conversation-citizen-suggestions">
         <span>Cadastros com o mesmo WhatsApp</span>
         {flow.sugestoesCidadao.map((item) => <button className="secondary-button compact" type="button" disabled={busy} key={item.id} onClick={() => onIdentifyCitizen(item.id)}><Link2 size={15} /> Vincular {item.nome}</button>)}
@@ -631,7 +567,7 @@ function ConversationServiceFlow({
         <MessageSquare size={19} />
         <div><strong>Solicitação de {flow.cidadao.nome}</strong><small>Revise os dados estruturados antes de gerar o protocolo.</small></div>
       </div>
-      <button className="conversation-meta-flow-button" type="button" disabled={busy || Boolean(activeSession)} onClick={() => onLaunchFlow(draftReady ? "request_complement" : "new_service_request")}><MessageCircle size={16} /> {draftReady ? "Solicitar complemento pelo Flow" : "Coletar solicitaÃ§Ã£o pelo WhatsApp Flow"}</button>
+      <button className="conversation-meta-flow-button" type="button" disabled={busy || Boolean(activeSession)} onClick={() => onLaunchFlow(draftReady ? "request_complement" : "new_service_request")}><MessageCircle size={16} /> {draftReady ? "Solicitar complemento pelo WhatsApp" : "Coletar solicitação pelo WhatsApp"}</button>
       <label>Título<input maxLength="180" value={requestDraft.titulo} onChange={(event) => setRequestDraft((current) => ({ ...current, titulo: event.target.value }))} placeholder="Resumo objetivo" /></label>
       <label>Descrição<textarea rows="3" required minLength="3" value={requestDraft.descricao} onChange={(event) => setRequestDraft((current) => ({ ...current, descricao: event.target.value }))} placeholder="O que aconteceu e qual apoio é necessário?" /></label>
       <div className="conversation-flow-fields">
@@ -646,7 +582,7 @@ function ConversationServiceFlow({
     </form>}
 
     {protocolReady && <article className="conversation-flow-card protocol">
-      <div className="conversation-flow-card-title"><CheckCircle2 size={21} /><div><strong>Solicitação protocolada</strong><small>Referência pública não sequencial, segura contra enumeração.</small></div></div>
+      <div className="conversation-flow-card-title"><CheckCircle2 size={21} /><div><strong>Solicitação protocolada</strong><small>Compartilhe este protocolo com o cidadão para acompanhamento.</small></div></div>
       <code>{flow.solicitacao.protocoloPublico}</code>
       {protocolAccess?.chaveAcompanhamento && <div className="conversation-protocol-key"><span>Chave exibida uma única vez</span><code>{protocolAccess.chaveAcompanhamento}</code></div>}
     </article>}
@@ -655,6 +591,18 @@ function ConversationServiceFlow({
 
 function channelLabel(value) {
   return { WHATSAPP: "WhatsApp", EMAIL: "E-mail", REDE_SOCIAL: "Rede social", FORMULARIO: "Formulário" }[value] || value;
+}
+
+function messageStatusLabel(value) {
+  return {
+    RECEIVED: "Recebida",
+    SENT: "Enviada",
+    DELIVERED: "Entregue",
+    READ: "Lida",
+    FAILED: "Falha no envio",
+    PENDING: "Pendente",
+    PROCESSING: "Processando",
+  }[value] || "Atualizada";
 }
 
 function resolutionLabel(value) {

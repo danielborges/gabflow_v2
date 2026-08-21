@@ -73,7 +73,7 @@ describe("ChannelsPage assisted identity review", () => {
     );
   });
 
-  it("apresenta conversas na caixa 2.0 e abre o histórico", async () => {
+  it("apresenta conversas na caixa de entrada e abre o histórico", async () => {
     apiRequest.mockImplementation((path) => {
       if (path === "/api/v1/canais/mensagens") return Promise.resolve({ content: [] });
       if (path.startsWith("/api/v1/canais/revisoes-identidade?")) return Promise.resolve({ content: [], resumo: {}, responsaveis: [] });
@@ -96,7 +96,7 @@ describe("ChannelsPage assisted identity review", () => {
     expect(screen.getByText(/M.dia e IA assistiva/)).toBeInTheDocument();
     expect(screen.getByText("94%")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Mensagem WhatsApp"), { target: { value: "Retorno do gabinete" } });
-    fireEvent.click(screen.getByRole("button", { name: "Enviar pelo WhatsApp" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
       "/api/v1/tenants/tenant-a/conversations/conversation-1/messages",
       expect.objectContaining({
@@ -157,7 +157,7 @@ describe("ChannelsPage assisted identity review", () => {
     ));
   });
 
-  it("envia o Flow de nova solicitaÃ§Ã£o pela conversa", async () => {
+  it("inicia a coleta de uma nova solicitação pela conversa", async () => {
     apiRequest.mockImplementation((path, options = {}) => {
       if (path === "/api/v1/canais/mensagens") return Promise.resolve({ content: [] });
       if (path.startsWith("/api/v1/canais/revisoes-identidade?")) return Promise.resolve({ content: [], resumo: {}, responsaveis: [] });
@@ -180,12 +180,33 @@ describe("ChannelsPage assisted identity review", () => {
 
     render(<ChannelsPage user={{ role: "staff", tenant: { id: "tenant-a" } }} />);
     fireEvent.click(await screen.findByRole("button", { name: /Maria/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Coletar solicitaÃ§Ã£o pelo WhatsApp Flow" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Coletar solicitação pelo WhatsApp" }));
 
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
       "/api/v1/tenants/tenant-a/conversations/conversation-1/flows/new_service_request/launch",
       { method: "POST" },
     ));
-    expect(await screen.findByText(/Envio do Flow solicitado/)).toBeInTheDocument();
+    expect(await screen.findByText(/Coleta pelo WhatsApp iniciada/)).toBeInTheDocument();
+  });
+
+  it("separa conversas, revisões e configurações em áreas próprias", async () => {
+    apiRequest.mockImplementation((path) => {
+      if (path.startsWith("/api/v1/canais/revisoes-identidade?")) return Promise.resolve({ content: [], resumo: { pendentes: 2 }, responsaveis: [] });
+      if (path === "/api/v1/canais/configuracao-cadastro-assistido") return Promise.resolve({ baseLegalPadrao: "EXECUCAO_POLITICA_PUBLICA", slaHoras: 24, retencaoDias: 365 });
+      if (path === "/api/v1/tenants/tenant-a/conversations?") return Promise.resolve({ content: [], resumo: {}, responsaveis: [] });
+      return Promise.resolve({});
+    });
+
+    render(<ChannelsPage user={{ role: "admin", tenant: { id: "tenant-a" } }} />);
+
+    expect(await screen.findByRole("navigation", { name: "Áreas de Canais" })).toBeInTheDocument();
+    expect(screen.queryByText(/Entrada manual para testes/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Revisões/ }));
+    expect(await screen.findByText("Fila de revisão humana")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
+    expect(await screen.findByText("Configurações dos canais")).toBeInTheDocument();
+    expect(screen.queryByText("Fila de revisão humana")).not.toBeInTheDocument();
   });
 });

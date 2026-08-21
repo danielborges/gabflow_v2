@@ -602,7 +602,7 @@ function AddressResolution({ address = {} }) {
 }
 
 function resolutionMethodLabel(method) {
-  return { POLIGONO: "polígono", ALIAS: "alias", NOME: "nome do território" }[method] || method;
+  return { POLIGONO: "polígono", ALIAS: "alias", NOME: "nome do território", BAIRRO_OFICIAL: "bairro oficial" }[method] || method;
 }
 
 function CitizenPhotoField({ citizen, pendingPhoto, onPhotoChange, onRemove, removed }) {

@@ -1,6 +1,6 @@
-import { ArrowUpRight, BookOpen, Send, Sparkles, X } from "lucide-react";
+import { ArrowUpRight, BookOpen, Plus, Send, Sparkles, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { RagAnswerResult, RagLoadingState } from "./RagAssistantPage";
+import { RagConversationFeed } from "./RagAssistantPage";
 import { useRagAssistantQuery } from "./useRagAssistantQuery";
 
 const VIEW_CONTEXTS = {
@@ -96,12 +96,14 @@ export function FloatingRagAssistant({ activeView, onOpenFullPage }) {
   const {
     question,
     setQuestion,
-    answer,
     setAnswer,
+    turns,
+    pendingQuestion,
     busy,
-    error,
+    elapsedSeconds,
     submitQuestion,
     cancelQuery,
+    startNewConversation,
   } = useRagAssistantQuery();
   const questionId = useId();
   const context = VIEW_CONTEXTS[activeView] || DEFAULT_CONTEXT;
@@ -153,6 +155,9 @@ export function FloatingRagAssistant({ activeView, onOpenFullPage }) {
             </div>
           </div>
           <div className="floating-rag-header-actions">
+            <button type="button" className="icon-button" disabled={busy || !turns.length} onClick={startNewConversation} aria-label="Iniciar nova conversa" title="Nova conversa">
+              <Plus size={18} />
+            </button>
             <button type="button" className="icon-button" onClick={openFullPage} aria-label="Abrir Assistente RAG em tela completa" title="Abrir em tela completa">
               <ArrowUpRight size={18} />
             </button>
@@ -182,7 +187,6 @@ export function FloatingRagAssistant({ activeView, onOpenFullPage }) {
                 </button>
               ))}
             </div>
-            {error && <p className="form-error">{error}</p>}
             <div className="rag-question-actions">
               <small>{question.length}/2000</small>
               <button
@@ -197,17 +201,19 @@ export function FloatingRagAssistant({ activeView, onOpenFullPage }) {
           </form>
 
           <div className="floating-rag-answer" aria-live="polite">
-            {answer ? (
-              <RagAnswerResult answer={answer} onUpdate={setAnswer} compact />
-            ) : busy ? (
-              <RagLoadingState />
-            ) : (
-              <div className="floating-rag-empty">
+            <RagConversationFeed
+              turns={turns}
+              pendingQuestion={pendingQuestion}
+              busy={busy}
+              elapsedSeconds={elapsedSeconds}
+              onUpdate={setAnswer}
+              compact
+              empty={<div className="floating-rag-empty">
                 <Sparkles size={26} />
                 <strong>Inteligência do gabinete sem sair desta tela</strong>
                 <p>Faça uma pergunta ou use uma sugestão relacionada ao seu contexto de trabalho.</p>
-              </div>
-            )}
+              </div>}
+            />
           </div>
         </div>
       </section>

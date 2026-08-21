@@ -66,6 +66,20 @@ def _simple_data(item) -> dict:
     if isinstance(item, Territory):
         data["aliases"] = item.aliases or []
         data["geometria"] = item.geometry
+        data["bairros"] = sorted(
+            (neighborhood.name for neighborhood in item.neighborhoods),
+            key=str.casefold,
+        )
+        data["fonte"] = (
+            {
+                "nome": item.source_name,
+                "referencia": item.source_ref,
+                "url": item.source_url,
+                "versao": item.source_version,
+            }
+            if item.source_name
+            else None
+        )
     if isinstance(item, ExternalAgency):
         data["emailContato"] = item.contact_email
         data["responsavel"] = item.responsible

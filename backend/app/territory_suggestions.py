@@ -3,10 +3,12 @@ import json
 import urllib.error
 import urllib.request
 
+from flask import current_app
 from sqlalchemy import select
 
 from app.extensions import db
 from app.models import Tenant, Territory
+from app.territory_import import TerritoryImportError, import_official_territories
 
 IBGE_LOCALIDADES_URL = "https://servicodados.ibge.gov.br/api/v1/localidades"
 DEFAULT_MUNICIPAL_TERRITORIES = [
@@ -38,7 +40,27 @@ def suggested_territory_names(tenant: Tenant) -> list[str]:
 
 
 def reload_suggested_territories(tenant: Tenant) -> tuple[list[Territory], list[str]]:
-    suggestions = suggested_territory_names(tenant)
+    suggestions = []
+    if current_app.config.get("TERRITORY_OFFICIAL_IMPORT_ENABLED", True):
+        try:
+            result = import_official_territories(tenant)
+            if result:
+                suggestions = _unique_sorted(
+                    item.name
+                    for item in db.session.execute(
+                        select(Territory).where(
+                            Territory.tenant_id == tenant.id,
+                            Territory.source_name == result.source_name,
+                        )
+                    ).scalars()
+                )
+        except TerritoryImportError as error:
+            current_app.logger.warning(
+                "official territory import failed",
+                extra={"tenant_id": str(tenant.id), "error": str(error)},
+            )
+    if not suggestions:
+        suggestions = suggested_territory_names(tenant)
     existing = {
         item.name.casefold(): item
         for item in db.session.execute(

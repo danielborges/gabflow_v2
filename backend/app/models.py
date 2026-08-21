@@ -2683,10 +2683,57 @@ class Territory(db.Model):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     aliases: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     geometry: Mapped[dict | None] = mapped_column(JSON)
+    source_name: Mapped[str | None] = mapped_column(String(80))
+    source_ref: Mapped[str | None] = mapped_column(String(160))
+    source_url: Mapped[str | None] = mapped_column(String(500))
+    source_version: Mapped[str | None] = mapped_column(String(80))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
+
+    neighborhoods: Mapped[list["TerritoryNeighborhood"]] = relationship(
+        back_populates="territory", cascade="all, delete-orphan"
+    )
+
+
+class TerritoryNeighborhood(db.Model):
+    __tablename__ = "territory_neighborhoods"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "territory_id"],
+            ["territories.tenant_id", "territories.id"],
+            ondelete="CASCADE",
+            name="fk_territory_neighborhoods_tenant_territory",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "source_name",
+            "external_code",
+            name="uq_territory_neighborhoods_source_code",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    external_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    geometry: Mapped[dict | None] = mapped_column(JSON)
+    source_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(500))
+    source_version: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    territory: Mapped[Territory | None] = relationship(back_populates="neighborhoods")
 
 
 class ExternalAgency(db.Model):
@@ -3716,6 +3763,12 @@ class RagAssistantQuery(db.Model):
             "id",
             name="uq_rag_assistant_queries_tenant_id_id",
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "conversation_id",
+            "turn_index",
+            name="uq_rag_assistant_queries_conversation_turn",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "user_id"],
             ["users.tenant_id", "users.id"],
@@ -3735,6 +3788,11 @@ class RagAssistantQuery(db.Model):
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        default=uuid.uuid4, nullable=False, index=True
+    )
+    turn_index: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    context_query_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     query_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     response: Mapped[str] = mapped_column(Text, nullable=False)

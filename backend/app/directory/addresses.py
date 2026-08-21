@@ -4,7 +4,7 @@ from unicodedata import combining, normalize
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models import Tenant, Territory
+from app.models import Tenant, Territory, TerritoryNeighborhood
 from app.territory_geometry import geometry_area, geometry_contains
 
 
@@ -106,6 +106,21 @@ def _matching_territory(
             if expected in {_key(name) for name in names}:
                 method = "NOME" if expected == _key(territory.name) else "ALIAS"
                 return territory, method
+        official = db.session.execute(
+            select(Territory)
+            .join(
+                TerritoryNeighborhood,
+                TerritoryNeighborhood.territory_id == Territory.id,
+            )
+            .where(
+                Territory.tenant_id == tenant_id,
+                Territory.active.is_(True),
+                TerritoryNeighborhood.tenant_id == tenant_id,
+                TerritoryNeighborhood.normalized_name == expected,
+            )
+        ).scalar_one_or_none()
+        if official:
+            return official, "BAIRRO_OFICIAL"
     return None, None
 
 

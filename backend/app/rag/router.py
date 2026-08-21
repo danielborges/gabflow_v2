@@ -16,7 +16,10 @@ from app.rag.query_understanding import (
     understand_documentary_query,
 )
 from app.rag.retrieval import answer_query
-from app.rag.structured_interpretation import interpret_structured_query
+from app.rag.structured_interpretation import (
+    StructuredInterpretation,
+    interpret_structured_query,
+)
 
 
 class QueryMethod(StrEnum):
@@ -46,6 +49,9 @@ _STRUCTURED_PATTERNS = (
     r"\bprazos? vencidos?\b",
     r"\batrasad[oa]s?\b",
     r"\bquais temas recorrentes\b",
+    r"\brecordistas?\b",
+    r"\bcom mais (?:solicitacoes|demandas|pedidos|atendimentos)\b",
+    r"\bmaior (?:numero|quantidade|volume) de\b",
 )
 _DOCUMENTARY_PATTERNS = (
     r"\bargumentos?\b",
@@ -85,6 +91,7 @@ def route_query(
     explicit_filters: dict | None = None,
     learning_artifacts: dict | None = None,
     canary_key: str | None = None,
+    conversation_context: list[dict] | None = None,
 ) -> dict:
     artifacts = (
         active_learning_artifacts(tenant_id, canary_key=canary_key)
@@ -92,8 +99,13 @@ def route_query(
         else learning_artifacts
     )
     intent = classify_query(query, explicit_filters=explicit_filters)
+    intent = _apply_conversation_context(query, intent, conversation_context or [])
     if intent.method in {QueryMethod.ESTRUTURADO, QueryMethod.HIBRIDO}:
-        interpretation = interpret_structured_query(query, intent.structured_payload)
+        interpretation = (
+            StructuredInterpretation(dict(intent.structured_payload), False)
+            if intent.structured_payload.get("dataset")
+            else interpret_structured_query(query, intent.structured_payload)
+        )
         reasons = list(intent.reasons)
         if interpretation.applied:
             reasons.append("INTERPRETACAO_IA_APLICADA")
@@ -113,6 +125,16 @@ def route_query(
             interpreted_payload,
             tuple(dict.fromkeys(reasons)),
         )
+        if not interpreted_payload.get("dataset"):
+            intent = QueryIntent(
+                QueryMethod.DOCUMENTAL,
+                {},
+                tuple(
+                    dict.fromkeys(
+                        (*reasons, "PLANO_QUANTITATIVO_NAO_RESOLVIDO_SEM_RESPOSTA_PADRAO")
+                    )
+                ),
+            )
     applied_artifacts = []
     routing_artifact = artifacts.get(RagLearningArtifactType.ROUTING_EXAMPLES)
     if routing_artifact is not None:
@@ -241,6 +263,10 @@ def _structured_payload(query: str) -> dict:
     ) and re.search(r"\b(?:cadastrad\w*|registrad\w*|com\s+(?:o\s+)?nome)\b", query)
     if re.search(r"\bcidad(?:ao|aos|oes|a|as)\b", query) or citizen_registration:
         dataset = "CIDADAOS"
+    elif re.search(r"\bterrit[oó]rios?\b", query) and not re.search(
+        r"\b(?:solicita|demanda|pedido|atendimento)\w*\b", query
+    ):
+        dataset = "TERRITORIOS"
     elif re.search(r"\b(tramita|comiss[aã]o|pauta legislativa)\w*", query):
         dataset = "TRAMITACOES"
     elif re.search(r"\b(encaminh|resposta do [oó]rg[aã]o|retorno do [oó]rg[aã]o)\w*", query):
@@ -249,8 +275,10 @@ def _structured_payload(query: str) -> dict:
         dataset = "AGENDA"
     elif re.search(r"\b(fiscaliza|vistoria)\w*", query):
         dataset = "FISCALIZACOES"
-    else:
+    elif re.search(r"\b(solicita|demanda|pedido|atendimento|temas? recorrentes?)\w*", query):
         dataset = "SOLICITACOES"
+    else:
+        dataset = None
 
     if re.search(r"\btempo m[eé]dio\b|\bm[eé]dia.*resolu[cç][aã]o\b", query):
         metric = "TEMPO_MEDIO_RESOLUCAO_HORAS"
@@ -262,6 +290,13 @@ def _structured_payload(query: str) -> dict:
     else:
         metric = "CONTAGEM"
 
+    ranking = bool(
+        re.search(
+            r"\brecordistas?\b|\bcom mais\b|"
+            r"\bmaior (?:numero|quantidade|volume) de\b",
+            query,
+        )
+    )
     group_patterns = (
         ("STATUS", r"\bpor (?:status|situa[cç][aã]o)\b"),
         ("TEMA", r"\bpor tema\b|\btemas recorrentes\b"),
@@ -275,11 +310,29 @@ def _structured_payload(query: str) -> dict:
         (group for group, pattern in group_patterns if re.search(pattern, query)),
         "NENHUM",
     )
+    if ranking and group_by == "NENHUM":
+        ranked_groups = (
+            ("TERRITORIO", r"\b(?:territorio|bairro|regiao)\b"),
+            ("TEMA", r"\btemas?\b"),
+            ("ORGAO", r"\b(?:orgao|secretaria)\b"),
+            ("STATUS", r"\b(?:status|situacao)\b"),
+        )
+        group_by = next(
+            (group for group, pattern in ranked_groups if re.search(pattern, query)),
+            "NENHUM",
+        )
     payload = {
         "dataset": dataset,
         "metrica": metric,
         "agruparPor": group_by,
     }
+    if ranking:
+        payload["ranking"] = "MAIOR"
+        position_match = re.search(r"\bsegund[oa]\b", query)
+        if position_match:
+            payload["rankingPosicao"] = 2
+        elif re.search(r"\bterceir[oa]\b", query):
+            payload["rankingPosicao"] = 3
     period = _calendar_period_filter(query)
     if period:
         payload.update(period)
@@ -294,7 +347,7 @@ def _structured_payload(query: str) -> dict:
         query,
     ):
         payload["campoData"] = "ENCERRAMENTO"
-    status = _status_filter(query, dataset)
+    status = _status_filter(query, dataset) if dataset else None
     if status:
         payload["status"] = status
     if dataset == "CIDADAOS":
@@ -385,7 +438,7 @@ def _status_filter(query: str, dataset: str) -> str | None:
         "CIDADAOS": (),
     }
     comparable = query.replace(" ", "_")
-    for status in values[dataset]:
+    for status in values.get(dataset, ()):
         if _normalize(status.lower()) in comparable:
             return status
     return None
@@ -501,6 +554,64 @@ def _structured_response(result: dict) -> str:
     total = result["total"]
     metric = result["metrica"].lower().replace("_", " ")
     total_label = total if total is not None else "sem dados"
+    if (
+        result["dataset"] == "TERRITORIOS"
+        and result["metrica"] == "CONTAGEM"
+        and result["agruparPor"] == "NENHUM"
+    ):
+        unit = "território cadastrado" if total == 1 else "territórios cadastrados"
+        return f"Existem {total_label} {unit} no sistema."
+    if result.get("ranking") == "MAIOR" and result["itens"]:
+        position = max(1, int(result.get("rankingPosicao") or 1))
+        distinct_values = list(
+            dict.fromkeys(item["valor"] for item in result["itens"] if item["valor"] is not None)
+        )
+        if len(distinct_values) < position:
+            return (
+                f"Não há dados suficientes para identificar a {position}ª posição. "
+                f"Total analisado: {total_label}."
+            )
+        position_value = distinct_values[position - 1]
+        leaders = [item for item in result["itens"] if item["valor"] == position_value]
+        leader = leaders[0]
+        group_label = {
+            "TERRITORIO": "território",
+            "TEMA": "tema",
+            "ORGAO": "órgão",
+            "STATUS": "status",
+        }.get(result["agruparPor"], "grupo")
+        singular, plural = {
+            "SOLICITACOES": ("solicitação", "solicitações"),
+            "CIDADAOS": ("cidadão", "cidadãos"),
+            "ENCAMINHAMENTOS": ("encaminhamento", "encaminhamentos"),
+            "AGENDA": ("compromisso", "compromissos"),
+            "FISCALIZACOES": ("fiscalização", "fiscalizações"),
+            "TRAMITACOES": ("tramitação", "tramitações"),
+        }.get(result["dataset"], ("registro", "registros"))
+        unit = singular if leader["valor"] == 1 else plural
+        tied = leaders
+        if len(tied) > 1:
+            group_plural = {
+                "TERRITORIO": "territórios",
+                "TEMA": "temas",
+                "ORGAO": "órgãos",
+                "STATUS": "status",
+            }.get(result["agruparPor"], "grupos")
+            names = ", ".join(item["grupo"] for item in tied)
+            return (
+                f"Há empate na {position}ª posição entre {len(tied)} {group_plural}, com "
+                f"{leader['valor']} {unit} cada: {names}. "
+                f"Total analisado: {total_label}."
+            )
+        if position > 1:
+            return (
+                f"Na {position}ª posição está {leader['grupo']}, com "
+                f"{leader['valor']} {unit}. Total analisado: {total_label}."
+            )
+        return (
+            f"{leader['grupo']} é o {group_label} recordista, com "
+            f"{leader['valor']} {unit}. Total analisado: {total_label}."
+        )
     response = f"Resultado estruturado para {metric}: {total_label}."
     if result["itens"]:
         groups = "; ".join(
@@ -514,3 +625,37 @@ def _structured_response(result: dict) -> str:
 def _normalize(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.casefold())
     return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _apply_conversation_context(
+    query: str,
+    intent: QueryIntent,
+    context: list[dict],
+) -> QueryIntent:
+    if not context:
+        return intent
+    normalized = _normalize(" ".join(str(query or "").split()))
+    follow_up = bool(
+        re.search(
+            r"^(?:e|mas|entao)\b|\b(?:segund[oa]|terceir[oa])\b|"
+            r"\b(?:anterior|esse|essa|isso)\b",
+            normalized,
+        )
+    )
+    if not follow_up:
+        return intent
+    previous = context[-1]
+    previous_result = previous.get("resultadoEstruturado") or {}
+    if previous.get("metodo") not in {"ESTRUTURADO", "HIBRIDO"} or not previous_result:
+        return intent
+    combined = f"{previous.get('consulta', '')}. {query}"
+    contextual = classify_query(combined)
+    payload = dict(contextual.structured_payload)
+    for key in ("dataset", "metrica", "agruparPor", "ranking"):
+        if key not in payload and previous_result.get(key):
+            payload[key] = previous_result[key]
+    return QueryIntent(
+        QueryMethod.ESTRUTURADO,
+        payload,
+        tuple(dict.fromkeys((*contextual.reasons, "CONTEXTO_CONVERSACIONAL_APLICADO"))),
+    )

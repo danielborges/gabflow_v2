@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   FileText,
   MessageSquareWarning,
+  Plus,
   PencilLine,
   Send,
   ShieldAlert,
@@ -11,7 +12,7 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api";
 import { FeatureHeader } from "./FeatureHeader";
 import { useRagAssistantQuery } from "./useRagAssistantQuery";
@@ -20,12 +21,15 @@ export function RagAssistantPage() {
   const {
     question,
     setQuestion,
-    answer,
     setAnswer,
+    turns,
+    pendingQuestion,
     busy,
+    elapsedSeconds,
     error,
     submitQuestion,
     cancelQuery,
+    startNewConversation,
   } = useRagAssistantQuery();
 
   async function submit(event) {
@@ -38,46 +42,122 @@ export function RagAssistantPage() {
       <FeatureHeader className="rag-assistant-heading" eyebrow="Assistente RAG" title="Consulta institucional" description="Faça perguntas sobre a base documental vigente e revise as fontes antes de usar." />
 
       <section className="rag-assistant-workspace">
-        <form className="rag-question-panel" onSubmit={submit}>
-          <label htmlFor="rag-question">Pergunta</label>
-          <div className="rag-question-input">
-            <BookOpen size={19} />
-            <textarea
-              id="rag-question"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ex.: Qual norma fundamenta a manutenção de iluminação pública?"
-              maxLength={2000}
-            />
+        <header className="rag-conversation-toolbar">
+          <div>
+            <strong>Conversa atual</strong>
+            <small>{turns.length ? `${turns.length} ${turns.length === 1 ? "pergunta realizada" : "perguntas realizadas"}` : "Faça sua primeira pergunta"}</small>
           </div>
-          {error && <p className="form-error">{error}</p>}
-          <div className="rag-question-actions">
-            <small>{question.length}/2000</small>
-            <button
-              type={busy ? "button" : "submit"}
-              className={busy ? "secondary-button" : "primary-button"}
-              disabled={!busy && question.trim().length < 3}
-              onClick={busy ? cancelQuery : undefined}
-            >
-              <Send size={17} /> {busy ? "Cancelar consulta" : "Consultar"}
-            </button>
-          </div>
-        </form>
+          <button type="button" className="secondary-button" disabled={busy || !turns.length} onClick={startNewConversation}>
+            <Plus size={16} /> Nova conversa
+          </button>
+        </header>
 
-        <div className="rag-answer-panel">
-          {answer ? <RagAnswerResult answer={answer} onUpdate={setAnswer} /> : busy ? <RagLoadingState /> : <EmptyState />}
+        <div className="rag-conversation-feed" aria-live="polite">
+          <RagConversationFeed
+            turns={turns}
+            pendingQuestion={pendingQuestion}
+            busy={busy}
+            elapsedSeconds={elapsedSeconds}
+            onUpdate={setAnswer}
+          />
         </div>
+
+        <RagConversationComposer
+          question={question}
+          setQuestion={setQuestion}
+          busy={busy}
+          error={error}
+          onSubmit={submit}
+          onCancel={cancelQuery}
+        />
       </section>
     </>
   );
 }
 
-export function RagLoadingState() {
+export function RagConversationFeed({ turns, pendingQuestion, busy, elapsedSeconds, onUpdate, compact = false, empty }) {
+  const endRef = useRef(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [turns.length, busy]);
+  if (!turns.length && !busy) return empty || <EmptyState />;
+  return (
+    <div className={`rag-conversation-turns${compact ? " compact" : ""}`}>
+      {turns.map((turn) => (
+        <div className="rag-conversation-turn" key={turn.id}>
+          <div className="rag-user-message"><span>Você</span><p>{turn.question}</p></div>
+          <div className="rag-assistant-message">
+            <span>GabFlow</span>
+            {turn.answer
+              ? <RagAnswerResult answer={turn.answer} onUpdate={onUpdate} compact={compact} />
+              : <p className="rag-turn-error" role="alert">{turn.error}</p>}
+          </div>
+        </div>
+      ))}
+      {busy && (
+        <div className="rag-conversation-turn pending">
+          <div className="rag-user-message"><span>Você</span><p>{pendingQuestion}</p></div>
+          <div className="rag-assistant-message"><span>GabFlow</span><RagLoadingState elapsedSeconds={elapsedSeconds} /></div>
+        </div>
+      )}
+      <div ref={endRef} aria-hidden="true" />
+    </div>
+  );
+}
+
+export function RagConversationComposer({ question, setQuestion, busy, error, onSubmit, onCancel, id = "rag-question", compact = false }) {
+  function handleKeyDown(event) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent?.isComposing) {
+      event.preventDefault();
+      if (!busy && question.trim().length >= 3) event.currentTarget.form?.requestSubmit();
+    }
+  }
+  return (
+    <form className={`rag-chat-composer${compact ? " compact" : ""}`} onSubmit={onSubmit}>
+      <label htmlFor={id}>Pergunta</label>
+      <div className="rag-question-input">
+        <BookOpen size={19} />
+        <textarea
+          id={id}
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Pergunte algo e continue a conversa com novas perguntas..."
+          maxLength={2000}
+          rows={compact ? 2 : 3}
+        />
+        <button
+          type={busy ? "button" : "submit"}
+          className={busy ? "secondary-button" : "primary-button"}
+          disabled={!busy && question.trim().length < 3}
+          onClick={busy ? onCancel : undefined}
+        >
+          <Send size={17} /> {busy ? "Cancelar consulta" : "Consultar"}
+        </button>
+      </div>
+      <div className="rag-composer-meta">
+        <small>{question.length}/2000 · Enter para enviar, Shift + Enter para nova linha</small>
+        {error && <small className="rag-composer-error">A última pergunta não foi concluída. Você pode tentar novamente.</small>}
+      </div>
+    </form>
+  );
+}
+
+export function RagLoadingState({ elapsedSeconds = 0 }) {
+  const phase = elapsedSeconds < 5
+    ? "Entendendo a pergunta"
+    : elapsedSeconds < 15
+      ? "Consultando os dados e as fontes aplicáveis"
+      : "Preparando uma resposta fundamentada";
   return (
     <div className="rag-assistant-empty rag-assistant-loading" role="status">
-      <Sparkles size={34} />
+      <div className="rag-loading-symbol" aria-hidden="true">
+        <span /><Sparkles size={30} />
+      </div>
       <h2>Consultando a inteligência do gabinete</h2>
-      <p>Aguarde enquanto o GabFlow analisa os dados e as fontes aplicáveis.</p>
+      <p>{phase}.</p>
+      <div className="rag-loading-progress" role="progressbar" aria-label="Consulta em andamento" aria-valuetext={`${elapsedSeconds} segundos decorridos`}><span /></div>
+      <small>{elapsedSeconds} {elapsedSeconds === 1 ? "segundo decorrido" : "segundos decorridos"} · você pode cancelar a qualquer momento</small>
     </div>
   );
 }

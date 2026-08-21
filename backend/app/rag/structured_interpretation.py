@@ -13,6 +13,7 @@ _DATASETS = {
     "AGENDA",
     "FISCALIZACOES",
     "TRAMITACOES",
+    "TERRITORIOS",
 }
 _METRICS = {"CONTAGEM", "TEMPO_MEDIO_RESOLUCAO_HORAS", "PRAZOS_VENCIDOS"}
 _GROUPS = {"NENHUM", "STATUS", "TEMA", "TERRITORIO", "ORGAO", "TIPO", "ETAPA", "MES"}
@@ -77,6 +78,7 @@ def _request_ollama(query: str, deterministic_payload: dict) -> dict:
                     "Pessoa, pessoas, morador, munícipe e eleitor, quando descritos como "
                     "cadastrados ou filtrados por nome, referem-se ao cadastro de CIDADAOS. "
                     "Demandas, pedidos e atendimentos referem-se a SOLICITACOES. Extraia nome "
+                    "Territórios cadastrados referem-se a TERRITORIOS. "
                     "somente quando a pergunta solicitar filtro pelo nome de uma pessoa. Não "
                     "invente filtros. O plano inicial "
                     "é apenas uma hipótese e deve ser corrigido conforme o sentido da pergunta."
@@ -111,6 +113,8 @@ def _validated_merge(deterministic_payload: dict, interpreted: dict) -> dict:
     metric = str(interpreted["metrica"]).upper()
     group = str(interpreted["agruparPor"]).upper()
     confidence = float(interpreted["confianca"])
+    if 10 <= confidence <= 100:
+        confidence /= 100
     if dataset not in _DATASETS or metric not in _METRICS or group not in _GROUPS:
         raise ValueError("A interpretação retornou valores fora do contrato.")
     if not 0 <= confidence <= 1:
@@ -121,6 +125,10 @@ def _validated_merge(deterministic_payload: dict, interpreted: dict) -> dict:
         raise ValueError("A interpretação retornou combinação inválida.")
     if metric == "PRAZOS_VENCIDOS" and dataset not in {"SOLICITACOES", "ENCAMINHAMENTOS"}:
         raise ValueError("A interpretação retornou combinação inválida.")
+    if dataset == "TERRITORIOS":
+        if metric != "CONTAGEM":
+            raise ValueError("A interpretação retornou combinação inválida para territórios.")
+        group = "NENHUM"
 
     merged = {
         **deterministic_payload,
